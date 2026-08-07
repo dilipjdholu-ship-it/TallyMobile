@@ -265,6 +265,89 @@
   @media (min-width: 640px) {
     main { padding-top: 20px; }
   }
+
+  /* ===== Overlays (Ledger Detail / Invoice) ===== */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0; z-index: 50;
+    background: var(--paper);
+    overflow-y: auto;
+  }
+  .overlay.open { display: block; }
+  .overlay-header {
+    position: sticky; top: 0; z-index: 5;
+    background: var(--ink); color: var(--paper);
+    padding: 14px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .overlay-back {
+    background: none; border: none; color: var(--paper);
+    font-size: 14px; font-weight: 600; padding: 4px 0;
+  }
+  .overlay-title {
+    flex: 1;
+    font-family: 'Spectral', serif;
+    font-size: 16px; font-weight: 600;
+  }
+  .overlay-body { padding: 16px; max-width: 720px; margin: 0 auto 60px; }
+
+  .clickable-row { cursor: pointer; }
+  .clickable-row:active { background: var(--paper-line); }
+
+  .invoice-header {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+  }
+  .invoice-header .inv-num { font-family: 'Spectral', serif; font-size: 18px; font-weight: 700; }
+  .invoice-header .inv-meta { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+  .invoice-header .inv-party { font-size: 14px; font-weight: 600; margin-top: 10px; }
+
+  .item-table {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+  }
+  .item-table-head {
+    display: flex;
+    padding: 9px 12px;
+    background: var(--forest-soft);
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--forest);
+  }
+  .item-row {
+    display: flex; align-items: center;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--paper-line);
+    font-size: 13px;
+    gap: 6px;
+  }
+  .item-row:last-child { border-bottom: none; }
+  .item-col-name { flex: 2.2; }
+  .item-col-qty, .item-col-rate { flex: 1; text-align: right; }
+  .item-col-amt { flex: 1.2; text-align: right; font-weight: 600; }
+
+  .tax-summary {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 14px;
+    box-shadow: var(--shadow);
+  }
+  .tax-row {
+    display: flex; justify-content: space-between;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--paper-line);
+    font-size: 13.5px;
+  }
+  .tax-row:last-child { border-bottom: none; font-weight: 700; font-size: 15px; padding-top: 12px; }
+  .tax-row .amount { font-family: 'IBM Plex Mono', monospace; }
 </style>
 </head>
 <body>
@@ -313,6 +396,29 @@
 
     <footer class="last-synced" id="last-synced-footer"></footer>
   </main>
+
+  <!-- Ledger Detail Overlay -->
+  <div id="ledger-detail-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="ledger-detail-back">&larr; Back</button>
+        <div class="overlay-title" id="ledger-detail-title"></div>
+      </div>
+      <div class="overlay-body" id="ledger-detail-body"></div>
+    </div>
+  </div>
+
+  <!-- Voucher Detail / Invoice Overlay -->
+  <div id="voucher-detail-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="voucher-detail-back">&larr; Back</button>
+        <div class="overlay-title">Invoice</div>
+        <button class="export-btn" id="voucher-export-pdf-btn">Export PDF</button>
+      </div>
+      <div class="overlay-body" id="voucher-detail-body"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Firebase (modular SDK) -->
@@ -446,7 +552,11 @@
     COMPANIES.forEach(c => {
       const companyRef = ref(db, `companies/${c.key}`);
       onValue(companyRef, snapshot => {
-        companyData[c.key] = snapshot.val() || {};
+        const val = snapshot.val() || {};
+        // sales_vouchers arrives as an object keyed by voucher_id; keep the
+        // rest of companyData[c.key] shape consistent with before by
+        // stashing it under a dedicated field.
+        companyData[c.key] = val;
         document.getElementById('sync-text').textContent = 'Live';
         render();
       }, error => {
@@ -501,7 +611,7 @@
     }
 
     contentArea.innerHTML = `<div class="list-card">${rows.map(r => `
-      <div class="row">
+      <div class="row clickable-row" data-party="${escapeHtml(r.party || '')}">
         <div>
           <div class="name">${escapeHtml(r.party || '—')}</div>
           <div class="sub">${escapeHtml(r.group || '')}</div>
@@ -509,6 +619,7 @@
         <div class="amount negative mono">${formatCurrency(parseAmt(r.outstanding))}</div>
       </div>
     `).join('')}</div>`;
+    attachRowClickHandlers(contentArea);
   }
 
   function renderLedgers(data, contentArea, summaryStrip) {
@@ -532,7 +643,7 @@
       const bal = parseAmt(r.closing_balance);
       const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
       return `
-      <div class="row">
+      <div class="row clickable-row" data-party="${escapeHtml(r.name || '')}">
         <div>
           <div class="name">${escapeHtml(r.name || '—')}</div>
           <div class="sub">${escapeHtml(r.group || '')}</div>
@@ -541,6 +652,7 @@
       </div>`;
     }).join('')}</div>
     ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
+    attachRowClickHandlers(contentArea);
   }
 
   function renderDaybook(data, contentArea, summaryStrip) {
@@ -617,6 +729,201 @@
       <div class="title">${title}</div>
       <div class="desc">${desc}</div>
     </div>`;
+  }
+
+  // ================= LEDGER DRILL-DOWN =================
+  function attachRowClickHandlers(container) {
+    container.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const party = row.dataset.party;
+        if (party) openLedgerDetail(party);
+      });
+    });
+  }
+
+  function openLedgerDetail(partyName) {
+    const data = companyData[currentCompany] || {};
+    const daybook = data.daybook || [];
+    const vouchers = daybook
+      .filter(v => (v.party || '') === partyName)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    document.getElementById('ledger-detail-title').textContent = partyName;
+    const body = document.getElementById('ledger-detail-body');
+
+    if (vouchers.length === 0) {
+      body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the last ${CONFIG_DAYS_LABEL}.`);
+    } else {
+      const total = vouchers.reduce((s, v) => s + parseAmt(v.amount), 0);
+      body.innerHTML = `
+        <div class="summary-strip" style="margin-bottom:14px;">
+          <div class="summary-chip">
+            <div class="label">Vouchers</div>
+            <div class="value mono">${vouchers.length}</div>
+          </div>
+          <div class="summary-chip">
+            <div class="label">Net Amount</div>
+            <div class="value mono">${formatCurrency(total)}</div>
+          </div>
+        </div>
+        <div class="list-card">${vouchers.map(v => {
+          const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
+          return `
+          <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}"` : ''}>
+            <div>
+              <div class="name">${escapeHtml(v.voucher_type || '—')} ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''}</div>
+              <div class="sub">${escapeHtml(formatTallyDate(v.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+            </div>
+            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+          </div>`;
+        }).join('')}</div>
+      `;
+      body.querySelectorAll('.clickable-row').forEach(row => {
+        row.addEventListener('click', () => {
+          openVoucherDetail(row.dataset.vdate, row.dataset.vnum);
+        });
+      });
+    }
+
+    document.getElementById('ledger-detail-overlay').classList.add('open');
+  }
+
+  document.getElementById('ledger-detail-back').addEventListener('click', () => {
+    document.getElementById('ledger-detail-overlay').classList.remove('open');
+  });
+
+  const CONFIG_DAYS_LABEL = '1 year';
+
+  // ================= VOUCHER DETAIL / INVOICE =================
+  let currentVoucherDetail = null;
+
+  function findSalesVoucher(date, voucherNumber) {
+    const data = companyData[currentCompany] || {};
+    const salesVouchers = data.sales_vouchers || {};
+    return Object.values(salesVouchers).find(
+      v => v.date === date && String(v.voucher_number) === String(voucherNumber)
+    );
+  }
+
+  function openVoucherDetail(date, voucherNumber) {
+    const voucher = findSalesVoucher(date, voucherNumber);
+    const body = document.getElementById('voucher-detail-body');
+
+    if (!voucher) {
+      body.innerHTML = emptyState(
+        'Full invoice detail not synced yet',
+        'This voucher is outside the itemized sync window, or hasn\'t synced yet. Try again after the next PC sync.'
+      );
+      currentVoucherDetail = null;
+      document.getElementById('voucher-detail-overlay').classList.add('open');
+      return;
+    }
+
+    currentVoucherDetail = voucher;
+
+    const items = voucher.items || [];
+    const ledgerLines = voucher.ledger_lines || [];
+    const itemsTotal = items.reduce((s, i) => s + Math.abs(parseAmt(i.amount)), 0);
+
+    body.innerHTML = `
+      <div class="invoice-header">
+        <div class="inv-num">Sales Invoice ${voucher.voucher_number ? '#' + escapeHtml(voucher.voucher_number) : ''}</div>
+        <div class="inv-meta">${escapeHtml(formatTallyDate(voucher.date))} &middot; ${escapeHtml(COMPANIES.find(c => c.key === currentCompany)?.label || '')}</div>
+        <div class="inv-party">${escapeHtml(voucher.party || '—')}</div>
+        ${voucher.narration ? `<div class="sub" style="margin-top:6px;">${escapeHtml(voucher.narration)}</div>` : ''}
+      </div>
+
+      <div class="item-table">
+        <div class="item-table-head">
+          <div class="item-col-name">Item</div>
+          <div class="item-col-qty">Qty</div>
+          <div class="item-col-rate">Rate</div>
+          <div class="item-col-amt">Amount</div>
+        </div>
+        ${items.map(i => `
+          <div class="item-row">
+            <div class="item-col-name">${escapeHtml(i.item_name || '—')}</div>
+            <div class="item-col-qty mono">${escapeHtml((i.billed_qty || '').trim())}</div>
+            <div class="item-col-rate mono">${escapeHtml((i.rate || '').trim())}</div>
+            <div class="item-col-amt mono">${formatCurrency(parseAmt(i.amount))}</div>
+          </div>
+        `).join('') || '<div class="item-row"><div class="item-col-name">No line items synced</div></div>'}
+      </div>
+
+      <div class="tax-summary">
+        ${ledgerLines.map(l => `
+          <div class="tax-row">
+            <div>${escapeHtml(l.ledger_name || '—')}</div>
+            <div class="amount">${formatCurrency(Math.abs(parseAmt(l.amount)))}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    document.getElementById('voucher-detail-overlay').classList.add('open');
+  }
+
+  document.getElementById('voucher-detail-back').addEventListener('click', () => {
+    document.getElementById('voucher-detail-overlay').classList.remove('open');
+  });
+
+  document.getElementById('voucher-export-pdf-btn').addEventListener('click', exportInvoicePDF);
+
+  async function exportInvoicePDF() {
+    if (!currentVoucherDetail) { alert('No invoice loaded to export.'); return; }
+    if (!window.jspdf) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const v = currentVoucherDetail;
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+
+    let y = 18;
+    doc.setFontSize(16);
+    doc.text(companyLabel, 14, y);
+    y += 8;
+    doc.setFontSize(12);
+    doc.text(`Sales Invoice ${v.voucher_number ? '#' + v.voucher_number : ''}`, 14, y);
+    y += 6;
+    doc.setFontSize(10);
+    doc.text(`Date: ${formatTallyDate(v.date)}`, 14, y);
+    y += 5.5;
+    doc.text(`Party: ${v.party || '-'}`, 14, y);
+    y += 10;
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text('Item', 14, y);
+    doc.text('Qty', 110, y, { align: 'right' });
+    doc.text('Rate', 145, y, { align: 'right' });
+    doc.text('Amount', 195, y, { align: 'right' });
+    doc.setFont(undefined, 'normal');
+    y += 3;
+    doc.line(14, y, 195, y);
+    y += 6;
+
+    (v.items || []).forEach(item => {
+      if (y > 270) { doc.addPage(); y = 18; }
+      doc.text(String(item.item_name || '-').slice(0, 45), 14, y);
+      doc.text(String((item.billed_qty || '').trim()), 110, y, { align: 'right' });
+      doc.text(String((item.rate || '').trim()), 145, y, { align: 'right' });
+      doc.text(formatCurrency(parseAmt(item.amount)), 195, y, { align: 'right' });
+      y += 6;
+    });
+
+    y += 4;
+    doc.line(14, y, 195, y);
+    y += 8;
+
+    (v.ledger_lines || []).forEach(line => {
+      if (y > 270) { doc.addPage(); y = 18; }
+      doc.text(String(line.ledger_name || '-'), 130, y);
+      doc.text(formatCurrency(Math.abs(parseAmt(line.amount))), 195, y, { align: 'right' });
+      y += 6;
+    });
+
+    doc.save(`invoice_${v.voucher_number || 'export'}.pdf`);
   }
 
   // ================= HELPERS =================
