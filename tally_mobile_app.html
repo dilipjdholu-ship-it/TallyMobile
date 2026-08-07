@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>TallyMobile — Shivam Group</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1f2e4a;
+    --ink-soft: #46567a;
+    --paper: #f6f5f0;
+    --paper-line: #e2e0d4;
+    --paper-card: #ffffff;
+    --forest: #2f5233;
+    --forest-soft: #e8efe6;
+    --rust: #b33f2e;
+    --rust-soft: #fbe9e5;
+    --amber: #c77d2e;
+    --amber-soft: #faf0e2;
+    --border: #d9d6c6;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(31,46,74,0.08), 0 1px 2px rgba(31,46,74,0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--paper);
+    background-image:
+      linear-gradient(var(--paper-line) 1px, transparent 1px);
+    background-size: 100% 2.1em;
+    background-attachment: local;
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  h1, h2, h3, .display {
+    font-family: 'Spectral', serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .mono, .amount { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ===== Login Screen ===== */
+  #login-screen {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--ink);
+    background-image: radial-gradient(circle at 20% 20%, #2a3d63 0%, var(--ink) 60%);
+  }
+  .login-card {
+    background: var(--paper-card);
+    border-radius: 16px;
+    padding: 36px 28px;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    text-align: center;
+  }
+  .login-mark {
+    width: 48px; height: 48px;
+    margin: 0 auto 18px;
+    border-radius: 10px;
+    background: var(--ink);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--paper);
+    font-family: 'Spectral', serif;
+    font-weight: 700;
+    font-size: 22px;
+  }
+  .login-card h1 { font-size: 22px; margin: 0 0 4px; color: var(--ink); }
+  .login-card p { font-size: 13px; color: var(--ink-soft); margin: 0 0 24px; }
+  .login-card input {
+    width: 100%;
+    padding: 13px 14px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    font-size: 16px;
+    margin-bottom: 12px;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .login-card input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .login-card button.primary {
+    width: 100%;
+    padding: 13px;
+    border-radius: 8px;
+    border: none;
+    background: var(--ink);
+    color: white;
+    font-weight: 600;
+    font-size: 15px;
+    margin-top: 4px;
+  }
+  .login-error { color: var(--rust); font-size: 13px; margin-top: 10px; min-height: 18px; }
+
+  /* ===== App Shell ===== */
+  #app-screen { display: none; }
+  header.top {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 14px 16px 0;
+  }
+  .top-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .top-row .brand { font-family: 'Spectral', serif; font-size: 18px; font-weight: 600; }
+  .top-row .sync-status { font-size: 11px; color: #aab6d1; }
+  .top-row .sync-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #7fbf7f; margin-right: 5px; vertical-align: middle;
+  }
+
+  .company-tabs {
+    display: flex; gap: 4px; overflow-x: auto;
+    padding-bottom: 0;
+    -ms-overflow-style: none; scrollbar-width: none;
+  }
+  .company-tabs::-webkit-scrollbar { display: none; }
+  .company-tab {
+    flex-shrink: 0;
+    padding: 9px 16px 11px;
+    border: none;
+    background: transparent;
+    color: #b9c2da;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 10px 10px 0 0;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+  }
+  .company-tab.active {
+    background: var(--paper);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  nav.section-nav {
+    display: flex;
+    background: var(--paper-card);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 68px; z-index: 19;
+    overflow-x: auto;
+  }
+  .section-tab {
+    flex: 1;
+    padding: 12px 8px;
+    text-align: center;
+    border: none;
+    background: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border-bottom: 2.5px solid transparent;
+    white-space: nowrap;
+  }
+  .section-tab.active { color: var(--ink); border-bottom-color: var(--amber); }
+
+  main { padding: 14px 14px 90px; max-width: 720px; margin: 0 auto; }
+
+  .search-bar {
+    display: flex; gap: 8px; margin-bottom: 14px;
+  }
+  .search-bar input {
+    flex: 1;
+    padding: 11px 14px;
+    border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .search-bar input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .export-btn {
+    padding: 0 14px;
+    border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .summary-strip {
+    display: flex; gap: 10px; margin-bottom: 16px;
+    overflow-x: auto;
+  }
+  .summary-chip {
+    flex: 1; min-width: 130px;
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    box-shadow: var(--shadow);
+  }
+  .summary-chip .label { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .summary-chip .value { font-size: 18px; font-weight: 600; }
+  .summary-chip.rust .value { color: var(--rust); }
+  .summary-chip.forest .value { color: var(--forest); }
+
+  .list-card {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--paper-line);
+    gap: 10px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .name { font-size: 14.5px; font-weight: 500; color: var(--ink); }
+  .row .sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .row .amount { font-size: 14.5px; font-weight: 600; white-space: nowrap; }
+  .amount.positive { color: var(--forest); }
+  .amount.negative { color: var(--rust); }
+  .amount.neutral { color: var(--ink-soft); }
+
+  .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    background: var(--amber-soft);
+    color: var(--amber);
+    margin-top: 3px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ink-soft);
+  }
+  .empty-state .glyph { font-size: 30px; margin-bottom: 10px; }
+  .empty-state .title { font-family: 'Spectral', serif; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
+  .empty-state .desc { font-size: 13px; }
+
+  .loading-state { text-align: center; padding: 60px 20px; color: var(--ink-soft); font-size: 13px; }
+
+  footer.last-synced {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-soft);
+    padding: 16px 0 4px;
+  }
+
+  @media (min-width: 640px) {
+    main { padding-top: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-mark">S</div>
+    <h1>TallyMobile</h1>
+    <p>Shivam Hardware &middot; Satyam Traders &middot; Shivam Traders</p>
+    <input type="password" id="password-input" placeholder="Enter access code" autocomplete="off">
+    <button class="primary" id="login-btn">Unlock</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- ===== APP SCREEN ===== -->
+<div id="app-screen">
+  <header class="top">
+    <div class="top-row">
+      <div class="brand">TallyMobile</div>
+      <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
+    </div>
+    <div class="company-tabs" id="company-tabs"></div>
+  </header>
+
+  <nav class="section-nav" id="section-nav">
+    <button class="section-tab active" data-section="outstanding">Outstanding</button>
+    <button class="section-tab" data-section="ledgers">Ledgers</button>
+    <button class="section-tab" data-section="daybook">Day Book</button>
+    <button class="section-tab" data-section="stock">Stock</button>
+  </nav>
+
+  <main>
+    <div class="search-bar">
+      <input type="text" id="search-input" placeholder="Search…">
+      <button class="export-btn" id="export-xlsx-btn">XLSX</button>
+      <button class="export-btn" id="export-pdf-btn">PDF</button>
+    </div>
+
+    <div id="summary-strip" class="summary-strip"></div>
+
+    <div id="content-area">
+      <div class="loading-state">Loading data…</div>
+    </div>
+
+    <footer class="last-synced" id="last-synced-footer"></footer>
+  </main>
+</div>
+
+<!-- Firebase (modular SDK) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
+    authDomain: "tallymobile-cfbed.firebaseapp.com",
+    databaseURL: "https://tallymobile-cfbed-default-rtdb.firebaseio.com",
+    projectId: "tallymobile-cfbed",
+    storageBucket: "tallymobile-cfbed.firebasestorage.app",
+    messagingSenderId: "924541599981",
+    appId: "1:924541599981:web:6896f5afa95ee98bf3cce4"
+  };
+
+  const firebaseApp = initializeApp(firebaseConfig);
+  const db = getDatabase(firebaseApp);
+
+  // ================= CONFIG =================
+  const COMPANIES = [
+    { key: "shivam_hardware", label: "Shivam Hardware" },
+    { key: "satyam_traders", label: "Satyam Traders" },
+    { key: "shivam_traders", label: "Shivam Traders" },
+  ];
+
+  // SHA-256 hash of the access code. Default code: "shivam2026"
+  // To change: run in any browser console:
+  //   crypto.subtle.digest('SHA-256', new TextEncoder().encode('yourcode'))
+  //     .then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
+  const ACCESS_CODE_HASH = "dba45ed3a18527c10f48501158da825fa2a6ef833da91b78a6cde9b66da59719";
+
+  const SESSION_KEY = "tallymobile_session";
+  const SESSION_HOURS = 24;
+
+  // ================= STATE =================
+  let currentCompany = COMPANIES[0].key;
+  let currentSection = "outstanding";
+  let searchTerm = "";
+  let companyData = {}; // key -> { ledgers, outstanding_receivables, daybook, stock_items, last_synced }
+
+  // ================= AUTH =================
+  async function sha256(text) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function checkExistingSession() {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    try {
+      const session = JSON.parse(raw);
+      const ageHours = (Date.now() - session.ts) / (1000 * 60 * 60);
+      return ageHours < SESSION_HOURS;
+    } catch { return false; }
+  }
+
+  document.getElementById('login-btn').addEventListener('click', attemptLogin);
+  document.getElementById('password-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') attemptLogin();
+  });
+
+  async function attemptLogin() {
+    const input = document.getElementById('password-input').value;
+    const hash = await sha256(input);
+    if (hash === ACCESS_CODE_HASH) {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() }));
+      showApp();
+    } else {
+      document.getElementById('login-error').textContent = "Incorrect access code.";
+    }
+  }
+
+  function showApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-screen').style.display = 'block';
+    initApp();
+  }
+
+  if (checkExistingSession()) {
+    showApp();
+  }
+
+  // ================= APP INIT =================
+  function initApp() {
+    renderCompanyTabs();
+    attachSectionNav();
+    attachSearch();
+    attachExportButtons();
+    listenToAllCompanies();
+  }
+
+  function renderCompanyTabs() {
+    const container = document.getElementById('company-tabs');
+    container.innerHTML = '';
+    COMPANIES.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'company-tab' + (c.key === currentCompany ? ' active' : '');
+      btn.textContent = c.label;
+      btn.addEventListener('click', () => {
+        currentCompany = c.key;
+        renderCompanyTabs();
+        render();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function attachSectionNav() {
+    document.querySelectorAll('.section-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.section-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentSection = btn.dataset.section;
+        document.getElementById('search-input').value = '';
+        searchTerm = '';
+        render();
+      });
+    });
+  }
+
+  function attachSearch() {
+    document.getElementById('search-input').addEventListener('input', e => {
+      searchTerm = e.target.value.toLowerCase();
+      render();
+    });
+  }
+
+  function listenToAllCompanies() {
+    COMPANIES.forEach(c => {
+      const companyRef = ref(db, `companies/${c.key}`);
+      onValue(companyRef, snapshot => {
+        companyData[c.key] = snapshot.val() || {};
+        document.getElementById('sync-text').textContent = 'Live';
+        render();
+      }, error => {
+        document.getElementById('sync-text').textContent = 'Connection error';
+        console.error(error);
+      });
+    });
+  }
+
+  // ================= RENDER =================
+  function render() {
+    const data = companyData[currentCompany];
+    const contentArea = document.getElementById('content-area');
+    const summaryStrip = document.getElementById('summary-strip');
+    const footer = document.getElementById('last-synced-footer');
+
+    if (!data) {
+      contentArea.innerHTML = '<div class="loading-state">Loading data…</div>';
+      summaryStrip.innerHTML = '';
+      footer.textContent = '';
+      return;
+    }
+
+    footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
+
+    if (currentSection === 'outstanding') renderOutstanding(data, contentArea, summaryStrip);
+    else if (currentSection === 'ledgers') renderLedgers(data, contentArea, summaryStrip);
+    else if (currentSection === 'daybook') renderDaybook(data, contentArea, summaryStrip);
+    else if (currentSection === 'stock') renderStock(data, contentArea, summaryStrip);
+  }
+
+  function renderOutstanding(data, contentArea, summaryStrip) {
+    let rows = data.outstanding_receivables || [];
+    rows = rows.filter(r => (r.party || '').toLowerCase().includes(searchTerm));
+    rows = [...rows].sort((a, b) => parseAmt(b.outstanding) - parseAmt(a.outstanding));
+
+    const total = rows.reduce((sum, r) => sum + parseAmt(r.outstanding), 0);
+    summaryStrip.innerHTML = `
+      <div class="summary-chip rust">
+        <div class="label">Total Outstanding</div>
+        <div class="value mono">${formatCurrency(total)}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Parties</div>
+        <div class="value mono">${rows.length}</div>
+      </div>
+    `;
+
+    if (rows.length === 0) {
+      contentArea.innerHTML = emptyState('No outstanding dues', 'Everything is settled — or no data matches your search.');
+      return;
+    }
+
+    contentArea.innerHTML = `<div class="list-card">${rows.map(r => `
+      <div class="row">
+        <div>
+          <div class="name">${escapeHtml(r.party || '—')}</div>
+          <div class="sub">${escapeHtml(r.group || '')}</div>
+        </div>
+        <div class="amount negative mono">${formatCurrency(parseAmt(r.outstanding))}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderLedgers(data, contentArea, summaryStrip) {
+    let rows = data.ledgers || [];
+    rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
+    rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip">
+        <div class="label">Total Ledgers</div>
+        <div class="value mono">${rows.length}</div>
+      </div>
+    `;
+
+    if (rows.length === 0) {
+      contentArea.innerHTML = emptyState('No ledgers found', 'Try a different search term.');
+      return;
+    }
+
+    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => {
+      const bal = parseAmt(r.closing_balance);
+      const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
+      return `
+      <div class="row">
+        <div>
+          <div class="name">${escapeHtml(r.name || '—')}</div>
+          <div class="sub">${escapeHtml(r.group || '')}</div>
+        </div>
+        <div class="amount ${cls} mono">${formatCurrency(bal)}</div>
+      </div>`;
+    }).join('')}</div>
+    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
+  }
+
+  function renderDaybook(data, contentArea, summaryStrip) {
+    let rows = data.daybook || [];
+    rows = rows.filter(r =>
+      (r.party || '').toLowerCase().includes(searchTerm) ||
+      (r.voucher_type || '').toLowerCase().includes(searchTerm) ||
+      (r.narration || '').toLowerCase().includes(searchTerm)
+    );
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip">
+        <div class="label">Vouchers</div>
+        <div class="value mono">${rows.length}</div>
+      </div>
+    `;
+
+    if (rows.length === 0) {
+      contentArea.innerHTML = emptyState('No vouchers found', 'Try a different search term, or check back after the next sync.');
+      return;
+    }
+
+    contentArea.innerHTML = `<div class="list-card">${rows.map(r => `
+      <div class="row">
+        <div>
+          <div class="name">${escapeHtml(r.party || r.voucher_type || '—')}</div>
+          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}</div>
+        </div>
+        <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderStock(data, contentArea, summaryStrip) {
+    let rows = data.stock_items || [];
+    rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
+    rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const totalValue = rows.reduce((sum, r) => sum + parseAmt(r.closing_value), 0);
+    summaryStrip.innerHTML = `
+      <div class="summary-chip forest">
+        <div class="label">Stock Value</div>
+        <div class="value mono">${formatCurrency(totalValue)}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Items</div>
+        <div class="value mono">${rows.length}</div>
+      </div>
+    `;
+
+    if (rows.length === 0) {
+      contentArea.innerHTML = emptyState('No stock items found', 'Try a different search term.');
+      return;
+    }
+
+    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => `
+      <div class="row">
+        <div>
+          <div class="name">${escapeHtml(r.name || '—')}</div>
+          <div class="sub">${escapeHtml(r.group || '')}</div>
+        </div>
+        <div>
+          <div class="amount neutral mono" style="text-align:right">${r.closing_qty || '0'}</div>
+          <div class="sub" style="text-align:right">${formatCurrency(parseAmt(r.closing_value))}</div>
+        </div>
+      </div>
+    `).join('')}</div>
+    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
+  }
+
+  function emptyState(title, desc) {
+    return `<div class="empty-state">
+      <div class="glyph">◇</div>
+      <div class="title">${title}</div>
+      <div class="desc">${desc}</div>
+    </div>`;
+  }
+
+  // ================= HELPERS =================
+  function parseAmt(v) {
+    if (v === null || v === undefined || v === '') return 0;
+    const n = parseFloat(v);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function formatCurrency(n) {
+    const abs = Math.abs(n);
+    const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (n < 0 ? '−' : '') + '₹' + formatted;
+  }
+
+  function formatTallyDate(d) {
+    if (!d) return '';
+    // Tally dates often come as YYYYMMDD
+    if (/^\d{8}$/.test(d)) {
+      return `${d.slice(6,8)}-${d.slice(4,6)}-${d.slice(0,4)}`;
+    }
+    return d;
+  }
+
+  function formatDateTime(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, m => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+  }
+
+  function getCurrentRows() {
+    const data = companyData[currentCompany] || {};
+    let key = { outstanding: 'outstanding_receivables', ledgers: 'ledgers', daybook: 'daybook', stock: 'stock_items' }[currentSection];
+    let rows = data[key] || [];
+    if (searchTerm) {
+      rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(searchTerm));
+    }
+    return rows;
+  }
+
+  // ================= EXPORT =================
+  function attachExportButtons() {
+    document.getElementById('export-xlsx-btn').addEventListener('click', exportXLSX);
+    document.getElementById('export-pdf-btn').addEventListener('click', exportPDF);
+  }
+
+  async function exportXLSX() {
+    const rows = getCurrentRows();
+    if (rows.length === 0) { alert('No data to export.'); return; }
+    if (!window.XLSX) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    }
+    const ws = window.XLSX.utils.json_to_sheet(rows);
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, currentSection);
+    window.XLSX.writeFile(wb, `${currentCompany}_${currentSection}.xlsx`);
+  }
+
+  async function exportPDF() {
+    const rows = getCurrentRows();
+    if (rows.length === 0) { alert('No data to export.'); return; }
+    if (!window.jspdf) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    doc.setFontSize(14);
+    doc.text(`${companyLabel} — ${currentSection}`, 14, 16);
+    doc.setFontSize(9);
+    let y = 26;
+    const cols = Object.keys(rows[0]);
+    doc.text(cols.join(' | '), 14, y);
+    y += 6;
+    rows.forEach(r => {
+      if (y > 280) { doc.addPage(); y = 16; }
+      const line = cols.map(c => String(r[c] ?? '')).join(' | ');
+      doc.text(line.slice(0, 120), 14, y);
+      y += 5.5;
+    });
+    doc.save(`${currentCompany}_${currentSection}.pdf`);
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+</script>
+</body>
+</html>
