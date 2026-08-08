@@ -1198,7 +1198,7 @@
       doc.text(String(item.item_name || '-').slice(0, 45), 14, y);
       doc.text(String((item.billed_qty || '').trim()), 110, y, { align: 'right' });
       doc.text(String((item.rate || '').trim()), 145, y, { align: 'right' });
-      doc.text(formatCurrency(parseAmt(item.amount)), 195, y, { align: 'right' });
+      doc.text(formatCurrencyPDF(parseAmt(item.amount)), 195, y, { align: 'right' });
       y += 6;
     });
 
@@ -1209,7 +1209,7 @@
     (v.ledger_lines || []).forEach(line => {
       if (y > 270) { doc.addPage(); y = 18; }
       doc.text(String(line.ledger_name || '-'), 130, y);
-      doc.text(formatCurrency(Math.abs(parseAmt(line.amount))), 195, y, { align: 'right' });
+      doc.text(formatCurrencyPDF(Math.abs(parseAmt(line.amount))), 195, y, { align: 'right' });
       y += 6;
     });
 
@@ -1246,6 +1246,15 @@
     const abs = Math.abs(n);
     const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return (n < 0 ? '−' : '') + '₹' + formatted;
+  }
+
+  // jsPDF's default font (Helvetica) can't render the ₹ symbol — it shows
+  // as a broken glyph. Use this instead of formatCurrency() inside any
+  // doc.text() call.
+  function formatCurrencyPDF(n) {
+    const abs = Math.abs(n);
+    const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (n < 0 ? '-' : '') + 'Rs. ' + formatted;
   }
 
   function formatTallyDate(d) {
