@@ -724,11 +724,11 @@
   function renderHome(data, contentArea, summaryStrip) {
     summaryStrip.innerHTML = '';
 
-    const outstanding = data.outstanding_receivables || [];
+    const outstanding = safeArray(data.outstanding_receivables);
     const totalOutstanding = outstanding.reduce((s, r) => s + parseAmt(r.outstanding), 0);
-    const ledgerCount = (data.ledgers || []).length;
-    const stockValue = (data.stock_items || []).reduce((s, r) => s + parseAmt(r.closing_value), 0);
-    const voucherCount = (data.daybook || []).length;
+    const ledgerCount = safeArray(data.ledgers).length;
+    const stockValue = safeArray(data.stock_items).reduce((s, r) => s + parseAmt(r.closing_value), 0);
+    const voucherCount = safeArray(data.daybook).length;
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
 
     contentArea.innerHTML = `
@@ -781,7 +781,7 @@
   }
 
   function renderOutstanding(data, contentArea, summaryStrip) {
-    let rows = data.outstanding_receivables || [];
+    let rows = safeArray(data.outstanding_receivables);
     rows = rows.filter(r => (r.party || '').toLowerCase().includes(searchTerm));
     rows = [...rows].sort((a, b) => parseAmt(b.outstanding) - parseAmt(a.outstanding));
 
@@ -824,14 +824,14 @@
   }
 
   function renderLedgers(data, contentArea, summaryStrip) {
-    let rows = data.ledgers || [];
+    let rows = safeArray(data.ledgers);
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
     if (ledgerFilter !== 'all') {
       rows = rows.filter(r => classifyLedger(r.group) === ledgerFilter);
     }
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    const allRows = (data.ledgers || []);
+    const allRows = safeArray(data.ledgers);
     const debtorCount = allRows.filter(r => classifyLedger(r.group) === 'debtors').length;
     const creditorCount = allRows.filter(r => classifyLedger(r.group) === 'creditors').length;
 
@@ -895,7 +895,7 @@
   }
 
   function renderDaybook(data, contentArea, summaryStrip) {
-    let rows = data.daybook || [];
+    let rows = safeArray(data.daybook);
     rows = rows.filter(r =>
       (r.party || '').toLowerCase().includes(searchTerm) ||
       (r.voucher_type || '').toLowerCase().includes(searchTerm) ||
@@ -926,7 +926,7 @@
   }
 
   function renderStock(data, contentArea, summaryStrip) {
-    let rows = data.stock_items || [];
+    let rows = safeArray(data.stock_items);
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
@@ -982,7 +982,7 @@
 
   function openLedgerDetail(partyName) {
     const data = companyData[currentCompany] || {};
-    const daybook = data.daybook || [];
+    const daybook = safeArray(data.daybook);
     const vouchers = daybook
       .filter(v => (v.party || '') === partyName)
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -1060,8 +1060,8 @@
 
     currentVoucherDetail = voucher;
 
-    const items = voucher.items || [];
-    const ledgerLines = voucher.ledger_lines || [];
+    const items = safeArray(voucher.items);
+    const ledgerLines = safeArray(voucher.ledger_lines);
     const itemsTotal = items.reduce((s, i) => s + Math.abs(parseAmt(i.amount)), 0);
 
     const data = companyData[currentCompany] || {};
@@ -1069,7 +1069,7 @@
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
 
     // Look up the buyer's address/GSTIN/state from the already-synced Ledger list
-    const buyerLedger = (data.party_details || {})[voucher.party] || Object.values(data.party_details || {}).find(p => p.name === voucher.party) || {};
+    const buyerLedger = (data.party_details || {})[voucher.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === voucher.party) || {};
 
     body.innerHTML = `
       <div class="invoice-header">
@@ -1219,8 +1219,8 @@
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
     const data = companyData[currentCompany] || {};
     const companyInfo = data.company_info || {};
-    const buyerLedger = (data.party_details || {})[v.party] || Object.values(data.party_details || {}).find(p => p.name === v.party) || {};
-    const stockItems = data.stock_items || [];
+    const buyerLedger = (data.party_details || {})[v.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === v.party) || {};
+    const stockItems = safeArray(data.stock_items);
 
     const pageWidth = 210;
     const marginX = 10;
@@ -1316,8 +1316,8 @@
     y += buyerH;
 
     // ---- Item table ----
-    const items = v.items || [];
-    const ledgerLines = v.ledger_lines || [];
+    const items = safeArray(v.items);
+    const ledgerLines = safeArray(v.ledger_lines);
 
     const cols = [
       { key: 'sl', label: 'Sl\nNo.', w: 8, align: 'center' },
@@ -1546,6 +1546,14 @@
   }
 
   // ================= HELPERS =================
+  // Firebase drops array entries entirely when every field in them is
+  // null/blank, which leaves a genuine 'hole' (undefined) at that index
+  // when the array comes back — .filter(Boolean) strips those out so
+  // .find()/.map()/etc never trip on an undefined element.
+  function safeArray(x) {
+    return (x || []).filter(Boolean);
+  }
+
   function parseAmt(v) {
     if (v === null || v === undefined || v === '') return 0;
     const n = parseFloat(v);
@@ -1592,7 +1600,7 @@
   function getCurrentRows() {
     const data = companyData[currentCompany] || {};
     let key = { outstanding: 'outstanding_receivables', ledgers: 'ledgers', daybook: 'daybook', stock: 'stock_items' }[currentSection];
-    let rows = data[key] || [];
+    let rows = safeArray(data[key]);
     if (searchTerm) {
       rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(searchTerm));
     }
