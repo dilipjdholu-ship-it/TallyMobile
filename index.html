@@ -555,6 +555,8 @@
 
   // ================= STATE =================
   let currentCompany = COMPANIES[0].key;
+  let appInitialized = false;
+  let currentUnsubscribe = null;
   let currentSection = "home";
   let searchTerm = "";
   let companyData = {}; // key -> { ledgers, outstanding_receivables, daybook, stock_items, last_synced }
@@ -640,9 +642,6 @@
   });
 
   // ================= APP INIT =================
-  let appInitialized = false;
-  let currentUnsubscribe = null;
-
   function initApp() {
     if (appInitialized) return; // one-time UI wiring only
     appInitialized = true;
