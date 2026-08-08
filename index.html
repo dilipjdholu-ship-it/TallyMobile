@@ -1127,6 +1127,87 @@
 
   document.getElementById('voucher-export-pdf-btn').addEventListener('click', exportInvoicePDF);
 
+  // ---- Invoice PDF helpers ----
+
+  function extractGstRate(ledgerName) {
+    if (!ledgerName) return null;
+    const m = ledgerName.match(/(\d+(\.\d+)?)\s*%/);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  function parseQtyUnit(qtyStr) {
+    if (!qtyStr) return { qty: '', unit: '' };
+    const m = String(qtyStr).trim().match(/^([\d.,\-]+)\s*(.*)$/);
+    if (!m) return { qty: qtyStr.trim(), unit: '' };
+    return { qty: m[1], unit: m[2] || '' };
+  }
+
+  function parseRatePer(rateStr) {
+    if (!rateStr) return { rate: '', per: '' };
+    const parts = String(rateStr).trim().split('/');
+    return { rate: parts[0] || '', per: parts[1] || '' };
+  }
+
+  const NUM_ONES = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten',
+    'Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const NUM_TENS = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+
+  function twoDigitWords(n) {
+    if (n < 20) return NUM_ONES[n];
+    return NUM_TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + NUM_ONES[n % 10] : '');
+  }
+
+  function threeDigitWords(n) {
+    let str = '';
+    if (n >= 100) {
+      str += NUM_ONES[Math.floor(n / 100)] + ' Hundred';
+      n = n % 100;
+      if (n) str += ' ';
+    }
+    if (n > 0) str += twoDigitWords(n);
+    return str;
+  }
+
+  function numberToWordsIndian(num) {
+    num = Math.floor(num);
+    if (num === 0) return 'Zero';
+    let result = '';
+    const crore = Math.floor(num / 10000000); num %= 10000000;
+    const lakh = Math.floor(num / 100000); num %= 100000;
+    const thousand = Math.floor(num / 1000); num %= 1000;
+    const hundred = num;
+    if (crore) result += threeDigitWords(crore) + ' Crore ';
+    if (lakh) result += twoDigitWords(lakh) + ' Lakh ';
+    if (thousand) result += twoDigitWords(thousand) + ' Thousand ';
+    if (hundred) result += threeDigitWords(hundred);
+    return result.trim();
+  }
+
+  function amountInWords(amount, unitLabel) {
+    const whole = Math.floor(Math.abs(amount));
+    const fraction = Math.round((Math.abs(amount) - whole) * 100);
+    let words = 'Indian Rupees ' + numberToWordsIndian(whole);
+    if (fraction > 0) {
+      words += ' and ' + numberToWordsIndian(fraction) + ' Paise';
+    }
+    words += ' Only';
+    return words;
+  }
+
+  // Draws a bordered cell with text. align: 'left' | 'center' | 'right'
+  function pdfCell(doc, x, y, w, h, text, opts = {}) {
+    const { align = 'left', bold = false, fontSize = 8, border = true, padX = 1.5 } = opts;
+    if (border) doc.rect(x, y, w, h);
+    if (text === undefined || text === null || text === '') return;
+    doc.setFontSize(fontSize);
+    doc.setFont(undefined, bold ? 'bold' : 'normal');
+    let tx = x + padX;
+    if (align === 'right') tx = x + w - padX;
+    else if (align === 'center') tx = x + w / 2;
+    const ty = y + h / 2 + fontSize * 0.13;
+    doc.text(String(text), tx, ty, { align, maxWidth: w - padX * 2 });
+  }
+
   async function exportInvoicePDF() {
     if (!currentVoucherDetail) { alert('No invoice loaded to export.'); return; }
     if (!window.jspdf) {
@@ -1139,97 +1220,327 @@
     const data = companyData[currentCompany] || {};
     const companyInfo = data.company_info || {};
     const buyerLedger = (data.party_details || {})[v.party] || Object.values(data.party_details || {}).find(p => p.name === v.party) || {};
+    const stockItems = data.stock_items || [];
 
-    let y = 18;
-    doc.setFontSize(16);
-    doc.text(companyLabel, 14, y);
-    y += 6;
-    doc.setFontSize(9);
+    const pageWidth = 210;
+    const marginX = 10;
+    const contentWidth = pageWidth - marginX * 2; // 190mm
+
+    let y = 10;
+
+    doc.setFontSize(13);
+    doc.setFont(undefined, 'bold');
+    doc.text('Tax Invoice', pageWidth / 2, y + 5, { align: 'center' });
+    y += 10;
+
+    // ---- Header: Company (left) + Invoice No/Date (right) ----
+    const headerH = 34;
+    const leftW = contentWidth * 0.62;
+    const rightW = contentWidth - leftW;
+
+    doc.rect(marginX, y, leftW, headerH);
+    doc.rect(marginX + leftW, y, rightW, headerH);
+
+    let ly = y + 5;
+    doc.setFontSize(10.5);
+    doc.setFont(undefined, 'bold');
+    doc.text(companyLabel.toUpperCase(), marginX + 2, ly);
+    ly += 4.5;
+    doc.setFontSize(8.5);
+    doc.setFont(undefined, 'normal');
     if (companyInfo.address) {
-      companyInfo.address.split(',').forEach(line => {
-        doc.text(line.trim(), 14, y);
-        y += 4.5;
-      });
+      const addrLines = companyInfo.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
+      // Pack address onto fewer lines, comma-joined, to match Tally's compact style
+      doc.text(addrLines.join(', '), marginX + 2, ly, { maxWidth: leftW - 4 });
+      ly += 4 * Math.max(1, Math.ceil(doc.getTextWidth(addrLines.join(', ')) / (leftW - 4)));
     }
     if (companyInfo.gstin) {
-      doc.text(`GSTIN: ${companyInfo.gstin}`, 14, y);
-      y += 4.5;
+      doc.text(`GSTIN/UIN: ${companyInfo.gstin}`, marginX + 2, ly);
+      ly += 4;
     }
-    y += 4;
+    if (buyerLedger.state || companyInfo.state) {
+      doc.text(`State Name: ${companyInfo.state || ''}`, marginX + 2, ly);
+      ly += 4;
+    }
+    if (companyInfo.email) {
+      doc.text(`E-Mail: ${companyInfo.email}`, marginX + 2, ly);
+      ly += 4;
+    }
 
-    doc.setFontSize(12);
-    doc.text(`Sales Invoice ${v.voucher_number ? '#' + v.voucher_number : ''}`, 14, y);
-    y += 6;
-    doc.setFontSize(10);
-    doc.text(`Date: ${formatTallyDate(v.date)}`, 14, y);
-    y += 6;
-
+    // Right box: Invoice No / Date
+    const rx = marginX + leftW;
+    doc.setFontSize(8);
+    doc.text('Invoice No.', rx + 2, y + 5);
+    doc.text('Dated', rx + rightW * 0.55, y + 5);
     doc.setFont(undefined, 'bold');
-    doc.text('Bill To:', 14, y);
+    doc.setFontSize(9.5);
+    doc.text(String(v.voucher_number || '-'), rx + 2, y + 10);
+    doc.text(formatTallyDate(v.date), rx + rightW * 0.55, y + 10);
     doc.setFont(undefined, 'normal');
-    doc.text(v.party || '-', 34, y);
-    y += 5;
+    doc.line(rx, y + 13, rx + rightW, y + 13);
+    doc.setFontSize(8);
+    doc.text('Mode/Terms of Payment', rx + 2, y + 18);
+    doc.line(rx, y + headerH - 8, rx + rightW, y + headerH - 8);
+    doc.text('Terms of Delivery', rx + 2, y + headerH - 4);
+
+    y += headerH;
+
+    // ---- Buyer box ----
+    const buyerH = 26;
+    doc.rect(marginX, y, contentWidth, buyerH);
+    let by = y + 4.5;
+    doc.setFontSize(8);
+    doc.text('Buyer (Bill to)', marginX + 2, by);
+    by += 4.5;
+    doc.setFontSize(9.5);
+    doc.setFont(undefined, 'bold');
+    doc.text(String(v.party || '-'), marginX + 2, by);
+    doc.setFont(undefined, 'normal');
+    by += 4;
+    doc.setFontSize(8.5);
     if (buyerLedger.address) {
-      buyerLedger.address.split(',').forEach(line => {
-        doc.text(line.trim(), 14, y);
-        y += 4.5;
-      });
+      const addrLines = buyerLedger.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
+      doc.text(addrLines.join(', '), marginX + 2, by, { maxWidth: contentWidth - 4 });
+      by += 4;
     }
     if (buyerLedger.gstin) {
-      doc.text(`GSTIN: ${buyerLedger.gstin}`, 14, y);
-      y += 4.5;
+      doc.text(`GSTIN/UIN: ${buyerLedger.gstin}`, marginX + 2, by);
+      by += 4;
     }
-    y += 6;
+    if (buyerLedger.state) {
+      doc.text(`State Name: ${buyerLedger.state}`, marginX + 2, by);
+      by += 4;
+      doc.text(`Place of Supply: ${buyerLedger.state}`, marginX + 2, by);
+    }
 
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'bold');
-    doc.text('Item', 14, y);
-    doc.text('Qty', 110, y, { align: 'right' });
-    doc.text('Rate', 145, y, { align: 'right' });
-    doc.text('Amount', 195, y, { align: 'right' });
-    doc.setFont(undefined, 'normal');
-    y += 3;
-    doc.line(14, y, 195, y);
-    y += 6;
+    y += buyerH;
 
-    (v.items || []).forEach(item => {
-      if (y > 270) { doc.addPage(); y = 18; }
-      doc.text(String(item.item_name || '-').slice(0, 45), 14, y);
-      doc.text(String((item.billed_qty || '').trim()), 110, y, { align: 'right' });
-      doc.text(String((item.rate || '').trim()), 145, y, { align: 'right' });
-      doc.text(formatCurrencyPDF(parseAmt(item.amount)), 195, y, { align: 'right' });
-      y += 6;
+    // ---- Item table ----
+    const items = v.items || [];
+    const ledgerLines = v.ledger_lines || [];
+
+    const cols = [
+      { key: 'sl', label: 'Sl\nNo.', w: 8, align: 'center' },
+      { key: 'desc', label: 'Description of Goods', w: 52, align: 'left' },
+      { key: 'hsn', label: 'HSN/SAC', w: 18, align: 'center' },
+      { key: 'gst', label: 'GST\nRate', w: 12, align: 'center' },
+      { key: 'qty', label: 'Quantity', w: 22, align: 'right' },
+      { key: 'rate', label: 'Rate', w: 20, align: 'right' },
+      { key: 'per', label: 'per', w: 12, align: 'center' },
+      { key: 'disc', label: 'Disc %', w: 12, align: 'center' },
+      { key: 'amount', label: 'Amount', w: contentWidth - (8+52+18+12+22+20+12+12), align: 'right' },
+    ];
+
+    const rowH = 6;
+    const headH = 9;
+
+    function drawTableHeader() {
+      let cx = marginX;
+      cols.forEach(c => {
+        pdfCell(doc, cx, y, c.w, headH, c.label, { align: 'center', bold: true, fontSize: 7.5 });
+        cx += c.w;
+      });
+      y += headH;
+    }
+
+    drawTableHeader();
+
+    // Look up HSN per item from the already-synced stock item list
+    function hsnFor(itemName) {
+      const match = stockItems.find(s => s.name === itemName);
+      return match && match.hsn_code ? match.hsn_code : '';
+    }
+
+    items.forEach((item, idx) => {
+      if (y + rowH > 280) {
+        doc.addPage();
+        y = 15;
+        drawTableHeader();
+      }
+      const { qty, unit } = parseQtyUnit(item.billed_qty);
+      const { rate, per } = parseRatePer(item.rate);
+      const gstRate = extractGstRate(item.sales_ledger_name);
+      const discount = parseAmt(item.discount);
+
+      let cx = marginX;
+      const rowVals = {
+        sl: String(idx + 1),
+        desc: item.item_name || '-',
+        hsn: hsnFor(item.item_name) || '',
+        gst: gstRate ? `${gstRate}%` : '',
+        qty: `${qty} ${unit}`.trim(),
+        rate: rate.trim(),
+        per: per.trim(),
+        disc: discount ? `${discount}%` : '',
+        amount: formatCurrencyPDF(parseAmt(item.amount)),
+      };
+      cols.forEach(c => {
+        pdfCell(doc, cx, y, c.w, rowH, rowVals[c.key], { align: c.align, fontSize: 7.5 });
+        cx += c.w;
+      });
+      y += rowH;
     });
 
-    y += 4;
-    doc.line(14, y, 195, y);
-    y += 8;
+    // Tax/total rows — spans description+ area, amount in last column
+    const descAndBeforeW = cols.slice(0, cols.length - 1).reduce((s, c) => s + c.w, 0);
+    const amountColX = marginX + descAndBeforeW;
+    const amountColW = cols[cols.length - 1].w;
 
-    (v.ledger_lines || []).forEach(line => {
-      if (y > 270) { doc.addPage(); y = 18; }
-      doc.text(String(line.ledger_name || '-'), 130, y);
-      doc.text(formatCurrencyPDF(Math.abs(parseAmt(line.amount))), 195, y, { align: 'right' });
-      y += 6;
-    });
+    let grandTotal = parseAmt(v.amount);
 
-    if (companyInfo.bank_name) {
-      y += 8;
-      if (y > 260) { doc.addPage(); y = 18; }
-      doc.setFont(undefined, 'bold');
-      doc.text('Bank Details', 14, y);
+    ledgerLines.filter(l => l.ledger_name !== v.party).forEach(line => {
+      if (y + rowH > 280) { doc.addPage(); y = 15; }
+      doc.rect(marginX, y, descAndBeforeW, rowH);
+      doc.setFont(undefined, 'italic');
+      doc.setFontSize(8);
+      doc.text(line.ledger_name || '-', marginX + descAndBeforeW - 2, y + rowH / 2 + 1, { align: 'right' });
       doc.setFont(undefined, 'normal');
-      y += 5;
-      doc.text(companyInfo.bank_name, 14, y);
-      y += 4.5;
-      if (companyInfo.bank_account) {
-        doc.text(`A/c No: ${companyInfo.bank_account}`, 14, y);
-        y += 4.5;
-      }
-      if (companyInfo.bank_ifsc) {
-        doc.text(`IFSC: ${companyInfo.bank_ifsc}`, 14, y);
-        y += 4.5;
-      }
+      pdfCell(doc, amountColX, y, amountColW, rowH, formatCurrencyPDF(Math.abs(parseAmt(line.amount))), { align: 'right', fontSize: 7.5 });
+      y += rowH;
+    });
+
+    // Total row
+    if (y + rowH > 280) { doc.addPage(); y = 15; }
+    pdfCell(doc, marginX, y, descAndBeforeW, rowH, 'Total', { align: 'right', bold: true, fontSize: 8.5 });
+    pdfCell(doc, amountColX, y, amountColW, rowH, formatCurrencyPDF(Math.abs(grandTotal)), { align: 'right', bold: true, fontSize: 8.5 });
+    y += rowH;
+
+    // Amount in words row
+    const wordsH = 10;
+    doc.rect(marginX, y, contentWidth, wordsH);
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('Amount Chargeable (in words)', marginX + 2, y + 4);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(8.5);
+    doc.text(amountInWords(grandTotal), marginX + 2, y + 8, { maxWidth: contentWidth - 4 });
+    y += wordsH;
+
+    // ---- HSN-wise tax summary table ----
+    const hsnGroups = {};
+    items.forEach(item => {
+      const hsn = hsnFor(item.item_name) || 'N/A';
+      const gstRate = extractGstRate(item.sales_ledger_name) || 0;
+      const key = `${hsn}|${gstRate}`;
+      if (!hsnGroups[key]) hsnGroups[key] = { hsn, gstRate, taxable: 0 };
+      hsnGroups[key].taxable += Math.abs(parseAmt(item.amount));
+    });
+    const hasIGST = ledgerLines.some(l => (l.ledger_name || '').toUpperCase().includes('IGST'));
+
+    if (y + 10 > 280) { doc.addPage(); y = 15; }
+
+    const hsnCols = hasIGST
+      ? [
+          { key: 'hsn', label: 'HSN/SAC', w: 30 },
+          { key: 'taxable', label: 'Taxable\nValue', w: 32 },
+          { key: 'igstRate', label: 'IGST Rate', w: 26 },
+          { key: 'igstAmt', label: 'IGST Amount', w: 32 },
+          { key: 'total', label: 'Total Tax Amount', w: contentWidth - (30+32+26+32) },
+        ]
+      : [
+          { key: 'hsn', label: 'HSN/SAC', w: 26 },
+          { key: 'taxable', label: 'Taxable\nValue', w: 28 },
+          { key: 'cgstRate', label: 'CGST Rate', w: 20 },
+          { key: 'cgstAmt', label: 'CGST Amount', w: 26 },
+          { key: 'sgstRate', label: 'SGST Rate', w: 20 },
+          { key: 'sgstAmt', label: 'SGST Amount', w: 26 },
+          { key: 'total', label: 'Total Tax Amount', w: contentWidth - (26+28+20+26+20+26) },
+        ];
+
+    let hx = marginX;
+    hsnCols.forEach(c => {
+      pdfCell(doc, hx, y, c.w, 9, c.label, { align: 'center', bold: true, fontSize: 7 });
+      hx += c.w;
+    });
+    y += 9;
+
+    let hsnTotalTaxable = 0, hsnTotalTax = 0;
+    Object.values(hsnGroups).forEach(g => {
+      if (y + rowH > 280) { doc.addPage(); y = 15; }
+      const halfRate = g.gstRate / 2;
+      const cgstAmt = g.taxable * halfRate / 100;
+      const sgstAmt = g.taxable * halfRate / 100;
+      const igstAmt = g.taxable * g.gstRate / 100;
+      const totalTax = hasIGST ? igstAmt : (cgstAmt + sgstAmt);
+      hsnTotalTaxable += g.taxable;
+      hsnTotalTax += totalTax;
+
+      hx = marginX;
+      const rowVals = hasIGST
+        ? { hsn: g.hsn, taxable: formatCurrencyPDF(g.taxable), igstRate: `${g.gstRate}%`, igstAmt: formatCurrencyPDF(igstAmt), total: formatCurrencyPDF(totalTax) }
+        : { hsn: g.hsn, taxable: formatCurrencyPDF(g.taxable), cgstRate: `${halfRate}%`, cgstAmt: formatCurrencyPDF(cgstAmt), sgstRate: `${halfRate}%`, sgstAmt: formatCurrencyPDF(sgstAmt), total: formatCurrencyPDF(totalTax) };
+      hsnCols.forEach(c => {
+        pdfCell(doc, hx, y, c.w, rowH, rowVals[c.key], { align: c.key === 'hsn' ? 'center' : 'right', fontSize: 7.5 });
+        hx += c.w;
+      });
+      y += rowH;
+    });
+
+    // HSN table total row
+    hx = marginX;
+    const hsnTotalVals = hasIGST
+      ? { hsn: 'Total', taxable: formatCurrencyPDF(hsnTotalTaxable), igstRate: '', igstAmt: '', total: formatCurrencyPDF(hsnTotalTax) }
+      : { hsn: 'Total', taxable: formatCurrencyPDF(hsnTotalTaxable), cgstRate: '', cgstAmt: '', sgstRate: '', sgstAmt: '', total: formatCurrencyPDF(hsnTotalTax) };
+    hsnCols.forEach(c => {
+      pdfCell(doc, hx, y, c.w, rowH, hsnTotalVals[c.key], { align: c.key === 'hsn' ? 'center' : 'right', bold: true, fontSize: 7.5 });
+      hx += c.w;
+    });
+    y += rowH + 4;
+
+    // Tax amount in words
+    if (y + 8 > 280) { doc.addPage(); y = 15; }
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('Tax Amount (in words):', marginX, y);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(8.5);
+    doc.text(amountInWords(hsnTotalTax), marginX + 32, y, { maxWidth: contentWidth - 34 });
+    y += 10;
+
+    // ---- Declaration (left) + Bank Details (right) ----
+    if (y + 40 > 280) { doc.addPage(); y = 15; }
+    const boxH = 34;
+    const declW = contentWidth * 0.5;
+    const bankW = contentWidth - declW;
+    doc.rect(marginX, y, declW, boxH);
+    doc.rect(marginX + declW, y, bankW, boxH);
+
+    let dy = y + 4;
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'bold');
+    doc.text('Declaration', marginX + 2, dy);
+    doc.setFont(undefined, 'normal');
+    dy += 4;
+    const declText = 'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.';
+    doc.text(declText, marginX + 2, dy, { maxWidth: declW - 4 });
+
+    let ky = y + 4;
+    doc.setFont(undefined, 'bold');
+    doc.text("Company's Bank Details", marginX + declW + 2, ky);
+    doc.setFont(undefined, 'normal');
+    ky += 5;
+    if (companyInfo.bank_name) {
+      doc.text(`Bank Name: ${companyInfo.bank_name}`, marginX + declW + 2, ky);
+      ky += 4.5;
     }
+    if (companyInfo.bank_account) {
+      doc.text(`A/c No.: ${companyInfo.bank_account}`, marginX + declW + 2, ky);
+      ky += 4.5;
+    }
+    if (companyInfo.bank_ifsc) {
+      doc.text(`IFSC Code: ${companyInfo.bank_ifsc}`, marginX + declW + 2, ky);
+      ky += 4.5;
+    }
+    doc.setFontSize(8);
+    doc.text(`for ${companyLabel}`, marginX + declW + bankW - 2, y + boxH - 10, { align: 'right' });
+    doc.setFontSize(7.5);
+    doc.text('Authorised Signatory', marginX + declW + bankW - 2, y + boxH - 3, { align: 'right' });
+
+    y += boxH + 6;
+
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('This is a Computer Generated Invoice', pageWidth / 2, y, { align: 'center' });
 
     doc.save(`invoice_${v.voucher_number || 'export'}.pdf`);
   }
