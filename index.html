@@ -5,23 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>TallyMobile — Shivam Group</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink: #1f2e4a;
-    --ink-soft: #46567a;
-    --paper: #f6f5f0;
-    --paper-line: #e2e0d4;
+    --primary: #1565c0;
+    --primary-dark: #0d47a1;
+    --primary-soft: #e8f1fc;
+    --ink: #1a2333;
+    --ink-soft: #667085;
+    --paper: #f4f6f9;
+    --paper-line: #e8ebf0;
     --paper-card: #ffffff;
-    --forest: #2f5233;
-    --forest-soft: #e8efe6;
-    --rust: #b33f2e;
-    --rust-soft: #fbe9e5;
-    --amber: #c77d2e;
-    --amber-soft: #faf0e2;
-    --border: #d9d6c6;
-    --radius: 10px;
-    --shadow: 0 1px 3px rgba(31,46,74,0.08), 0 1px 2px rgba(31,46,74,0.06);
+    --forest: #1e8e5a;
+    --forest-soft: #e6f7ef;
+    --rust: #d32f2f;
+    --rust-soft: #fdecea;
+    --amber: #f0a020;
+    --amber-soft: #fef4e3;
+    --border: #e4e7ec;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16,24,40,0.06), 0 1px 3px rgba(16,24,40,0.08);
   }
 
   * { box-sizing: border-box; }
@@ -29,10 +32,6 @@
 
   body {
     background: var(--paper);
-    background-image:
-      linear-gradient(var(--paper-line) 1px, transparent 1px);
-    background-size: 100% 2.1em;
-    background-attachment: local;
     color: var(--ink);
     font-family: 'Inter', sans-serif;
     min-height: 100dvh;
@@ -40,8 +39,8 @@
   }
 
   h1, h2, h3, .display {
-    font-family: 'Spectral', serif;
-    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
     letter-spacing: -0.01em;
   }
 
@@ -57,8 +56,8 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: var(--ink);
-    background-image: radial-gradient(circle at 20% 20%, #2a3d63 0%, var(--ink) 60%);
+    background: var(--primary-dark);
+    background-image: radial-gradient(circle at 20% 20%, #1976d2 0%, var(--primary-dark) 60%);
   }
   .login-card {
     background: var(--paper-card);
@@ -73,10 +72,10 @@
     width: 48px; height: 48px;
     margin: 0 auto 18px;
     border-radius: 10px;
-    background: var(--ink);
+    background: var(--primary);
     display: flex; align-items: center; justify-content: center;
     color: var(--paper);
-    font-family: 'Spectral', serif;
+    font-family: 'Inter', sans-serif; font-weight: 800;
     font-weight: 700;
     font-size: 22px;
   }
@@ -98,7 +97,7 @@
     padding: 13px;
     border-radius: 8px;
     border: none;
-    background: var(--ink);
+    background: var(--primary);
     color: white;
     font-weight: 600;
     font-size: 15px;
@@ -106,11 +105,36 @@
   }
   .login-error { color: var(--rust); font-size: 13px; margin-top: 10px; min-height: 18px; }
 
+  /* ===== Company Select Screen ===== */
+  #company-select-screen {
+    display: none;
+    min-height: 100dvh;
+    background: var(--ink);
+    background-image: radial-gradient(circle at 20% 20%, #1976d2 0%, var(--primary-dark) 60%);
+    padding: 40px 20px;
+  }
+  .company-select-inner { max-width: 420px; margin: 0 auto; }
+  .company-select-inner h1 { color: var(--paper); font-size: 22px; text-align: center; margin-bottom: 6px; }
+  .company-select-inner p { color: #b9c2da; font-size: 13px; text-align: center; margin-bottom: 28px; }
+  .company-card {
+    background: var(--paper-card);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    display: flex; align-items: center; justify-content: space-between;
+    border: none;
+    width: 100%;
+    text-align: left;
+  }
+  .company-card .cc-name { font-family: 'Inter', sans-serif; font-size: 17px; font-weight: 700; color: var(--ink); }
+  .company-card .cc-arrow { font-size: 18px; color: var(--ink-soft); }
+
   /* ===== App Shell ===== */
   #app-screen { display: none; }
   header.top {
     position: sticky; top: 0; z-index: 20;
-    background: var(--ink);
+    background: var(--primary);
     color: var(--paper);
     padding: 14px 16px 0;
   }
@@ -118,59 +142,95 @@
     display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 12px;
   }
-  .top-row .brand { font-family: 'Spectral', serif; font-size: 18px; font-weight: 600; }
+  .top-row .brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; }
   .top-row .sync-status { font-size: 11px; color: #aab6d1; }
   .top-row .sync-dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: #7fbf7f; margin-right: 5px; vertical-align: middle;
   }
 
-  .company-tabs {
-    display: flex; gap: 4px; overflow-x: auto;
-    padding-bottom: 0;
-    -ms-overflow-style: none; scrollbar-width: none;
+  .company-switcher {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0 12px;
+    border: none; background: none; color: var(--paper);
+    width: 100%; text-align: left;
   }
-  .company-tabs::-webkit-scrollbar { display: none; }
-  .company-tab {
-    flex-shrink: 0;
-    padding: 9px 16px 11px;
-    border: none;
-    background: transparent;
-    color: #b9c2da;
-    font-size: 13px;
-    font-weight: 500;
-    border-radius: 10px 10px 0 0;
-    white-space: nowrap;
-    border-bottom: 2px solid transparent;
-  }
-  .company-tab.active {
-    background: var(--paper);
-    color: var(--ink);
-    font-weight: 600;
-  }
+  .company-switcher .cs-name { font-size: 15px; font-weight: 600; }
+  .company-switcher .cs-change { font-size: 11.5px; color: #9fb0d6; text-decoration: underline; }
 
   nav.section-nav {
+    display: none; /* replaced by bottom-nav */
+  }
+
+  nav.bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
     display: flex;
     background: var(--paper-card);
-    border-bottom: 1px solid var(--border);
-    position: sticky; top: 68px; z-index: 19;
-    overflow-x: auto;
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -2px 8px rgba(16,24,40,0.06);
   }
-  .section-tab {
+  .bottom-nav-tab {
     flex: 1;
-    padding: 12px 8px;
-    text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 9px 4px 8px;
     border: none;
     background: none;
-    font-size: 12.5px;
+    font-size: 10.5px;
     font-weight: 600;
     color: var(--ink-soft);
-    border-bottom: 2.5px solid transparent;
-    white-space: nowrap;
   }
-  .section-tab.active { color: var(--ink); border-bottom-color: var(--amber); }
+  .bottom-nav-tab .bn-icon { font-size: 19px; line-height: 1; }
+  .bottom-nav-tab.active { color: var(--primary); }
 
-  main { padding: 14px 14px 90px; max-width: 720px; margin: 0 auto; }
+  main { padding: 14px 14px 84px; max-width: 720px; margin: 0 auto; }
+
+  /* ===== Dashboard (Home) ===== */
+  .dash-greeting { font-size: 13px; color: var(--ink-soft); margin-bottom: 2px; }
+  .dash-company-name { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
+
+  .dash-stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-bottom: 18px;
+  }
+  .dash-stat-card {
+    background: var(--paper-card);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .dash-stat-card .ds-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 6px; }
+  .dash-stat-card .ds-value { font-size: 19px; font-weight: 800; font-family: 'IBM Plex Mono', monospace; }
+  .dash-stat-card.primary { background: var(--primary); }
+  .dash-stat-card.primary .ds-label { color: #cfe1f7; }
+  .dash-stat-card.primary .ds-value { color: white; }
+
+  .dash-section-title {
+    font-size: 13px; font-weight: 700; color: var(--ink-soft);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin: 6px 0 10px;
+  }
+
+  .dash-tile-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    margin-bottom: 20px;
+  }
+  .dash-tile {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 6px 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    box-shadow: var(--shadow);
+  }
+  .dash-tile .dt-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 19px;
+  }
+  .dash-tile .dt-label { font-size: 10.5px; font-weight: 600; color: var(--ink); text-align: center; }
 
   .search-bar {
     display: flex; gap: 8px; margin-bottom: 14px;
@@ -243,6 +303,31 @@
     color: var(--amber);
     margin-top: 3px;
   }
+  .badge-debtor { background: var(--rust-soft); color: var(--rust); }
+  .badge-creditor { background: var(--forest-soft); color: var(--forest); }
+
+  .filter-chips {
+    display: flex; gap: 8px; overflow-x: auto;
+    margin-bottom: 12px;
+    -ms-overflow-style: none; scrollbar-width: none;
+  }
+  .filter-chips::-webkit-scrollbar { display: none; }
+  .filter-chip {
+    flex-shrink: 0;
+    padding: 7px 14px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .filter-chip.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--paper);
+  }
 
   .empty-state {
     text-align: center;
@@ -250,7 +335,7 @@
     color: var(--ink-soft);
   }
   .empty-state .glyph { font-size: 30px; margin-bottom: 10px; }
-  .empty-state .title { font-family: 'Spectral', serif; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
+  .empty-state .title { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
   .empty-state .desc { font-size: 13px; }
 
   .loading-state { text-align: center; padding: 60px 20px; color: var(--ink-soft); font-size: 13px; }
@@ -276,7 +361,7 @@
   .overlay.open { display: block; }
   .overlay-header {
     position: sticky; top: 0; z-index: 5;
-    background: var(--ink); color: var(--paper);
+    background: var(--primary); color: white;
     padding: 14px 16px;
     display: flex; align-items: center; gap: 12px;
   }
@@ -286,7 +371,7 @@
   }
   .overlay-title {
     flex: 1;
-    font-family: 'Spectral', serif;
+    font-family: 'Inter', sans-serif; font-weight: 800;
     font-size: 16px; font-weight: 600;
   }
   .overlay-body { padding: 16px; max-width: 720px; margin: 0 auto 60px; }
@@ -302,7 +387,7 @@
     margin-bottom: 14px;
     box-shadow: var(--shadow);
   }
-  .invoice-header .inv-num { font-family: 'Spectral', serif; font-size: 18px; font-weight: 700; }
+  .invoice-header .inv-num { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; }
   .invoice-header .inv-meta { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
   .invoice-header .inv-party { font-size: 14px; font-weight: 600; margin-top: 10px; }
 
@@ -364,6 +449,15 @@
   </div>
 </div>
 
+<!-- ===== COMPANY SELECT SCREEN ===== -->
+<div id="company-select-screen">
+  <div class="company-select-inner">
+    <h1>Select Company</h1>
+    <p>Choose which business to view</p>
+    <div id="company-select-list"></div>
+  </div>
+</div>
+
 <!-- ===== APP SCREEN ===== -->
 <div id="app-screen">
   <header class="top">
@@ -371,18 +465,14 @@
       <div class="brand">TallyMobile</div>
       <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
     </div>
-    <div class="company-tabs" id="company-tabs"></div>
+    <button class="company-switcher" id="company-switcher-btn">
+      <span class="cs-name" id="company-switcher-name"></span>
+      <span class="cs-change">Switch company</span>
+    </button>
   </header>
 
-  <nav class="section-nav" id="section-nav">
-    <button class="section-tab active" data-section="outstanding">Outstanding</button>
-    <button class="section-tab" data-section="ledgers">Ledgers</button>
-    <button class="section-tab" data-section="daybook">Day Book</button>
-    <button class="section-tab" data-section="stock">Stock</button>
-  </nav>
-
   <main>
-    <div class="search-bar">
+    <div class="search-bar" id="search-bar-row">
       <input type="text" id="search-input" placeholder="Search…">
       <button class="export-btn" id="export-xlsx-btn">XLSX</button>
       <button class="export-btn" id="export-pdf-btn">PDF</button>
@@ -396,6 +486,14 @@
 
     <footer class="last-synced" id="last-synced-footer"></footer>
   </main>
+
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="bottom-nav-tab active" data-section="home"><span class="bn-icon">⌂</span>Home</button>
+    <button class="bottom-nav-tab" data-section="outstanding"><span class="bn-icon">₹</span>Outstanding</button>
+    <button class="bottom-nav-tab" data-section="ledgers"><span class="bn-icon">▤</span>Ledgers</button>
+    <button class="bottom-nav-tab" data-section="daybook"><span class="bn-icon">▦</span>Day Book</button>
+    <button class="bottom-nav-tab" data-section="stock"><span class="bn-icon">◫</span>Stock</button>
+  </nav>
 
   <!-- Ledger Detail Overlay -->
   <div id="ledger-detail-overlay" class="overlay">
@@ -457,7 +555,7 @@
 
   // ================= STATE =================
   let currentCompany = COMPANIES[0].key;
-  let currentSection = "outstanding";
+  let currentSection = "home";
   let searchTerm = "";
   let companyData = {}; // key -> { ledgers, outstanding_receivables, daybook, stock_items, last_synced }
 
@@ -477,6 +575,8 @@
     } catch { return false; }
   }
 
+  const COMPANY_SELECTION_KEY = "tallymobile_selected_company";
+
   document.getElementById('login-btn').addEventListener('click', attemptLogin);
   document.getElementById('password-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') attemptLogin();
@@ -487,51 +587,74 @@
     const hash = await sha256(input);
     if (hash === ACCESS_CODE_HASH) {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() }));
-      showApp();
+      afterLogin();
     } else {
       document.getElementById('login-error').textContent = "Incorrect access code.";
     }
   }
 
-  function showApp() {
+  function afterLogin() {
     document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app-screen').style.display = 'block';
-    initApp();
+    const savedCompany = localStorage.getItem(COMPANY_SELECTION_KEY);
+    if (savedCompany && COMPANIES.some(c => c.key === savedCompany)) {
+      currentCompany = savedCompany;
+      showApp();
+    } else {
+      showCompanySelect();
+    }
   }
 
-  if (checkExistingSession()) {
-    showApp();
-  }
-
-  // ================= APP INIT =================
-  function initApp() {
-    renderCompanyTabs();
-    attachSectionNav();
-    attachSearch();
-    attachExportButtons();
-    listenToAllCompanies();
-  }
-
-  function renderCompanyTabs() {
-    const container = document.getElementById('company-tabs');
-    container.innerHTML = '';
+  function showCompanySelect() {
+    document.getElementById('app-screen').style.display = 'none';
+    document.getElementById('company-select-screen').style.display = 'block';
+    const list = document.getElementById('company-select-list');
+    list.innerHTML = '';
     COMPANIES.forEach(c => {
       const btn = document.createElement('button');
-      btn.className = 'company-tab' + (c.key === currentCompany ? ' active' : '');
-      btn.textContent = c.label;
+      btn.className = 'company-card';
+      btn.innerHTML = `<span class="cc-name">${c.label}</span><span class="cc-arrow">&rarr;</span>`;
       btn.addEventListener('click', () => {
+        localStorage.setItem(COMPANY_SELECTION_KEY, c.key);
         currentCompany = c.key;
-        renderCompanyTabs();
-        render();
+        showApp();
       });
-      container.appendChild(btn);
+      list.appendChild(btn);
     });
   }
 
+  function showApp() {
+    document.getElementById('company-select-screen').style.display = 'none';
+    document.getElementById('app-screen').style.display = 'block';
+    document.getElementById('company-switcher-name').textContent =
+      COMPANIES.find(c => c.key === currentCompany)?.label || '';
+    initApp();
+    listenToCurrentCompany(); // always (re)subscribe — handles company switching too
+  }
+
+  if (checkExistingSession()) {
+    afterLogin();
+  }
+
+  document.getElementById('company-switcher-btn').addEventListener('click', () => {
+    showCompanySelect();
+  });
+
+  // ================= APP INIT =================
+  let appInitialized = false;
+  let currentUnsubscribe = null;
+
+  function initApp() {
+    if (appInitialized) return; // one-time UI wiring only
+    appInitialized = true;
+    attachSectionNav();
+    attachSearch();
+    attachExportButtons();
+  }
+
   function attachSectionNav() {
-    document.querySelectorAll('.section-tab').forEach(btn => {
+    document.querySelectorAll('.bottom-nav-tab').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.section-tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.bottom-nav-tab').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentSection = btn.dataset.section;
         document.getElementById('search-input').value = '';
@@ -548,21 +671,20 @@
     });
   }
 
-  function listenToAllCompanies() {
-    COMPANIES.forEach(c => {
-      const companyRef = ref(db, `companies/${c.key}`);
-      onValue(companyRef, snapshot => {
-        const val = snapshot.val() || {};
-        // sales_vouchers arrives as an object keyed by voucher_id; keep the
-        // rest of companyData[c.key] shape consistent with before by
-        // stashing it under a dedicated field.
-        companyData[c.key] = val;
-        document.getElementById('sync-text').textContent = 'Live';
-        render();
-      }, error => {
-        document.getElementById('sync-text').textContent = 'Connection error';
-        console.error(error);
-      });
+  function listenToCurrentCompany() {
+    if (currentUnsubscribe) {
+      currentUnsubscribe();
+      currentUnsubscribe = null;
+    }
+    document.getElementById('sync-text').textContent = 'Loading…';
+    const companyRef = ref(db, `companies/${currentCompany}`);
+    currentUnsubscribe = onValue(companyRef, snapshot => {
+      companyData[currentCompany] = snapshot.val() || {};
+      document.getElementById('sync-text').textContent = 'Live';
+      render();
+    }, error => {
+      document.getElementById('sync-text').textContent = 'Connection error';
+      console.error(error);
     });
   }
 
@@ -572,6 +694,7 @@
     const contentArea = document.getElementById('content-area');
     const summaryStrip = document.getElementById('summary-strip');
     const footer = document.getElementById('last-synced-footer');
+    const searchBarRow = document.getElementById('search-bar-row');
 
     if (!data) {
       contentArea.innerHTML = '<div class="loading-state">Loading data…</div>';
@@ -582,10 +705,80 @@
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
 
-    if (currentSection === 'outstanding') renderOutstanding(data, contentArea, summaryStrip);
+    searchBarRow.style.display = currentSection === 'home' ? 'none' : 'flex';
+
+    if (currentSection === 'home') renderHome(data, contentArea, summaryStrip);
+    else if (currentSection === 'outstanding') renderOutstanding(data, contentArea, summaryStrip);
     else if (currentSection === 'ledgers') renderLedgers(data, contentArea, summaryStrip);
     else if (currentSection === 'daybook') renderDaybook(data, contentArea, summaryStrip);
     else if (currentSection === 'stock') renderStock(data, contentArea, summaryStrip);
+  }
+
+  function goToSection(section) {
+    currentSection = section;
+    document.querySelectorAll('.bottom-nav-tab').forEach(b => {
+      b.classList.toggle('active', b.dataset.section === section);
+    });
+    render();
+  }
+
+  function renderHome(data, contentArea, summaryStrip) {
+    summaryStrip.innerHTML = '';
+
+    const outstanding = data.outstanding_receivables || [];
+    const totalOutstanding = outstanding.reduce((s, r) => s + parseAmt(r.outstanding), 0);
+    const ledgerCount = (data.ledgers || []).length;
+    const stockValue = (data.stock_items || []).reduce((s, r) => s + parseAmt(r.closing_value), 0);
+    const voucherCount = (data.daybook || []).length;
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
+
+    contentArea.innerHTML = `
+      <div class="dash-greeting">Welcome back</div>
+      <div class="dash-company-name">${escapeHtml(companyLabel)}</div>
+
+      <div class="dash-stat-grid">
+        <div class="dash-stat-card primary">
+          <div class="ds-label">Total Outstanding</div>
+          <div class="ds-value">${formatCurrency(totalOutstanding)}</div>
+        </div>
+        <div class="dash-stat-card">
+          <div class="ds-label">Stock Value</div>
+          <div class="ds-value">${formatCurrency(stockValue)}</div>
+        </div>
+        <div class="dash-stat-card">
+          <div class="ds-label">Ledgers</div>
+          <div class="ds-value">${ledgerCount}</div>
+        </div>
+        <div class="dash-stat-card">
+          <div class="ds-label">Vouchers (1yr)</div>
+          <div class="ds-value">${voucherCount}</div>
+        </div>
+      </div>
+
+      <div class="dash-section-title">Reports</div>
+      <div class="dash-tile-grid">
+        <button class="dash-tile" data-goto="outstanding">
+          <span class="dt-icon" style="background:var(--rust-soft); color:var(--rust);">₹</span>
+          <span class="dt-label">Outstanding</span>
+        </button>
+        <button class="dash-tile" data-goto="ledgers">
+          <span class="dt-icon" style="background:var(--primary-soft); color:var(--primary);">▤</span>
+          <span class="dt-label">Ledgers</span>
+        </button>
+        <button class="dash-tile" data-goto="daybook">
+          <span class="dt-icon" style="background:var(--amber-soft); color:var(--amber);">▦</span>
+          <span class="dt-label">Day Book</span>
+        </button>
+        <button class="dash-tile" data-goto="stock">
+          <span class="dt-icon" style="background:var(--forest-soft); color:var(--forest);">◫</span>
+          <span class="dt-label">Stock</span>
+        </button>
+      </div>
+    `;
+
+    contentArea.querySelectorAll('.dash-tile').forEach(tile => {
+      tile.addEventListener('click', () => goToSection(tile.dataset.goto));
+    });
   }
 
   function renderOutstanding(data, contentArea, summaryStrip) {
@@ -622,37 +815,84 @@
     attachRowClickHandlers(contentArea);
   }
 
+  let ledgerFilter = 'all'; // 'all' | 'debtors' | 'creditors' | 'other'
+
+  function classifyLedger(group) {
+    const g = (group || '').trim().toLowerCase();
+    if (g === 'sundry debtors') return 'debtors';
+    if (g === 'sundry creditors') return 'creditors';
+    return 'other';
+  }
+
   function renderLedgers(data, contentArea, summaryStrip) {
     let rows = data.ledgers || [];
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
+    if (ledgerFilter !== 'all') {
+      rows = rows.filter(r => classifyLedger(r.group) === ledgerFilter);
+    }
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const allRows = (data.ledgers || []);
+    const debtorCount = allRows.filter(r => classifyLedger(r.group) === 'debtors').length;
+    const creditorCount = allRows.filter(r => classifyLedger(r.group) === 'creditors').length;
 
     summaryStrip.innerHTML = `
       <div class="summary-chip">
         <div class="label">Total Ledgers</div>
-        <div class="value mono">${rows.length}</div>
+        <div class="value mono">${allRows.length}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Debtors</div>
+        <div class="value mono">${debtorCount}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Creditors</div>
+        <div class="value mono">${creditorCount}</div>
+      </div>
+    `;
+
+    const filterChipsHtml = `
+      <div class="filter-chips">
+        <button class="filter-chip ${ledgerFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
+        <button class="filter-chip ${ledgerFilter === 'debtors' ? 'active' : ''}" data-filter="debtors">Sundry Debtors</button>
+        <button class="filter-chip ${ledgerFilter === 'creditors' ? 'active' : ''}" data-filter="creditors">Sundry Creditors</button>
+        <button class="filter-chip ${ledgerFilter === 'other' ? 'active' : ''}" data-filter="other">Other</button>
       </div>
     `;
 
     if (rows.length === 0) {
-      contentArea.innerHTML = emptyState('No ledgers found', 'Try a different search term.');
+      contentArea.innerHTML = filterChipsHtml + emptyState('No ledgers found', 'Try a different search term or filter.');
+      attachFilterChipHandlers(contentArea);
       return;
     }
 
-    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => {
+    contentArea.innerHTML = filterChipsHtml + `<div class="list-card">${rows.slice(0, 300).map(r => {
       const bal = parseAmt(r.closing_balance);
       const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
+      const kind = classifyLedger(r.group);
+      const badge = kind === 'debtors' ? '<span class="badge badge-debtor">Debtor</span>' :
+                    kind === 'creditors' ? '<span class="badge badge-creditor">Creditor</span>' : '';
       return `
       <div class="row clickable-row" data-party="${escapeHtml(r.name || '')}">
         <div>
           <div class="name">${escapeHtml(r.name || '—')}</div>
-          <div class="sub">${escapeHtml(r.group || '')}</div>
+          <div class="sub">${escapeHtml(r.group || '')} ${badge}</div>
         </div>
         <div class="amount ${cls} mono">${formatCurrency(bal)}</div>
       </div>`;
     }).join('')}</div>
     ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
     attachRowClickHandlers(contentArea);
+    attachFilterChipHandlers(contentArea);
+  }
+
+  function attachFilterChipHandlers(container) {
+    container.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        ledgerFilter = chip.dataset.filter;
+        render();
+      });
+    });
   }
 
   function renderDaybook(data, contentArea, summaryStrip) {
@@ -825,11 +1065,23 @@
     const ledgerLines = voucher.ledger_lines || [];
     const itemsTotal = items.reduce((s, i) => s + Math.abs(parseAmt(i.amount)), 0);
 
+    const data = companyData[currentCompany] || {};
+    const companyInfo = data.company_info || {};
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
+
+    // Look up the buyer's address/GSTIN/state from the already-synced Ledger list
+    const buyerLedger = (data.party_details || {})[voucher.party] || Object.values(data.party_details || {}).find(p => p.name === voucher.party) || {};
+
     body.innerHTML = `
       <div class="invoice-header">
-        <div class="inv-num">Sales Invoice ${voucher.voucher_number ? '#' + escapeHtml(voucher.voucher_number) : ''}</div>
-        <div class="inv-meta">${escapeHtml(formatTallyDate(voucher.date))} &middot; ${escapeHtml(COMPANIES.find(c => c.key === currentCompany)?.label || '')}</div>
-        <div class="inv-party">${escapeHtml(voucher.party || '—')}</div>
+        <div class="inv-num">${escapeHtml(companyLabel)}</div>
+        ${companyInfo.address ? `<div class="sub" style="white-space:pre-line; margin-top:2px;">${escapeHtml(companyInfo.address)}</div>` : ''}
+        ${companyInfo.gstin ? `<div class="sub">GSTIN: ${escapeHtml(companyInfo.gstin)}</div>` : ''}
+        <div class="inv-meta" style="margin-top:8px;">Sales Invoice ${voucher.voucher_number ? '#' + escapeHtml(voucher.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(voucher.date))}</div>
+        <div class="inv-party" style="margin-top:10px;">Bill To: ${escapeHtml(voucher.party || '—')}</div>
+        ${buyerLedger.address ? `<div class="sub" style="white-space:pre-line;">${escapeHtml(buyerLedger.address)}</div>` : ''}
+        ${buyerLedger.gstin ? `<div class="sub">GSTIN: ${escapeHtml(buyerLedger.gstin)}</div>` : ''}
+        ${buyerLedger.state ? `<div class="sub">${escapeHtml(buyerLedger.state)}</div>` : ''}
         ${voucher.narration ? `<div class="sub" style="margin-top:6px;">${escapeHtml(voucher.narration)}</div>` : ''}
       </div>
 
@@ -858,7 +1110,14 @@
           </div>
         `).join('')}
       </div>
-    `;
+
+      ${companyInfo.bank_name ? `
+      <div class="tax-summary" style="margin-top:12px;">
+        <div class="tax-row" style="border-bottom:none; padding-bottom:4px;"><div style="font-weight:700;">Bank Details</div><div></div></div>
+        <div class="tax-row" style="font-size:12.5px;"><div>${escapeHtml(companyInfo.bank_name)}</div><div></div></div>
+        ${companyInfo.bank_account ? `<div class="tax-row" style="font-size:12.5px;"><div>A/c: ${escapeHtml(companyInfo.bank_account)}</div><div></div></div>` : ''}
+        ${companyInfo.bank_ifsc ? `<div class="tax-row" style="font-size:12.5px;"><div>IFSC: ${escapeHtml(companyInfo.bank_ifsc)}</div><div></div></div>` : ''}
+      </div>` : ''}    `;
 
     document.getElementById('voucher-detail-overlay').classList.add('open');
   }
@@ -878,19 +1137,50 @@
     const doc = new jsPDF();
     const v = currentVoucherDetail;
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    const data = companyData[currentCompany] || {};
+    const companyInfo = data.company_info || {};
+    const buyerLedger = (data.party_details || {})[v.party] || Object.values(data.party_details || {}).find(p => p.name === v.party) || {};
 
     let y = 18;
     doc.setFontSize(16);
     doc.text(companyLabel, 14, y);
-    y += 8;
+    y += 6;
+    doc.setFontSize(9);
+    if (companyInfo.address) {
+      companyInfo.address.split(',').forEach(line => {
+        doc.text(line.trim(), 14, y);
+        y += 4.5;
+      });
+    }
+    if (companyInfo.gstin) {
+      doc.text(`GSTIN: ${companyInfo.gstin}`, 14, y);
+      y += 4.5;
+    }
+    y += 4;
+
     doc.setFontSize(12);
     doc.text(`Sales Invoice ${v.voucher_number ? '#' + v.voucher_number : ''}`, 14, y);
     y += 6;
     doc.setFontSize(10);
     doc.text(`Date: ${formatTallyDate(v.date)}`, 14, y);
-    y += 5.5;
-    doc.text(`Party: ${v.party || '-'}`, 14, y);
-    y += 10;
+    y += 6;
+
+    doc.setFont(undefined, 'bold');
+    doc.text('Bill To:', 14, y);
+    doc.setFont(undefined, 'normal');
+    doc.text(v.party || '-', 34, y);
+    y += 5;
+    if (buyerLedger.address) {
+      buyerLedger.address.split(',').forEach(line => {
+        doc.text(line.trim(), 14, y);
+        y += 4.5;
+      });
+    }
+    if (buyerLedger.gstin) {
+      doc.text(`GSTIN: ${buyerLedger.gstin}`, 14, y);
+      y += 4.5;
+    }
+    y += 6;
 
     doc.setFontSize(10);
     doc.setFont(undefined, 'bold');
@@ -922,6 +1212,25 @@
       doc.text(formatCurrency(Math.abs(parseAmt(line.amount))), 195, y, { align: 'right' });
       y += 6;
     });
+
+    if (companyInfo.bank_name) {
+      y += 8;
+      if (y > 260) { doc.addPage(); y = 18; }
+      doc.setFont(undefined, 'bold');
+      doc.text('Bank Details', 14, y);
+      doc.setFont(undefined, 'normal');
+      y += 5;
+      doc.text(companyInfo.bank_name, 14, y);
+      y += 4.5;
+      if (companyInfo.bank_account) {
+        doc.text(`A/c No: ${companyInfo.bank_account}`, 14, y);
+        y += 4.5;
+      }
+      if (companyInfo.bank_ifsc) {
+        doc.text(`IFSC: ${companyInfo.bank_ifsc}`, 14, y);
+        y += 4.5;
+      }
+    }
 
     doc.save(`invoice_${v.voucher_number || 'export'}.pdf`);
   }
