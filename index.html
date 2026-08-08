@@ -1258,8 +1258,8 @@
       doc.text(`GSTIN/UIN: ${companyInfo.gstin}`, marginX + 2, ly);
       ly += 4;
     }
-    if (buyerLedger.state || companyInfo.state) {
-      doc.text(`State Name: ${companyInfo.state || ''}`, marginX + 2, ly);
+    if (companyInfo.state) {
+      doc.text(`State Name: ${companyInfo.state}`, marginX + 2, ly);
       ly += 4;
     }
     if (companyInfo.email) {
