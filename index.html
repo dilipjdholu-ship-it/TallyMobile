@@ -501,6 +501,7 @@
       <div class="overlay-header">
         <button class="overlay-back" id="ledger-detail-back">&larr; Back</button>
         <div class="overlay-title" id="ledger-detail-title"></div>
+        <button class="export-btn" id="ledger-statement-pdf-btn">Statement PDF</button>
       </div>
       <div class="overlay-body" id="ledger-detail-body"></div>
     </div>
@@ -522,7 +523,7 @@
 <!-- Firebase (modular SDK) -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+  import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
@@ -670,21 +671,71 @@
     });
   }
 
+  // Heavy sections (ledgers, daybook, stock_items, sales_vouchers,
+  // party_details) are loaded lazily, one-time, per section — not as part
+  // of the initial page load. This is what makes the app open fast: only
+  // company_info + outstanding_receivables (small) load immediately.
+  const LAZY_PATHS = {
+    ledgers: 'ledgers',
+    daybook: 'daybook',
+    stock_items: 'stock_items',
+    sales_vouchers: 'sales_vouchers',
+    party_details: 'party_details',
+  };
+  let sectionLoadState = {}; // companyKey -> { pathKey: 'loading' | 'loaded' }
+
   function listenToCurrentCompany() {
     if (currentUnsubscribe) {
       currentUnsubscribe();
       currentUnsubscribe = null;
     }
     document.getElementById('sync-text').textContent = 'Loading…';
+    companyData[currentCompany] = companyData[currentCompany] || {};
+    sectionLoadState[currentCompany] = sectionLoadState[currentCompany] || {};
+
+    // Lightweight, always-live: company_info, outstanding_receivables, last_synced
     const companyRef = ref(db, `companies/${currentCompany}`);
     currentUnsubscribe = onValue(companyRef, snapshot => {
-      companyData[currentCompany] = snapshot.val() || {};
+      const val = snapshot.val() || {};
+      const cd = companyData[currentCompany];
+      cd.company_info = val.company_info;
+      cd.outstanding_receivables = val.outstanding_receivables;
+      cd.last_synced = val.last_synced;
       document.getElementById('sync-text').textContent = 'Live';
       render();
     }, error => {
       document.getElementById('sync-text').textContent = 'Connection error';
       console.error(error);
     });
+  }
+
+  // Ensures a heavy section is loaded (once) before a section that needs
+  // it renders. Triggers a one-time fetch if not already loaded/loading,
+  // and re-renders when it arrives. Returns true if data is ready now.
+  function ensureSectionLoaded(companyKey, ...pathKeys) {
+    const state = sectionLoadState[companyKey] || (sectionLoadState[companyKey] = {});
+    let allReady = true;
+    pathKeys.forEach(pathKey => {
+      if (state[pathKey] === 'loaded') return;
+      allReady = false;
+      if (state[pathKey] === 'loading') return;
+      state[pathKey] = 'loading';
+      const path = LAZY_PATHS[pathKey];
+      get(ref(db, `companies/${companyKey}/${path}`)).then(snapshot => {
+        state[pathKey] = 'loaded';
+        companyData[companyKey] = companyData[companyKey] || {};
+        companyData[companyKey][pathKey] = snapshot.val();
+        if (companyKey === currentCompany) {
+          render();
+          refreshOpenOverlays();
+        }
+      }).catch(err => {
+        state[pathKey] = null; // allow retry
+        console.error(`Failed to load ${pathKey} for ${companyKey}:`, err);
+        if (companyKey === currentCompany) render();
+      });
+    });
+    return allReady;
   }
 
   // ================= RENDER =================
@@ -724,11 +775,19 @@
   function renderHome(data, contentArea, summaryStrip) {
     summaryStrip.innerHTML = '';
 
+    // Outstanding is always-live (small), renders immediately.
     const outstanding = safeArray(data.outstanding_receivables);
     const totalOutstanding = outstanding.reduce((s, r) => s + parseAmt(r.outstanding), 0);
-    const ledgerCount = safeArray(data.ledgers).length;
-    const stockValue = safeArray(data.stock_items).reduce((s, r) => s + parseAmt(r.closing_value), 0);
-    const voucherCount = safeArray(data.daybook).length;
+
+    // Ledgers/Stock/Daybook are heavy — kick off lazy loads and show a
+    // placeholder until each arrives, rather than blocking the whole page.
+    const ledgersReady = ensureSectionLoaded(currentCompany, 'ledgers');
+    const stockReady = ensureSectionLoaded(currentCompany, 'stock_items');
+    const daybookReady = ensureSectionLoaded(currentCompany, 'daybook');
+
+    const ledgerCount = ledgersReady ? safeArray(data.ledgers).length : '…';
+    const stockValue = stockReady ? formatCurrency(safeArray(data.stock_items).reduce((s, r) => s + parseAmt(r.closing_value), 0)) : '…';
+    const voucherCount = daybookReady ? safeArray(data.daybook).length : '…';
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
 
     contentArea.innerHTML = `
@@ -742,7 +801,7 @@
         </div>
         <div class="dash-stat-card">
           <div class="ds-label">Stock Value</div>
-          <div class="ds-value">${formatCurrency(stockValue)}</div>
+          <div class="ds-value">${stockValue}</div>
         </div>
         <div class="dash-stat-card">
           <div class="ds-label">Ledgers</div>
@@ -824,6 +883,11 @@
   }
 
   function renderLedgers(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'ledgers')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
     let rows = safeArray(data.ledgers);
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
     if (ledgerFilter !== 'all') {
@@ -895,6 +959,11 @@
   }
 
   function renderDaybook(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'daybook')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading day book…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
     let rows = safeArray(data.daybook);
     rows = rows.filter(r =>
       (r.party || '').toLowerCase().includes(searchTerm) ||
@@ -926,6 +995,11 @@
   }
 
   function renderStock(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading stock…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
     let rows = safeArray(data.stock_items);
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -980,11 +1054,48 @@
     });
   }
 
+  // Tally's PartyLedgerName field isn't reliably the ledger being viewed —
+  // for Payment/Receipt/Contra vouchers it can point to the OTHER side of
+  // the transaction. Checking ledger_lines too catches every voucher that
+  // actually involves this ledger, not just ones where it happened to be
+  // recorded as "the party".
+  function voucherInvolvesLedger(v, ledgerName) {
+    if ((v.party || '') === ledgerName) return true;
+    return safeArray(v.ledger_lines).some(l => l.ledger_name === ledgerName);
+  }
+
+  let currentLedgerDetailParty = null;
+
+  function refreshOpenOverlays() {
+    if (document.getElementById('ledger-detail-overlay').classList.contains('open') && currentLedgerDetailParty) {
+      openLedgerDetail(currentLedgerDetailParty);
+    }
+    if (document.getElementById('voucher-detail-overlay').classList.contains('open') && currentVoucherLookup) {
+      openVoucherDetail(currentVoucherLookup.date, currentVoucherLookup.voucherNumber);
+    }
+  }
+
+  let currentVoucherLookup = null;
+
   function openLedgerDetail(partyName) {
+    currentLedgerDetailParty = partyName;
     const data = companyData[currentCompany] || {};
+
+    const daybookReady = ensureSectionLoaded(currentCompany, 'daybook');
+    ensureSectionLoaded(currentCompany, 'party_details'); // used for buyer info if a Sales voucher is opened from here
+
+    document.getElementById('ledger-detail-title').textContent = partyName;
+    const body = document.getElementById('ledger-detail-body');
+
+    if (!daybookReady) {
+      body.innerHTML = '<div class="loading-state">Loading transaction history…</div>';
+      document.getElementById('ledger-detail-overlay').classList.add('open');
+      return;
+    }
+
     const daybook = safeArray(data.daybook);
     const vouchers = daybook
-      .filter(v => (v.party || '') === partyName)
+      .filter(v => voucherInvolvesLedger(v, partyName))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     document.getElementById('ledger-detail-title').textContent = partyName;
@@ -1033,6 +1144,175 @@
 
   const CONFIG_DAYS_LABEL = '1 year';
 
+  // ---- Party Ledger Statement (Tally-style running balance) ----
+
+  function buildLedgerStatementRows(vouchers, partyName) {
+    // Chronological ascending order, like Tally's own ledger statement
+    const sorted = [...vouchers].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+    let runningBalance = 0;
+    return sorted.map(v => {
+      const lines = safeArray(v.ledger_lines);
+      const partyLine = lines.find(l => l.ledger_name === partyName);
+      // Fall back to the voucher's top-level amount if ledger_lines wasn't
+      // synced yet for this voucher (older data before this feature)
+      const partyAmt = partyLine ? parseAmt(partyLine.amount) : parseAmt(v.amount);
+
+      const otherLines = lines.filter(l => l.ledger_name !== partyName);
+      const primaryOther = otherLines[0];
+      const particularsPrefix = partyAmt < 0 ? 'Cr' : 'Dr';
+      const particulars = primaryOther
+        ? `${particularsPrefix} ${primaryOther.ledger_name}`
+        : (otherLines.length > 1 ? `${particularsPrefix} Sundries` : (v.voucher_type || ''));
+
+      const debit = partyAmt < 0 ? Math.abs(partyAmt) : 0;
+      const credit = partyAmt > 0 ? partyAmt : 0;
+      runningBalance += (debit - credit);
+
+      return {
+        date: v.date,
+        particulars,
+        voucherType: v.voucher_type,
+        voucherNumber: v.voucher_number,
+        narration: v.narration,
+        debit,
+        credit,
+        balance: runningBalance,
+      };
+    });
+  }
+
+  document.getElementById('ledger-statement-pdf-btn').addEventListener('click', exportLedgerStatementPDF);
+
+  async function exportLedgerStatementPDF() {
+    const partyName = currentLedgerDetailParty;
+    if (!partyName) { alert('No party selected.'); return; }
+
+    const data = companyData[currentCompany] || {};
+    const daybook = safeArray(data.daybook).filter(v => voucherInvolvesLedger(v, partyName));
+    if (daybook.length === 0) { alert('No transactions to export.'); return; }
+
+    if (!window.jspdf) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    const companyInfo = data.company_info || {};
+    const buyerLedger = (data.party_details || {})[partyName] || safeArray(Object.values(data.party_details || {})).find(p => p.name === partyName) || {};
+
+    const rows = buildLedgerStatementRows(daybook, partyName);
+    const fromDate = formatTallyDate(rows[0].date);
+    const toDate = formatTallyDate(rows[rows.length - 1].date);
+    const closingBalance = rows[rows.length - 1].balance;
+    const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
+    const totalCredit = rows.reduce((s, r) => s + r.credit, 0);
+
+    const pageWidth = 210;
+    const marginX = 10;
+    const contentWidth = pageWidth - marginX * 2;
+    let y = 12;
+
+    doc.setFontSize(13);
+    doc.setFont(undefined, 'bold');
+    doc.text(companyLabel.toUpperCase(), pageWidth / 2, y, { align: 'center' });
+    y += 5;
+    doc.setFontSize(8.5);
+    doc.setFont(undefined, 'normal');
+    if (companyInfo.address) {
+      const addrLine = companyInfo.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean).join(', ');
+      doc.text(addrLine, pageWidth / 2, y, { align: 'center', maxWidth: contentWidth });
+      y += 4;
+    }
+    if (companyInfo.email) {
+      doc.text(`E-Mail: ${companyInfo.email}`, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+    doc.line(marginX + 40, y, pageWidth - marginX - 40, y);
+    y += 6;
+
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text(partyName, pageWidth / 2, y, { align: 'center' });
+    y += 5;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.text('Ledger Account', pageWidth / 2, y, { align: 'center' });
+    y += 5;
+    if (buyerLedger.address) {
+      const addrLine = buyerLedger.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean).join(', ');
+      doc.text(addrLine, pageWidth / 2, y, { align: 'center', maxWidth: contentWidth });
+      y += 5;
+    }
+    doc.setFontSize(8.5);
+    doc.text(`${fromDate} to ${toDate}`, pageWidth / 2, y, { align: 'center' });
+    y += 8;
+
+    // ---- Table ----
+    const cols = [
+      { key: 'date', label: 'Date', w: 20, align: 'left' },
+      { key: 'particulars', label: 'Particulars', w: 62, align: 'left' },
+      { key: 'vchType', label: 'Vch Type', w: 26, align: 'left' },
+      { key: 'vchNo', label: 'Vch No.', w: 22, align: 'left' },
+      { key: 'debit', label: 'Debit', w: 22, align: 'right' },
+      { key: 'credit', label: 'Credit', w: 20, align: 'right' },
+      { key: 'balance', label: 'Balance', w: contentWidth - (20+62+26+22+22+20), align: 'right' },
+    ];
+
+    let cx = marginX;
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'bold');
+    cols.forEach(c => {
+      doc.text(c.label, c.align === 'right' ? cx + c.w - 1 : cx + 1, y, { align: c.align === 'right' ? 'right' : 'left' });
+      cx += c.w;
+    });
+    y += 2;
+    doc.line(marginX, y, marginX + contentWidth, y);
+    y += 4.5;
+    doc.setFont(undefined, 'normal');
+
+    rows.forEach(r => {
+      if (y > 280) {
+        doc.addPage();
+        y = 15;
+      }
+      let cx2 = marginX;
+      const balLabel = `${formatCurrencyPDF(Math.abs(r.balance))} ${r.balance >= 0 ? 'Dr' : 'Cr'}`;
+      const vals = {
+        date: formatTallyDate(r.date),
+        particulars: r.particulars || '',
+        vchType: r.voucherType || '',
+        vchNo: r.voucherNumber || '',
+        debit: r.debit ? formatCurrencyPDF(r.debit) : '',
+        credit: r.credit ? formatCurrencyPDF(r.credit) : '',
+        balance: balLabel,
+      };
+      cols.forEach(c => {
+        const text = String(vals[c.key] || '');
+        doc.text(text, c.align === 'right' ? cx2 + c.w - 1 : cx2 + 1, y, {
+          align: c.align === 'right' ? 'right' : 'left', maxWidth: c.w - 2,
+        });
+        cx2 += c.w;
+      });
+      y += 5;
+    });
+
+    y += 1;
+    doc.line(marginX, y, marginX + contentWidth, y);
+    y += 5;
+
+    doc.setFont(undefined, 'bold');
+    doc.text(`${closingBalance >= 0 ? 'Dr' : 'Cr'}`, marginX + 20, y);
+    doc.text('Closing Balance', marginX + 30, y);
+    doc.text(formatCurrencyPDF(totalDebit), marginX + 20 + 62 + 26 + 22, y, { align: 'right' });
+    doc.text(formatCurrencyPDF(totalCredit), marginX + 20 + 62 + 26 + 22 + 22, y, { align: 'right' });
+    y += 6;
+    doc.line(marginX, y, marginX + contentWidth, y);
+
+    doc.save(`${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`);
+  }
+
   // ================= VOUCHER DETAIL / INVOICE =================
   let currentVoucherDetail = null;
 
@@ -1045,8 +1325,17 @@
   }
 
   function openVoucherDetail(date, voucherNumber) {
-    const voucher = findSalesVoucher(date, voucherNumber);
+    currentVoucherLookup = { date, voucherNumber };
     const body = document.getElementById('voucher-detail-body');
+
+    const salesReady = ensureSectionLoaded(currentCompany, 'sales_vouchers');
+    if (!salesReady) {
+      body.innerHTML = '<div class="loading-state">Loading invoice…</div>';
+      document.getElementById('voucher-detail-overlay').classList.add('open');
+      return;
+    }
+
+    const voucher = findSalesVoucher(date, voucherNumber);
 
     if (!voucher) {
       body.innerHTML = emptyState(
