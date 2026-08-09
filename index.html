@@ -1129,11 +1129,15 @@
         </div>
         <div class="list-card">${vouchers.map(v => {
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
+          const lines = safeArray(v.ledger_lines);
+          const otherLine = lines.find(l => l.ledger_name !== partyName);
+          const displayName = otherLine ? otherLine.ledger_name : (v.voucher_type || '—');
+          const vchLabel = `${escapeHtml(v.voucher_type || '')}${v.voucher_number ? ' #' + escapeHtml(v.voucher_number) : ''}`;
           return `
           <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}"` : ''}>
             <div>
-              <div class="name">${escapeHtml(v.voucher_type || '—')} ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''}</div>
-              <div class="sub">${escapeHtml(formatTallyDate(v.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+              <div class="name">${escapeHtml(displayName)}</div>
+              <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isSales ? ' · tap to view invoice' : ''}</div>
             </div>
             <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
           </div>`;
@@ -1157,11 +1161,11 @@
 
   // ---- Party Ledger Statement (Tally-style running balance) ----
 
-  function buildLedgerStatementRows(vouchers, partyName) {
+  function buildLedgerStatementRows(vouchers, partyName, openingBalance = 0) {
     // Chronological ascending order, like Tally's own ledger statement
     const sorted = [...vouchers].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-    let runningBalance = 0;
+    let runningBalance = openingBalance;
     return sorted.map(v => {
       const lines = safeArray(v.ledger_lines);
       const partyLine = lines.find(l => l.ledger_name === partyName);
@@ -1200,6 +1204,12 @@
     if (!partyName) { alert('No party selected.'); return; }
 
     const data = companyData[currentCompany] || {};
+
+    if (!ensureSectionLoaded(currentCompany, 'ledgers')) {
+      alert('Still loading ledger data — try again in a moment.');
+      return;
+    }
+
     const daybook = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
     if (daybook.length === 0) { alert('No transactions to export.'); return; }
 
@@ -1213,7 +1223,24 @@
     const companyInfo = data.company_info || {};
     const buyerLedger = (data.party_details || {})[partyName] || safeArray(Object.values(data.party_details || {})).find(p => p.name === partyName) || {};
 
-    const rows = buildLedgerStatementRows(daybook, partyName);
+    // Our sync window is only the last ~365 days — if this ledger had
+    // transactions before that, starting the running balance at zero
+    // would make the closing figure wrong. Instead, anchor to the
+    // ledger's actual current closing balance (always accurate, since
+    // it's Tally's own live figure) and work backward to find what the
+    // opening balance for THIS period must have been.
+    // Note: Tally's raw CLOSINGBALANCE field uses the opposite sign
+    // convention from our running-balance math (negative = Dr in Tally's
+    // export, positive = Dr in ours) — confirmed from how party amounts
+    // are signed in voucher ledger lines — so we flip it here.
+    const ledgerEntry = safeArray(data.ledgers).find(l => l.name === partyName);
+    const currentClosingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
+
+    const unanchoredRows = buildLedgerStatementRows(daybook, partyName, 0);
+    const netChangeInPeriod = unanchoredRows.length ? unanchoredRows[unanchoredRows.length - 1].balance : 0;
+    const openingBalance = currentClosingBalance !== null ? currentClosingBalance - netChangeInPeriod : 0;
+
+    const rows = buildLedgerStatementRows(daybook, partyName, openingBalance);
     const fromDate = formatTallyDate(rows[0].date);
     const toDate = formatTallyDate(rows[rows.length - 1].date);
     const closingBalance = rows[rows.length - 1].balance;
@@ -1299,20 +1326,32 @@
     y += 4.5;
     doc.setFont(undefined, 'normal');
 
+    // Opening Balance row — shows where the period actually starts from,
+    // so the reader isn't confused why the first transaction's balance
+    // isn't just that transaction's own amount.
+    doc.setFont(undefined, 'italic');
+    doc.text('Opening Balance', colX('particulars') + 1, y);
+    doc.text(
+      `${formatAmountPlain(Math.abs(openingBalance))} ${openingBalance >= 0 ? 'Dr' : 'Cr'}`,
+      colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' }
+    );
+    doc.setFont(undefined, 'normal');
+    y += 5;
+
     rows.forEach(r => {
       if (y > 280) {
         doc.addPage();
         y = 15;
       }
       let cx2 = marginX;
-      const balLabel = `${formatCurrencyPDF(Math.abs(r.balance))} ${r.balance >= 0 ? 'Dr' : 'Cr'}`;
+      const balLabel = `${formatAmountPlain(Math.abs(r.balance))} ${r.balance >= 0 ? 'Dr' : 'Cr'}`;
       const vals = {
         date: formatTallyDate(r.date),
         particulars: r.particulars || '',
         vchType: r.voucherType || '',
         vchNo: r.voucherNumber || '',
-        debit: r.debit ? formatCurrencyPDF(r.debit) : '',
-        credit: r.credit ? formatCurrencyPDF(r.credit) : '',
+        debit: r.debit ? formatAmountPlain(r.debit) : '',
+        credit: r.credit ? formatAmountPlain(r.credit) : '',
         balance: balLabel,
       };
       cols.forEach(c => {
@@ -1332,9 +1371,9 @@
     doc.setFont(undefined, 'bold');
     doc.text(`${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('date') + 1, y);
     doc.text('Closing Balance', colX('particulars') + 1, y);
-    doc.text(formatCurrencyPDF(totalDebit), colX('debit') + cols.find(c => c.key === 'debit').w - 1, y, { align: 'right' });
-    doc.text(formatCurrencyPDF(totalCredit), colX('credit') + cols.find(c => c.key === 'credit').w - 1, y, { align: 'right' });
-    doc.text(`${formatCurrencyPDF(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' });
+    doc.text(formatAmountPlain(totalDebit), colX('debit') + cols.find(c => c.key === 'debit').w - 1, y, { align: 'right' });
+    doc.text(formatAmountPlain(totalCredit), colX('credit') + cols.find(c => c.key === 'credit').w - 1, y, { align: 'right' });
+    doc.text(`${formatAmountPlain(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' });
     y += 6;
     doc.line(marginX, y, marginX + contentWidth, y);
 
@@ -1913,6 +1952,14 @@
     const abs = Math.abs(n);
     const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return (n < 0 ? '-' : '') + 'Rs. ' + formatted;
+  }
+
+  // No "Rs." prefix — used in the ledger statement table where every row
+  // is already a currency figure, so repeating the symbol on every line
+  // is just noise (Tally's own statements don't do it either).
+  function formatAmountPlain(n) {
+    const abs = Math.abs(n);
+    return (n < 0 ? '-' : '') + abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   function formatTallyDate(d) {
