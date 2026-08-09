@@ -525,6 +525,17 @@
   </nav>
 
   <!-- Ledger Detail Overlay -->
+  <!-- P&L / Balance Sheet Group Detail Overlay -->
+  <div id="group-detail-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="group-detail-back">&larr; Back</button>
+        <div class="overlay-title" id="group-detail-title"></div>
+      </div>
+      <div class="overlay-body" id="group-detail-body"></div>
+    </div>
+  </div>
+
   <div id="ledger-detail-overlay" class="overlay">
     <div class="overlay-panel">
       <div class="overlay-header">
@@ -1093,13 +1104,21 @@
     ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
   }
 
-  function renderGroupRow(g, depth = 0) {
-    const amt = parseAmt(g.amount);
-    const cls = amt > 0 ? 'positive' : amt < 0 ? 'negative' : 'neutral';
+  function renderGroupRow(g, depth = 0, useAbsolute = false) {
+    const rawAmt = parseAmt(g.amount);
+    // Balance Sheet: Tally's own screen always shows positive magnitudes
+    // per group (the column position, not the sign, conveys Asset vs
+    // Liability) — confirmed against a real side-by-side comparison, our
+    // raw export's internal sign isn't a reliable Dr/Cr indicator for
+    // this specific report. P&L's sign IS meaningful (verified against
+    // real data), so it keeps its signed/colored display.
+    const amt = useAbsolute ? Math.abs(rawAmt) : rawAmt;
+    const cls = useAbsolute ? 'neutral' : (amt > 0 ? 'positive' : amt < 0 ? 'negative' : 'neutral');
     const indent = depth > 0 ? `padding-left: ${14 + depth * 16}px;` : '';
-    const childrenHtml = (g.children || []).map(c => renderGroupRow(c, depth + 1)).join('');
+    const childrenHtml = (g.children || []).map(c => renderGroupRow(c, depth + 1, useAbsolute)).join('');
+    const groupNameAttr = escapeHtml((g.name || '').replace(/\s*:\s*$/, '')); // strip trailing ':' like "Cost of Sales :"
     return `
-      <div class="row" style="${indent}">
+      <div class="row clickable-row" data-group-name="${groupNameAttr}" style="${indent}">
         <div class="name" style="${depth > 0 ? 'font-weight:500; color:var(--ink-soft); font-size:13px;' : ''}">${escapeHtml(g.name || '—')}</div>
         <div class="amount ${cls} mono">${formatCurrency(amt)}</div>
       </div>
@@ -1133,6 +1152,9 @@
     `;
 
     contentArea.innerHTML = `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
+    });
   }
 
   function renderBalanceSheet(data, contentArea, summaryStrip) {
@@ -1158,11 +1180,72 @@
 
     contentArea.innerHTML = `
       <div class="loading-state" style="text-align:left; padding: 10px 4px; font-size:12px;">
-        Figures shown exactly as Tally reports them per group. Cross-check against Tally's own Balance Sheet screen if using these for a decision.
+        Figures shown as absolute values per group, same as Tally's own Balance Sheet screen (column position — not sign — indicates Asset vs Liability).
       </div>
-      <div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>
+      <div class="list-card">${groups.map(g => renderGroupRow(g, 0, true)).join('')}</div>
     `;
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
+    });
   }
+
+  function openGroupDetail(groupName) {
+    const data = companyData[currentCompany] || {};
+    const ledgersReady = ensureSectionLoaded(currentCompany, 'ledgers');
+
+    document.getElementById('group-detail-title').textContent = groupName;
+    const body = document.getElementById('group-detail-body');
+
+    if (!ledgersReady) {
+      body.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
+      document.getElementById('group-detail-overlay').classList.add('open');
+      return;
+    }
+
+    // Matches ledgers whose direct parent group equals this P&L/BS group
+    // name — works well when ledgers sit directly under the group shown
+    // (common in most setups). Ledgers several sub-group levels deeper
+    // won't show here since we only sync each ledger's immediate parent.
+    const ledgers = safeArray(data.ledgers).filter(l => (l.group || '') === groupName);
+
+    if (ledgers.length === 0) {
+      body.innerHTML = emptyState(
+        'No ledgers found directly under this group',
+        'This group may only contain sub-groups rather than ledgers directly, which isn\'t something we can drill into yet.'
+      );
+    } else {
+      const sorted = [...ledgers].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      body.innerHTML = `
+        <div class="summary-strip" style="margin-bottom:14px;">
+          <div class="summary-chip">
+            <div class="label">Ledgers</div>
+            <div class="value mono">${sorted.length}</div>
+          </div>
+        </div>
+        <div class="list-card">${sorted.map(l => {
+          const bal = parseAmt(l.closing_balance);
+          const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
+          return `
+          <div class="row clickable-row" data-party="${escapeHtml(l.name || '')}">
+            <div class="name">${escapeHtml(l.name || '—')}</div>
+            <div class="amount ${cls} mono">${formatCurrency(bal)}</div>
+          </div>`;
+        }).join('')}</div>
+      `;
+      body.querySelectorAll('.clickable-row').forEach(row => {
+        row.addEventListener('click', () => {
+          document.getElementById('group-detail-overlay').classList.remove('open');
+          openLedgerDetail(row.dataset.party);
+        });
+      });
+    }
+
+    document.getElementById('group-detail-overlay').classList.add('open');
+  }
+
+  document.getElementById('group-detail-back').addEventListener('click', () => {
+    document.getElementById('group-detail-overlay').classList.remove('open');
+  });
 
   function emptyState(title, desc) {
     return `<div class="empty-state">
