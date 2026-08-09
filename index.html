@@ -991,6 +991,7 @@
         <div>
           <div class="name">${escapeHtml(r.party || r.voucher_type || '—')}</div>
           <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+          ${r.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(r.narration)}</div>` : ''}
         </div>
         <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
       </div>`;
@@ -1157,6 +1158,7 @@
             <div>
               <div class="name">${escapeHtml(displayName)}</div>
               <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+              ${v.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(v.narration)}</div>` : ''}
             </div>
             <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
           </div>`;
