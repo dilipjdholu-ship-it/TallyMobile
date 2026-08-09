@@ -984,15 +984,23 @@
       return;
     }
 
-    contentArea.innerHTML = `<div class="list-card">${rows.map(r => `
-      <div class="row">
+    contentArea.innerHTML = `<div class="list-card">${rows.map(r => {
+      const isSales = (r.voucher_type || '').toLowerCase() === 'sales';
+      return `
+      <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}"` : ''}>
         <div>
           <div class="name">${escapeHtml(r.party || r.voucher_type || '—')}</div>
-          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}</div>
+          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}${isSales ? ' · tap to view invoice' : ''}</div>
         </div>
         <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
-      </div>
-    `).join('')}</div>`;
+      </div>`;
+    }).join('')}</div>`;
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => {
+        ensureSectionLoaded(currentCompany, 'sales_vouchers');
+        openVoucherDetail(row.dataset.vdate, row.dataset.vnum);
+      });
+    });
   }
 
   function renderStock(data, contentArea, summaryStrip) {
@@ -1115,7 +1123,18 @@
     if (vouchers.length === 0) {
       body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the last ${CONFIG_DAYS_LABEL}.`);
     } else {
-      const total = vouchers.reduce((s, v) => s + parseAmt(v.amount), 0);
+      // Actual current closing balance from the ledger master — always
+      // accurate, unlike summing this period's vouchers (which "Net
+      // Amount" used to show and isn't the real balance the ledger holds).
+      ensureSectionLoaded(currentCompany, 'ledgers');
+      const ledgerEntry = safeArray(data.ledgers).find(l => l.name === partyName);
+      // Tally's raw CLOSINGBALANCE sign convention is the opposite of ours
+      // (negative = Dr in Tally's export) — flipped here, same as the PDF export.
+      const closingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
+      const closingLabel = closingBalance === null
+        ? '…'
+        : `${formatCurrency(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`;
+
       body.innerHTML = `
         <div class="summary-strip" style="margin-bottom:14px;">
           <div class="summary-chip">
@@ -1123,8 +1142,8 @@
             <div class="value mono">${vouchers.length}</div>
           </div>
           <div class="summary-chip">
-            <div class="label">Net Amount</div>
-            <div class="value mono">${formatCurrency(total)}</div>
+            <div class="label">Closing Balance</div>
+            <div class="value mono">${closingLabel}</div>
           </div>
         </div>
         <div class="list-card">${vouchers.map(v => {
