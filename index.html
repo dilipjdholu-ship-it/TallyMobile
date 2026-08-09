@@ -1247,15 +1247,31 @@
     y += 8;
 
     // ---- Table ----
+    // Balance needs the most room (e.g. "Rs. 7,23,715.00 Dr" is ~20 chars) —
+    // the previous widths left it only 18mm, causing text to wrap and
+    // overlap between rows. Rebalanced so every column fits its content.
     const cols = [
-      { key: 'date', label: 'Date', w: 20, align: 'left' },
-      { key: 'particulars', label: 'Particulars', w: 62, align: 'left' },
-      { key: 'vchType', label: 'Vch Type', w: 26, align: 'left' },
-      { key: 'vchNo', label: 'Vch No.', w: 22, align: 'left' },
-      { key: 'debit', label: 'Debit', w: 22, align: 'right' },
-      { key: 'credit', label: 'Credit', w: 20, align: 'right' },
-      { key: 'balance', label: 'Balance', w: contentWidth - (20+62+26+22+22+20), align: 'right' },
+      { key: 'date', label: 'Date', w: 18, align: 'left' },
+      { key: 'particulars', label: 'Particulars', w: 38, align: 'left' },
+      { key: 'vchType', label: 'Vch Type', w: 22, align: 'left' },
+      { key: 'vchNo', label: 'Vch No.', w: 18, align: 'left' },
+      { key: 'debit', label: 'Debit', w: 26, align: 'right' },
+      { key: 'credit', label: 'Credit', w: 24, align: 'right' },
+      { key: 'balance', label: 'Balance', w: 0, align: 'right' }, // filled in below
     ];
+    cols[cols.length - 1].w = contentWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
+
+    // Column x-position lookup, computed once — used consistently for the
+    // header, every row, AND the closing balance row, so they can never
+    // drift out of alignment with each other again.
+    function colX(key) {
+      let x = marginX;
+      for (const c of cols) {
+        if (c.key === key) return x;
+        x += c.w;
+      }
+      return x;
+    }
 
     let cx = marginX;
     doc.setFontSize(8);
@@ -1300,10 +1316,11 @@
     y += 5;
 
     doc.setFont(undefined, 'bold');
-    doc.text(`${closingBalance >= 0 ? 'Dr' : 'Cr'}`, marginX + 20, y);
-    doc.text('Closing Balance', marginX + 30, y);
-    doc.text(formatCurrencyPDF(totalDebit), marginX + 20 + 62 + 26 + 22, y, { align: 'right' });
-    doc.text(formatCurrencyPDF(totalCredit), marginX + 20 + 62 + 26 + 22 + 22, y, { align: 'right' });
+    doc.text(`${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('date') + 1, y);
+    doc.text('Closing Balance', colX('particulars') + 1, y);
+    doc.text(formatCurrencyPDF(totalDebit), colX('debit') + cols.find(c => c.key === 'debit').w - 1, y, { align: 'right' });
+    doc.text(formatCurrencyPDF(totalCredit), colX('credit') + cols.find(c => c.key === 'credit').w - 1, y, { align: 'right' });
+    doc.text(`${formatCurrencyPDF(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' });
     y += 6;
     doc.line(marginX, y, marginX + contentWidth, y);
 
@@ -1319,6 +1336,34 @@
     return Object.values(salesVouchers).find(
       v => v.date === date && String(v.voucher_number) === String(voucherNumber)
     );
+  }
+
+  // Tally doesn't always include an aggregate 'Sales' line in a voucher's
+  // LEDGERENTRIES.LIST — for some multi-item invoices it only lists the
+  // party and tax lines, with the sales value only trackable per-item.
+  // We already have every item's amount, so compute the taxable subtotal
+  // ourselves rather than depending on Tally to hand us a pre-summed line.
+  // Also drops the party's own ledger line, since it's redundant with the
+  // "Bill To" name already shown above.
+  function buildDisplayTaxLines(items, ledgerLines, partyName) {
+    const nonPartyLines = ledgerLines.filter(l => l.ledger_name !== partyName);
+
+    // If Tally already gave us a sales/taxable-looking line, trust it —
+    // no need to guess. Otherwise compute one from item amounts.
+    const looksLikeTaxLine = (name) => /gst|cess|tax|round\s*off/i.test(name || '');
+    const hasSalesLine = nonPartyLines.some(l => !looksLikeTaxLine(l.ledger_name));
+
+    if (hasSalesLine || items.length === 0) {
+      return nonPartyLines;
+    }
+
+    const taxableAmount = items.reduce((s, i) => s + Math.abs(parseAmt(i.amount)), 0);
+    // Use the item's own sales ledger name if every item shares one
+    // (e.g. "18% Sales"), otherwise a generic label.
+    const ledgerNames = [...new Set(items.map(i => i.sales_ledger_name).filter(Boolean))];
+    const label = ledgerNames.length === 1 ? ledgerNames[0] : 'Taxable Amount';
+
+    return [{ ledger_name: label, amount: taxableAmount }, ...nonPartyLines];
   }
 
   function openVoucherDetail(date, voucherNumber) {
@@ -1388,7 +1433,7 @@
       </div>
 
       <div class="tax-summary">
-        ${ledgerLines.map(l => `
+        ${buildDisplayTaxLines(items, ledgerLines, voucher.party).map(l => `
           <div class="tax-row">
             <div>${escapeHtml(l.ledger_name || '—')}</div>
             <div class="amount">${formatCurrency(Math.abs(parseAmt(l.amount)))}</div>
@@ -1674,7 +1719,7 @@
 
     let grandTotal = parseAmt(v.amount);
 
-    ledgerLines.filter(l => l.ledger_name !== v.party).forEach(line => {
+    buildDisplayTaxLines(items, ledgerLines, v.party).forEach(line => {
       if (y + rowH > 280) { doc.addPage(); y = 15; }
       doc.rect(marginX, y, descAndBeforeW, rowH);
       doc.setFont(undefined, 'italic');
