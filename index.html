@@ -558,6 +558,19 @@
   let currentCompany = COMPANIES[0].key;
   let appInitialized = false;
   let currentUnsubscribe = null;
+
+  // Heavy sections (ledgers, daybook, stock_items, sales_vouchers,
+  // party_details) are loaded lazily, one-time, per section — not as part
+  // of the initial page load. This is what makes the app open fast: only
+  // company_info + outstanding_receivables (small) load immediately.
+  const LAZY_PATHS = {
+    ledgers: 'ledgers',
+    daybook: 'daybook',
+    stock_items: 'stock_items',
+    sales_vouchers: 'sales_vouchers',
+    party_details: 'party_details',
+  };
+  let sectionLoadState = {}; // companyKey -> { pathKey: 'loading' | 'loaded' }
   let currentSection = "home";
   let searchTerm = "";
   let companyData = {}; // key -> { ledgers, outstanding_receivables, daybook, stock_items, last_synced }
@@ -670,19 +683,6 @@
       render();
     });
   }
-
-  // Heavy sections (ledgers, daybook, stock_items, sales_vouchers,
-  // party_details) are loaded lazily, one-time, per section — not as part
-  // of the initial page load. This is what makes the app open fast: only
-  // company_info + outstanding_receivables (small) load immediately.
-  const LAZY_PATHS = {
-    ledgers: 'ledgers',
-    daybook: 'daybook',
-    stock_items: 'stock_items',
-    sales_vouchers: 'sales_vouchers',
-    party_details: 'party_details',
-  };
-  let sectionLoadState = {}; // companyKey -> { pathKey: 'loading' | 'loaded' }
 
   function listenToCurrentCompany() {
     if (currentUnsubscribe) {
