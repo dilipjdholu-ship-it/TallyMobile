@@ -1098,9 +1098,6 @@
       .filter(v => voucherInvolvesLedger(v, partyName))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-    document.getElementById('ledger-detail-title').textContent = partyName;
-    const body = document.getElementById('ledger-detail-body');
-
     if (vouchers.length === 0) {
       body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the last ${CONFIG_DAYS_LABEL}.`);
     } else {
