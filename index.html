@@ -376,6 +376,35 @@
   }
   .overlay-body { padding: 16px; max-width: 720px; margin: 0 auto 60px; }
 
+  .date-range-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    background: var(--paper-card);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 4;
+  }
+  .date-range-bar input[type="date"] {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--paper);
+    min-width: 0;
+  }
+  .date-range-sep { font-size: 12px; color: var(--ink-soft); flex-shrink: 0; }
+  .date-range-reset {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--paper);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+
   .clickable-row { cursor: pointer; }
   .clickable-row:active { background: var(--paper-line); }
 
@@ -503,6 +532,12 @@
         <div class="overlay-title" id="ledger-detail-title"></div>
         <button class="export-btn" id="ledger-statement-pdf-btn">Statement PDF</button>
       </div>
+      <div class="date-range-bar">
+        <input type="date" id="ledger-date-from">
+        <span class="date-range-sep">to</span>
+        <input type="date" id="ledger-date-to">
+        <button class="date-range-reset" id="ledger-date-reset">Reset</button>
+      </div>
       <div class="overlay-body" id="ledger-detail-body"></div>
     </div>
   </div>
@@ -570,6 +605,8 @@
     sales_vouchers: 'sales_vouchers',
     party_details: 'party_details',
     bank_related_vouchers: 'bank_related_vouchers',
+    profit_and_loss: 'profit_and_loss',
+    balance_sheet: 'balance_sheet',
   };
   let sectionLoadState = {}; // companyKey -> { pathKey: 'loading' | 'loaded' }
   let currentSection = "home";
@@ -756,13 +793,15 @@
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
 
-    searchBarRow.style.display = currentSection === 'home' ? 'none' : 'flex';
+    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet') ? 'none' : 'flex';
 
     if (currentSection === 'home') renderHome(data, contentArea, summaryStrip);
     else if (currentSection === 'outstanding') renderOutstanding(data, contentArea, summaryStrip);
     else if (currentSection === 'ledgers') renderLedgers(data, contentArea, summaryStrip);
     else if (currentSection === 'daybook') renderDaybook(data, contentArea, summaryStrip);
     else if (currentSection === 'stock') renderStock(data, contentArea, summaryStrip);
+    else if (currentSection === 'pnl') renderProfitAndLoss(data, contentArea, summaryStrip);
+    else if (currentSection === 'balancesheet') renderBalanceSheet(data, contentArea, summaryStrip);
   }
 
   function goToSection(section) {
@@ -831,6 +870,14 @@
         <button class="dash-tile" data-goto="stock">
           <span class="dt-icon" style="background:var(--forest-soft); color:var(--forest);">◫</span>
           <span class="dt-label">Stock</span>
+        </button>
+        <button class="dash-tile" data-goto="pnl">
+          <span class="dt-icon" style="background:var(--primary-soft); color:var(--primary);">△</span>
+          <span class="dt-label">P&amp;L</span>
+        </button>
+        <button class="dash-tile" data-goto="balancesheet">
+          <span class="dt-icon" style="background:var(--amber-soft); color:var(--amber);">▭</span>
+          <span class="dt-label">Balance Sheet</span>
         </button>
       </div>
     `;
@@ -1046,6 +1093,77 @@
     ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
   }
 
+  function renderGroupRow(g, depth = 0) {
+    const amt = parseAmt(g.amount);
+    const cls = amt > 0 ? 'positive' : amt < 0 ? 'negative' : 'neutral';
+    const indent = depth > 0 ? `padding-left: ${14 + depth * 16}px;` : '';
+    const childrenHtml = (g.children || []).map(c => renderGroupRow(c, depth + 1)).join('');
+    return `
+      <div class="row" style="${indent}">
+        <div class="name" style="${depth > 0 ? 'font-weight:500; color:var(--ink-soft); font-size:13px;' : ''}">${escapeHtml(g.name || '—')}</div>
+        <div class="amount ${cls} mono">${formatCurrency(amt)}</div>
+      </div>
+    ` + childrenHtml;
+  }
+
+  function renderProfitAndLoss(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'profit_and_loss')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading P&amp;L…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    const groups = safeArray(data.profit_and_loss);
+
+    if (groups.length === 0) {
+      contentArea.innerHTML = emptyState('No P&L data', 'Check back after the next sync.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    // Net Profit/Loss is the sum of every top-level group — verified
+    // against real data before shipping this (income groups are
+    // positive, cost/expense groups negative, in Tally's own export).
+    const netProfit = groups.reduce((s, g) => s + parseAmt(g.amount), 0);
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip ${netProfit >= 0 ? 'forest' : 'rust'}">
+        <div class="label">${netProfit >= 0 ? 'Net Profit' : 'Net Loss'}</div>
+        <div class="value mono">${formatCurrency(Math.abs(netProfit))}</div>
+      </div>
+    `;
+
+    contentArea.innerHTML = `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
+  }
+
+  function renderBalanceSheet(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'balance_sheet')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading Balance Sheet…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    const groups = safeArray(data.balance_sheet);
+
+    if (groups.length === 0) {
+      contentArea.innerHTML = emptyState('No Balance Sheet data', 'Check back after the next sync.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip">
+        <div class="label">Groups</div>
+        <div class="value mono">${groups.length}</div>
+      </div>
+    `;
+
+    contentArea.innerHTML = `
+      <div class="loading-state" style="text-align:left; padding: 10px 4px; font-size:12px;">
+        Figures shown exactly as Tally reports them per group. Cross-check against Tally's own Balance Sheet screen if using these for a decision.
+      </div>
+      <div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>
+    `;
+  }
+
   function emptyState(title, desc) {
     return `<div class="empty-state">
       <div class="glyph">◇</div>
@@ -1089,6 +1207,29 @@
 
   let currentLedgerDetailParty = null;
 
+  // Anchors a party's running balance to the ledger's real current closing
+  // balance and works backward — shared by both the on-screen summary and
+  // the PDF export so they can never disagree with each other.
+  function computeAnchoredStatementRows(vouchers, partyName, liveClosingBalance) {
+    if (liveClosingBalance === null) return buildLedgerStatementRows(vouchers, partyName, 0);
+    const unanchored = buildLedgerStatementRows(vouchers, partyName, 0);
+    const netChange = unanchored.length ? unanchored[unanchored.length - 1].balance : 0;
+    const openingBalance = liveClosingBalance - netChange;
+    return buildLedgerStatementRows(vouchers, partyName, openingBalance);
+  }
+
+  function tallyDateToInputFormat(d) {
+    if (!d || !/^\d{8}$/.test(d)) return '';
+    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+  }
+  function inputFormatToTallyDate(d) {
+    return d ? d.replace(/-/g, '') : null;
+  }
+
+  // null = no filter applied (shows full synced range). Once the person
+  // picks dates, both the on-screen view and the PDF export respect them.
+  let statementDateFilter = { from: null, to: null };
+
   function refreshOpenOverlays() {
     if (document.getElementById('ledger-detail-overlay').classList.contains('open') && currentLedgerDetailParty) {
       openLedgerDetail(currentLedgerDetailParty);
@@ -1106,6 +1247,7 @@
 
     const daybookReady = ensureSectionLoaded(currentCompany, 'daybook', 'bank_related_vouchers');
     ensureSectionLoaded(currentCompany, 'party_details'); // used for buyer info if a Sales voucher is opened from here
+    ensureSectionLoaded(currentCompany, 'ledgers');
 
     document.getElementById('ledger-detail-title').textContent = partyName;
     const body = document.getElementById('ledger-detail-body');
@@ -1116,25 +1258,46 @@
       return;
     }
 
-    const daybook = getEnrichedDaybook(data);
-    const vouchers = daybook
-      .filter(v => voucherInvolvesLedger(v, partyName))
+    const allVouchers = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
+
+    // Pre-fill the date inputs to the full available span, but only while
+    // no filter has been applied yet — once the person picks dates, don't
+    // overwrite their choice on re-render.
+    const fromInput = document.getElementById('ledger-date-from');
+    const toInput = document.getElementById('ledger-date-to');
+    if (!statementDateFilter.from && !statementDateFilter.to && allVouchers.length > 0) {
+      const dates = allVouchers.map(v => v.date).filter(Boolean).sort();
+      fromInput.value = tallyDateToInputFormat(dates[0]);
+      toInput.value = tallyDateToInputFormat(dates[dates.length - 1]);
+    }
+
+    const fromFilter = statementDateFilter.from;
+    const toFilter = statementDateFilter.to;
+    const vouchers = allVouchers
+      .filter(v => (!fromFilter || (v.date && v.date >= fromFilter)) && (!toFilter || (v.date && v.date <= toFilter)))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     if (vouchers.length === 0) {
-      body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the last ${CONFIG_DAYS_LABEL}.`);
+      body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the selected range.`);
     } else {
-      // Actual current closing balance from the ledger master — always
-      // accurate, unlike summing this period's vouchers (which "Net
-      // Amount" used to show and isn't the real balance the ledger holds).
-      ensureSectionLoaded(currentCompany, 'ledgers');
+      // Balance as of the END of the selected range — not always today's
+      // live balance, since the person might be looking at a past period.
       const ledgerEntry = safeArray(data.ledgers).find(l => l.name === partyName);
-      // Tally's raw CLOSINGBALANCE sign convention is the opposite of ours
-      // (negative = Dr in Tally's export) — flipped here, same as the PDF export.
-      const closingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
-      const closingLabel = closingBalance === null
+      const liveClosingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
+
+      let displayBalance = liveClosingBalance;
+      let balanceCaption = 'Closing Balance';
+      if (toFilter && liveClosingBalance !== null) {
+        const anchoredRows = computeAnchoredStatementRows(allVouchers, partyName, liveClosingBalance);
+        const rowsUpToDate = anchoredRows.filter(r => r.date && r.date <= toFilter);
+        if (rowsUpToDate.length > 0) {
+          displayBalance = rowsUpToDate[rowsUpToDate.length - 1].balance;
+          balanceCaption = `Balance as of ${formatTallyDate(toFilter)}`;
+        }
+      }
+      const closingLabel = displayBalance === null
         ? '…'
-        : `${formatCurrency(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`;
+        : `${formatCurrency(Math.abs(displayBalance))} ${displayBalance >= 0 ? 'Dr' : 'Cr'}`;
 
       body.innerHTML = `
         <div class="summary-strip" style="margin-bottom:14px;">
@@ -1143,7 +1306,7 @@
             <div class="value mono">${vouchers.length}</div>
           </div>
           <div class="summary-chip">
-            <div class="label">Closing Balance</div>
+            <div class="label">${escapeHtml(balanceCaption)}</div>
             <div class="value mono">${closingLabel}</div>
           </div>
         </div>
@@ -1176,6 +1339,19 @@
 
   document.getElementById('ledger-detail-back').addEventListener('click', () => {
     document.getElementById('ledger-detail-overlay').classList.remove('open');
+  });
+
+  document.getElementById('ledger-date-from').addEventListener('change', e => {
+    statementDateFilter.from = inputFormatToTallyDate(e.target.value);
+    if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
+  });
+  document.getElementById('ledger-date-to').addEventListener('change', e => {
+    statementDateFilter.to = inputFormatToTallyDate(e.target.value);
+    if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
+  });
+  document.getElementById('ledger-date-reset').addEventListener('click', () => {
+    statementDateFilter = { from: null, to: null };
+    if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
   });
 
   const CONFIG_DAYS_LABEL = '1 year';
@@ -1231,8 +1407,8 @@
       return;
     }
 
-    const daybook = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
-    if (daybook.length === 0) { alert('No transactions to export.'); return; }
+    const allVouchers = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
+    if (allVouchers.length === 0) { alert('No transactions to export.'); return; }
 
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
@@ -1244,24 +1420,27 @@
     const companyInfo = data.company_info || {};
     const buyerLedger = (data.party_details || {})[partyName] || safeArray(Object.values(data.party_details || {})).find(p => p.name === partyName) || {};
 
-    // Our sync window is only the last ~365 days — if this ledger had
-    // transactions before that, starting the running balance at zero
-    // would make the closing figure wrong. Instead, anchor to the
-    // ledger's actual current closing balance (always accurate, since
-    // it's Tally's own live figure) and work backward to find what the
-    // opening balance for THIS period must have been.
-    // Note: Tally's raw CLOSINGBALANCE field uses the opposite sign
-    // convention from our running-balance math (negative = Dr in Tally's
-    // export, positive = Dr in ours) — confirmed from how party amounts
-    // are signed in voucher ledger lines — so we flip it here.
+    // Anchor to the ledger's real current closing balance (see
+    // computeAnchoredStatementRows), then slice to whatever date range is
+    // currently selected in the UI — the opening balance shown is
+    // whatever the running balance was immediately before that range
+    // started, not just zero.
     const ledgerEntry = safeArray(data.ledgers).find(l => l.name === partyName);
-    const currentClosingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
+    const liveClosingBalance = ledgerEntry ? -parseAmt(ledgerEntry.closing_balance) : null;
+    const anchoredRows = computeAnchoredStatementRows(allVouchers, partyName, liveClosingBalance);
 
-    const unanchoredRows = buildLedgerStatementRows(daybook, partyName, 0);
-    const netChangeInPeriod = unanchoredRows.length ? unanchoredRows[unanchoredRows.length - 1].balance : 0;
-    const openingBalance = currentClosingBalance !== null ? currentClosingBalance - netChangeInPeriod : 0;
+    const fromFilter = statementDateFilter.from;
+    const toFilter = statementDateFilter.to;
+    const rowsBeforeRange = anchoredRows.filter(r => fromFilter && r.date && r.date < fromFilter);
+    const openingBalance = rowsBeforeRange.length > 0
+      ? rowsBeforeRange[rowsBeforeRange.length - 1].balance
+      : (anchoredRows.length ? anchoredRows[0].balance - (anchoredRows[0].debit - anchoredRows[0].credit) : 0);
 
-    const rows = buildLedgerStatementRows(daybook, partyName, openingBalance);
+    const rows = anchoredRows.filter(r =>
+      (!fromFilter || (r.date && r.date >= fromFilter)) && (!toFilter || (r.date && r.date <= toFilter))
+    );
+    if (rows.length === 0) { alert('No transactions in the selected date range.'); return; }
+
     const fromDate = formatTallyDate(rows[0].date);
     const toDate = formatTallyDate(rows[rows.length - 1].date);
     const closingBalance = rows[rows.length - 1].balance;
