@@ -569,6 +569,7 @@
     stock_items: 'stock_items',
     sales_vouchers: 'sales_vouchers',
     party_details: 'party_details',
+    bank_related_vouchers: 'bank_related_vouchers',
   };
   let sectionLoadState = {}; // companyKey -> { pathKey: 'loading' | 'loaded' }
   let currentSection = "home";
@@ -1054,6 +1055,19 @@
     });
   }
 
+  // Merges the light daybook (all voucher types, no ledger lines) with
+  // bank_related_vouchers (Payment/Receipt/Contra only, WITH ledger lines)
+  // — preferring the enriched version wherever the same voucher exists in
+  // both, so bank ledger lookups can find every voucher that touches them.
+  function getEnrichedDaybook(data) {
+    const daybook = safeArray(data.daybook);
+    const bankVouchers = safeArray(data.bank_related_vouchers);
+    const bankMap = new Map();
+    bankVouchers.forEach(v => bankMap.set(`${v.date}|${v.voucher_number}`, v));
+
+    return daybook.map(v => bankMap.get(`${v.date}|${v.voucher_number}`) || v);
+  }
+
   // Tally's PartyLedgerName field isn't reliably the ledger being viewed —
   // for Payment/Receipt/Contra vouchers it can point to the OTHER side of
   // the transaction. Checking ledger_lines too catches every voucher that
@@ -1081,7 +1095,7 @@
     currentLedgerDetailParty = partyName;
     const data = companyData[currentCompany] || {};
 
-    const daybookReady = ensureSectionLoaded(currentCompany, 'daybook');
+    const daybookReady = ensureSectionLoaded(currentCompany, 'daybook', 'bank_related_vouchers');
     ensureSectionLoaded(currentCompany, 'party_details'); // used for buyer info if a Sales voucher is opened from here
 
     document.getElementById('ledger-detail-title').textContent = partyName;
@@ -1093,7 +1107,7 @@
       return;
     }
 
-    const daybook = safeArray(data.daybook);
+    const daybook = getEnrichedDaybook(data);
     const vouchers = daybook
       .filter(v => voucherInvolvesLedger(v, partyName))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -1186,7 +1200,7 @@
     if (!partyName) { alert('No party selected.'); return; }
 
     const data = companyData[currentCompany] || {};
-    const daybook = safeArray(data.daybook).filter(v => voucherInvolvesLedger(v, partyName));
+    const daybook = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
     if (daybook.length === 0) { alert('No transactions to export.'); return; }
 
     if (!window.jspdf) {
@@ -1358,12 +1372,7 @@
     }
 
     const taxableAmount = items.reduce((s, i) => s + Math.abs(parseAmt(i.amount)), 0);
-    // Use the item's own sales ledger name if every item shares one
-    // (e.g. "18% Sales"), otherwise a generic label.
-    const ledgerNames = [...new Set(items.map(i => i.sales_ledger_name).filter(Boolean))];
-    const label = ledgerNames.length === 1 ? ledgerNames[0] : 'Taxable Amount';
-
-    return [{ ledger_name: label, amount: taxableAmount }, ...nonPartyLines];
+    return [{ ledger_name: 'Taxable Value', amount: taxableAmount }, ...nonPartyLines];
   }
 
   function openVoucherDetail(date, voucherNumber) {
