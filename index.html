@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>TallyMobile — Shivam Group</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1565c0">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -210,6 +214,36 @@
     font-size: 13px; font-weight: 700; color: var(--ink-soft);
     text-transform: uppercase; letter-spacing: 0.04em;
     margin: 6px 0 10px;
+  }
+
+  /* ===== Monthly Sales Chart ===== */
+  .month-chart {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 14px 8px;
+    box-shadow: var(--shadow);
+    margin-bottom: 16px;
+  }
+  .month-bars {
+    display: flex; align-items: flex-end; gap: 6px;
+    height: 140px;
+    margin-bottom: 8px;
+  }
+  .month-bar-col {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    height: 100%; justify-content: flex-end;
+  }
+  .month-bar {
+    width: 100%; max-width: 28px;
+    background: var(--primary);
+    border-radius: 4px 4px 0 0;
+    min-height: 2px;
+    transition: none;
+  }
+  .month-bar-label {
+    font-size: 9.5px; color: var(--ink-soft); margin-top: 6px;
+    white-space: nowrap;
   }
 
   .dash-tile-grid {
@@ -507,6 +541,13 @@
       <button class="export-btn" id="export-pdf-btn">PDF</button>
     </div>
 
+    <div class="date-range-bar" id="report-date-bar" style="display:none;">
+      <input type="date" id="report-date-from">
+      <span class="date-range-sep">to</span>
+      <input type="date" id="report-date-to">
+      <button class="date-range-reset" id="report-date-fetch">Fetch from Tally</button>
+    </div>
+
     <div id="summary-strip" class="summary-strip"></div>
 
     <div id="content-area">
@@ -569,7 +610,7 @@
 <!-- Firebase (modular SDK) -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-  import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+  import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
@@ -611,6 +652,7 @@
   // company_info + outstanding_receivables (small) load immediately.
   const LAZY_PATHS = {
     ledgers: 'ledgers',
+    groups: 'groups',
     daybook: 'daybook',
     stock_items: 'stock_items',
     sales_vouchers: 'sales_vouchers',
@@ -804,7 +846,8 @@
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
 
-    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet') ? 'none' : 'flex';
+    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales') ? 'none' : 'flex';
+    document.getElementById('report-date-bar').style.display = (currentSection === 'pnl' || currentSection === 'balancesheet') ? 'flex' : 'none';
 
     if (currentSection === 'home') renderHome(data, contentArea, summaryStrip);
     else if (currentSection === 'outstanding') renderOutstanding(data, contentArea, summaryStrip);
@@ -813,6 +856,7 @@
     else if (currentSection === 'stock') renderStock(data, contentArea, summaryStrip);
     else if (currentSection === 'pnl') renderProfitAndLoss(data, contentArea, summaryStrip);
     else if (currentSection === 'balancesheet') renderBalanceSheet(data, contentArea, summaryStrip);
+    else if (currentSection === 'monthlysales') renderMonthlySales(data, contentArea, summaryStrip);
   }
 
   function goToSection(section) {
@@ -889,6 +933,10 @@
         <button class="dash-tile" data-goto="balancesheet">
           <span class="dt-icon" style="background:var(--amber-soft); color:var(--amber);">▭</span>
           <span class="dt-label">Balance Sheet</span>
+        </button>
+        <button class="dash-tile" data-goto="monthlysales">
+          <span class="dt-icon" style="background:var(--forest-soft); color:var(--forest);">▁▃▅</span>
+          <span class="dt-label">Monthly Sales</span>
         </button>
       </div>
     `;
@@ -1125,13 +1173,83 @@
     ` + childrenHtml;
   }
 
+  // ---- Custom on-demand P&L / Balance Sheet (verify against Tally) ----
+  // The app can't compute these itself — they're fetched live from Tally
+  // by the PC-side sync app. Requesting a custom period writes a request
+  // to Firebase; the sync app (polling every ~15s) picks it up, fetches
+  // that exact period from Tally, and writes the result back.
+  let customReportState = {
+    pnl: { requesting: false, result: null, requestId: null, timedOut: false },
+    balancesheet: { requesting: false, result: null, requestId: null, timedOut: false },
+  };
+  let customReportUnsubscribers = {};
+  let customReportTimeouts = {};
+
+  function requestCustomReport(sectionKey, reportType) {
+    const fromInput = document.getElementById('report-date-from').value;
+    const toInput = document.getElementById('report-date-to').value;
+    const toDate = inputFormatToTallyDate(toInput);
+    if (!toDate) { alert('Pick at least a "to" date.'); return; }
+
+    const requestId = String(Date.now());
+    customReportState[sectionKey] = { requesting: true, result: null, requestId, timedOut: false };
+    render();
+
+    set(ref(db, `companies/${currentCompany}/custom_report_request`), {
+      request_id: requestId,
+      report_type: reportType,
+      from_date: inputFormatToTallyDate(fromInput),
+      to_date: toDate,
+    });
+
+    if (customReportUnsubscribers[sectionKey]) customReportUnsubscribers[sectionKey]();
+    if (customReportTimeouts[sectionKey]) clearTimeout(customReportTimeouts[sectionKey]);
+
+    customReportUnsubscribers[sectionKey] = onValue(
+      ref(db, `companies/${currentCompany}/custom_report_result`),
+      snapshot => {
+        const val = snapshot.val();
+        if (val && val.request_id === requestId) {
+          clearTimeout(customReportTimeouts[sectionKey]);
+          customReportState[sectionKey] = { requesting: false, result: val, requestId, timedOut: false };
+          render();
+        }
+      }
+    );
+
+    customReportTimeouts[sectionKey] = setTimeout(() => {
+      if (customReportState[sectionKey].requestId === requestId && customReportState[sectionKey].requesting) {
+        customReportState[sectionKey] = { requesting: false, result: null, requestId: null, timedOut: true };
+        render();
+      }
+    }, 90000); // 90s — if your PC's sync app isn't running, this won't ever arrive
+  }
+
+  document.getElementById('report-date-fetch').addEventListener('click', () => {
+    if (currentSection === 'pnl') requestCustomReport('pnl', 'pnl');
+    else if (currentSection === 'balancesheet') requestCustomReport('balancesheet', 'balance_sheet');
+  });
+
   function renderProfitAndLoss(data, contentArea, summaryStrip) {
-    if (!ensureSectionLoaded(currentCompany, 'profit_and_loss')) {
+    const custom = customReportState.pnl;
+    if (custom.requesting) {
+      contentArea.innerHTML = '<div class="loading-state">Asking your PC to fetch this period from Tally… (make sure the sync app is running)</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    if (custom.timedOut) {
+      contentArea.innerHTML = emptyState('No response from your PC', 'Make sure tally_sync_gui.py (or the sync script) is running and Tally is open, then try again.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const usingCustom = custom.result !== null;
+    if (!usingCustom && !ensureSectionLoaded(currentCompany, 'profit_and_loss')) {
       contentArea.innerHTML = '<div class="loading-state">Loading P&amp;L…</div>';
       summaryStrip.innerHTML = '';
       return;
     }
-    const groups = safeArray(data.profit_and_loss);
+    const groups = usingCustom ? safeArray(custom.result.data) : safeArray(data.profit_and_loss);
 
     if (groups.length === 0) {
       contentArea.innerHTML = emptyState('No P&L data', 'Check back after the next sync.');
@@ -1151,19 +1269,35 @@
       </div>
     `;
 
-    contentArea.innerHTML = `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
+    contentArea.innerHTML = (usingCustom ? `
+      <div class="loading-state" style="text-align:left; padding: 8px 4px; font-size:12px;">
+        Showing a live fetch from Tally for ${formatTallyDate(custom.result.from_date) || 'inception'} to ${formatTallyDate(custom.result.to_date)}.
+      </div>` : '') + `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
     });
   }
 
   function renderBalanceSheet(data, contentArea, summaryStrip) {
-    if (!ensureSectionLoaded(currentCompany, 'balance_sheet')) {
+    const custom = customReportState.balancesheet;
+    if (custom.requesting) {
+      contentArea.innerHTML = '<div class="loading-state">Asking your PC to fetch this period from Tally… (make sure the sync app is running)</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    if (custom.timedOut) {
+      contentArea.innerHTML = emptyState('No response from your PC', 'Make sure tally_sync_gui.py (or the sync script) is running and Tally is open, then try again.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const usingCustom = custom.result !== null;
+    if (!usingCustom && !ensureSectionLoaded(currentCompany, 'balance_sheet')) {
       contentArea.innerHTML = '<div class="loading-state">Loading Balance Sheet…</div>';
       summaryStrip.innerHTML = '';
       return;
     }
-    const groups = safeArray(data.balance_sheet);
+    const groups = usingCustom ? safeArray(custom.result.data) : safeArray(data.balance_sheet);
 
     if (groups.length === 0) {
       contentArea.innerHTML = emptyState('No Balance Sheet data', 'Check back after the next sync.');
@@ -1180,7 +1314,9 @@
 
     contentArea.innerHTML = `
       <div class="loading-state" style="text-align:left; padding: 10px 4px; font-size:12px;">
-        Figures shown as absolute values per group, same as Tally's own Balance Sheet screen (column position — not sign — indicates Asset vs Liability).
+        ${usingCustom
+          ? `Showing a live fetch from Tally as at ${formatTallyDate(custom.result.to_date)}.`
+          : `Figures shown as absolute values per group, same as Tally's own Balance Sheet screen (column position — not sign — indicates Asset vs Liability).`}
       </div>
       <div class="list-card">${groups.map(g => renderGroupRow(g, 0, true)).join('')}</div>
     `;
@@ -1189,29 +1325,116 @@
     });
   }
 
+  function renderMonthlySales(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'sales_vouchers')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading sales data…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    const vouchers = safeArray(Object.values(data.sales_vouchers || {}));
+
+    if (vouchers.length === 0) {
+      contentArea.innerHTML = emptyState('No sales data', 'Check back after the next sync.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    // Group by YYYY-MM (Tally dates are YYYYMMDD strings)
+    const monthTotals = new Map();
+    vouchers.forEach(v => {
+      if (!v.date || v.date.length < 6) return;
+      const monthKey = v.date.slice(0, 6); // YYYYMM
+      const amt = Math.abs(parseAmt(v.amount));
+      monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + amt);
+    });
+
+    const months = [...monthTotals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const total = months.reduce((s, [, amt]) => s + amt, 0);
+    const maxMonth = Math.max(...months.map(([, amt]) => amt), 1);
+    const avgMonth = months.length ? total / months.length : 0;
+
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function monthLabel(key) {
+      const y = key.slice(2, 4);
+      const m = parseInt(key.slice(4, 6), 10) - 1;
+      return `${MONTH_NAMES[m] || '?'} '${y}`;
+    }
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip forest">
+        <div class="label">Total (${months.length} mo)</div>
+        <div class="value mono">${formatCurrency(total)}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Monthly Avg</div>
+        <div class="value mono">${formatCurrency(avgMonth)}</div>
+      </div>
+    `;
+
+    const chartHtml = `
+      <div class="month-chart">
+        <div class="month-bars">
+          ${months.map(([key, amt]) => `
+            <div class="month-bar-col">
+              <div class="month-bar" style="height: ${Math.max(2, (amt / maxMonth) * 100)}%;" title="${monthLabel(key)}: ${formatCurrency(amt)}"></div>
+              <div class="month-bar-label">${monthLabel(key)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    const listHtml = `
+      <div class="list-card">${[...months].reverse().map(([key, amt]) => `
+        <div class="row">
+          <div class="name">${monthLabel(key)}</div>
+          <div class="amount positive mono">${formatCurrency(amt)}</div>
+        </div>
+      `).join('')}</div>
+    `;
+
+    contentArea.innerHTML = chartHtml + listHtml;
+  }
+
+  // Walks a group's parent chain upward, checking at each level whether
+  // it reaches targetGroupName — handles ledgers nested several sub-group
+  // levels deep (e.g. a ledger under "Domestic Sales", itself a sub-group
+  // of "Sales Accounts"), not just direct children.
+  function groupRollsUpTo(startGroupName, targetGroupName, groupParentMap) {
+    let current = startGroupName;
+    let hops = 0;
+    while (current && hops < 25) { // hop limit guards against any cyclic data
+      if (current === targetGroupName) return true;
+      current = groupParentMap.get(current);
+      hops++;
+    }
+    return false;
+  }
+
   function openGroupDetail(groupName) {
     const data = companyData[currentCompany] || {};
-    const ledgersReady = ensureSectionLoaded(currentCompany, 'ledgers');
+    const ready = ensureSectionLoaded(currentCompany, 'ledgers', 'groups');
 
     document.getElementById('group-detail-title').textContent = groupName;
     const body = document.getElementById('group-detail-body');
 
-    if (!ledgersReady) {
+    if (!ready) {
       body.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
       document.getElementById('group-detail-overlay').classList.add('open');
       return;
     }
 
-    // Matches ledgers whose direct parent group equals this P&L/BS group
-    // name — works well when ledgers sit directly under the group shown
-    // (common in most setups). Ledgers several sub-group levels deeper
-    // won't show here since we only sync each ledger's immediate parent.
-    const ledgers = safeArray(data.ledgers).filter(l => (l.group || '') === groupName);
+    const groupParentMap = new Map();
+    safeArray(data.groups).forEach(g => groupParentMap.set(g.name, g.parent));
+
+    const ledgers = safeArray(data.ledgers).filter(l =>
+      groupRollsUpTo(l.group || '', groupName, groupParentMap)
+    );
 
     if (ledgers.length === 0) {
       body.innerHTML = emptyState(
-        'No ledgers found directly under this group',
-        'This group may only contain sub-groups rather than ledgers directly, which isn\'t something we can drill into yet.'
+        'No ledgers found under this group',
+        'This group may genuinely have no ledgers posted to it yet, or the group hierarchy hasn\'t synced — try again after the next sync.'
       );
     } else {
       const sorted = [...ledgers].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -2327,6 +2550,16 @@
       s.onload = resolve;
       s.onerror = reject;
       document.head.appendChild(s);
+    });
+  }
+
+  // Registering a service worker is required for Chrome to offer a real
+  // "Install" prompt instead of just a home-screen shortcut.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.error('Service worker registration failed:', err);
+      });
     });
   }
 </script>
