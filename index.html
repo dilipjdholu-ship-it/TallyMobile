@@ -148,6 +148,21 @@
   }
   .top-row .brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 18px; }
   .top-row .sync-status { font-size: 11px; color: #aab6d1; }
+  .top-row-right { display: flex; align-items: center; gap: 10px; }
+  .refresh-btn {
+    background: rgba(255,255,255,0.12);
+    border: none;
+    color: white;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    font-size: 15px;
+    line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .refresh-btn:active { background: rgba(255,255,255,0.25); }
+  .refresh-btn.spinning { animation: refresh-spin 0.8s linear infinite; }
+  @keyframes refresh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .top-row .sync-dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: #7fbf7f; margin-right: 5px; vertical-align: middle;
@@ -339,6 +354,7 @@
   }
   .badge-debtor { background: var(--rust-soft); color: var(--rust); }
   .badge-creditor { background: var(--forest-soft); color: var(--forest); }
+  .badge-bank { background: var(--primary-soft); color: var(--primary); }
 
   .filter-chips {
     display: flex; gap: 8px; overflow-x: auto;
@@ -526,7 +542,10 @@
   <header class="top">
     <div class="top-row">
       <div class="brand">TallyMobile</div>
-      <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
+      <div class="top-row-right">
+        <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
+        <button class="refresh-btn" id="manual-refresh-btn" title="Refresh data" aria-label="Refresh data">&#8635;</button>
+      </div>
     </div>
     <button class="company-switcher" id="company-switcher-btn">
       <span class="cs-name" id="company-switcher-name"></span>
@@ -538,7 +557,7 @@
     <div class="search-bar" id="search-bar-row">
       <input type="text" id="search-input" placeholder="Search…">
       <button class="export-btn" id="export-xlsx-btn">XLSX</button>
-      <button class="export-btn" id="export-pdf-btn">PDF</button>
+      <button class="export-btn" id="export-pdf-btn">View PDF</button>
     </div>
 
     <div class="date-range-bar" id="report-date-bar" style="display:none;">
@@ -577,18 +596,38 @@
     </div>
   </div>
 
+  <div id="month-detail-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="month-detail-back">&larr; Back</button>
+        <div class="overlay-title" id="month-detail-title"></div>
+      </div>
+      <div class="overlay-body" id="month-detail-body"></div>
+    </div>
+  </div>
+
+  <div id="stock-item-detail-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="stock-item-detail-back">&larr; Back</button>
+        <div class="overlay-title" id="stock-item-detail-title"></div>
+      </div>
+      <div class="overlay-body" id="stock-item-detail-body"></div>
+    </div>
+  </div>
+
   <div id="ledger-detail-overlay" class="overlay">
     <div class="overlay-panel">
       <div class="overlay-header">
         <button class="overlay-back" id="ledger-detail-back">&larr; Back</button>
         <div class="overlay-title" id="ledger-detail-title"></div>
-        <button class="export-btn" id="ledger-statement-pdf-btn">Statement PDF</button>
+        <button class="export-btn" id="ledger-statement-pdf-btn">View Statement</button>
       </div>
       <div class="date-range-bar">
         <input type="date" id="ledger-date-from">
         <span class="date-range-sep">to</span>
         <input type="date" id="ledger-date-to">
-        <button class="date-range-reset" id="ledger-date-reset">Reset</button>
+        <button class="date-range-reset" id="ledger-date-apply">Apply</button>
       </div>
       <div class="overlay-body" id="ledger-detail-body"></div>
     </div>
@@ -600,7 +639,7 @@
       <div class="overlay-header">
         <button class="overlay-back" id="voucher-detail-back">&larr; Back</button>
         <div class="overlay-title">Invoice</div>
-        <button class="export-btn" id="voucher-export-pdf-btn">Export PDF</button>
+        <button class="export-btn" id="voucher-export-pdf-btn">View Invoice</button>
       </div>
       <div class="overlay-body" id="voucher-detail-body"></div>
     </div>
@@ -645,6 +684,56 @@
 
   // ================= STATE =================
   let currentCompany = COMPANIES[0].key;
+
+  // ---- Overlay / back-button handling ----
+  // Without this, pressing the phone's back button while inside a ledger
+  // drill-down (or any overlay) exits the whole app, since the browser
+  // has no history entry for "overlay open" to go back to. Pushing a
+  // history entry when an overlay opens, and closing overlays on
+  // popstate, makes back-button behavior match a native app.
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay'];
+
+  function pushOverlayState(name) {
+    history.pushState({ overlay: name }, '', '');
+  }
+
+  function closeTopOverlay() {
+    for (const id of OVERLAY_IDS) {
+      const el = document.getElementById(id);
+      if (el && el.classList.contains('open')) {
+        el.classList.remove('open');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  window.addEventListener('popstate', () => {
+    closeTopOverlay();
+  });
+
+  // In-app "Back" buttons go through history.back() too, rather than
+  // closing the overlay directly — keeps the history stack and the
+  // visible UI always in sync, regardless of which one triggered the close.
+  function goBackFromOverlay() {
+    if (history.state && history.state.overlay) {
+      history.back();
+    } else {
+      closeTopOverlay();
+    }
+  }
+
+  // Only pushes a history entry the FIRST time an overlay opens — some
+  // overlays call this again shortly after (once loading finishes and
+  // real data arrives) without the user taking any new action, so that
+  // second call shouldn't add another back-button stop.
+  function openOverlay(id) {
+    const el = document.getElementById(id);
+    if (!el.classList.contains('open')) {
+      pushOverlayState(id);
+    }
+    el.classList.add('open');
+  }
   let appInitialized = false;
   let currentUnsubscribe = null;
 
@@ -806,14 +895,56 @@
     });
   }
 
+  // ---- Local caching (instant reopen, background refresh) ----
+  // Firebase reads take a moment even on a good connection — caching
+  // each section in localStorage means reopening the app shows the last
+  // known data INSTANTLY, while a fresh copy loads quietly in the
+  // background and swaps in once it arrives. Wrapped in try/catch since
+  // localStorage has a real (small) size limit and heavy sections could
+  // exceed it — caching is a nice-to-have, never something that should
+  // break the app if it fails.
+  function cacheKey(companyKey, pathKey) {
+    return `tm_cache_${companyKey}_${pathKey}`;
+  }
+
+  function saveToCache(companyKey, pathKey, data) {
+    try {
+      localStorage.setItem(cacheKey(companyKey, pathKey), JSON.stringify({ data, ts: Date.now() }));
+    } catch (e) {
+      // Quota exceeded or similar — silently skip caching this section.
+    }
+  }
+
+  function loadFromCache(companyKey, pathKey) {
+    try {
+      const raw = localStorage.getItem(cacheKey(companyKey, pathKey));
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
   function listenToCurrentCompany() {
     if (currentUnsubscribe) {
       currentUnsubscribe();
       currentUnsubscribe = null;
     }
-    document.getElementById('sync-text').textContent = 'Loading…';
     companyData[currentCompany] = companyData[currentCompany] || {};
     sectionLoadState[currentCompany] = sectionLoadState[currentCompany] || {};
+
+    // Show cached lightweight data instantly, if we have it, while the
+    // live listener connects in the background.
+    const cachedInfo = loadFromCache(currentCompany, 'company_info');
+    const cachedOutstanding = loadFromCache(currentCompany, 'outstanding_receivables');
+    if (cachedInfo || cachedOutstanding) {
+      companyData[currentCompany].company_info = cachedInfo ? cachedInfo.data : undefined;
+      companyData[currentCompany].outstanding_receivables = cachedOutstanding ? cachedOutstanding.data : undefined;
+      document.getElementById('sync-text').textContent = 'Cached';
+      render();
+    } else {
+      document.getElementById('sync-text').textContent = 'Loading…';
+    }
 
     // Lightweight, always-live: company_info, outstanding_receivables, last_synced
     const companyRef = ref(db, `companies/${currentCompany}`);
@@ -823,6 +954,8 @@
       cd.company_info = val.company_info;
       cd.outstanding_receivables = val.outstanding_receivables;
       cd.last_synced = val.last_synced;
+      saveToCache(currentCompany, 'company_info', val.company_info);
+      saveToCache(currentCompany, 'outstanding_receivables', val.outstanding_receivables);
       document.getElementById('sync-text').textContent = 'Live';
       render();
     }, error => {
@@ -831,34 +964,83 @@
     });
   }
 
-  // Ensures a heavy section is loaded (once) before a section that needs
-  // it renders. Triggers a one-time fetch if not already loaded/loading,
-  // and re-renders when it arrives. Returns true if data is ready now.
+  // Ensures a heavy section is loaded before a section that needs it
+  // renders. If a cached copy exists, it's used immediately (returns
+  // true right away, instant render) while a fresh copy is quietly
+  // fetched in the background and swapped in once it arrives — so
+  // reopening the app never has to wait on a full network round-trip
+  // just to show something.
   function ensureSectionLoaded(companyKey, ...pathKeys) {
     const state = sectionLoadState[companyKey] || (sectionLoadState[companyKey] = {});
     let allReady = true;
+
     pathKeys.forEach(pathKey => {
-      if (state[pathKey] === 'loaded') return;
-      allReady = false;
-      if (state[pathKey] === 'loading') return;
-      state[pathKey] = 'loading';
+      if (state[pathKey] === 'loaded' || state[pathKey] === 'cached') return;
+
+      const cached = loadFromCache(companyKey, pathKey);
+      if (cached && state[pathKey] !== 'loading') {
+        companyData[companyKey] = companyData[companyKey] || {};
+        companyData[companyKey][pathKey] = cached.data;
+        state[pathKey] = 'cached'; // usable now, but still refresh in background below
+      } else if (state[pathKey] === 'loading') {
+        allReady = false;
+        return;
+      } else {
+        allReady = false;
+      }
+
+      if (state[pathKey] === 'loading') return; // already refreshing
+      state[pathKey] = state[pathKey] === 'cached' ? 'cached' : 'loading';
+
       const path = LAZY_PATHS[pathKey];
       get(ref(db, `companies/${companyKey}/${path}`)).then(snapshot => {
         state[pathKey] = 'loaded';
         companyData[companyKey] = companyData[companyKey] || {};
         companyData[companyKey][pathKey] = snapshot.val();
+        saveToCache(companyKey, pathKey, snapshot.val());
         if (companyKey === currentCompany) {
           render();
           refreshOpenOverlays();
         }
       }).catch(err => {
-        state[pathKey] = null; // allow retry
+        state[pathKey] = state[pathKey] === 'cached' ? 'cached' : null; // allow retry, unless we still have cache to fall back on
         console.error(`Failed to load ${pathKey} for ${companyKey}:`, err);
         if (companyKey === currentCompany) render();
       });
     });
-    return allReady;
+
+    return allReady || pathKeys.every(k => state[k] === 'cached' || state[k] === 'loaded');
   }
+
+  // Manual refresh — bypasses the "already loaded" guard entirely and
+  // re-fetches every section that's currently in use for this company,
+  // for when the person suspects they're looking at stale data.
+  function forceRefreshCurrentCompany() {
+    const state = sectionLoadState[currentCompany] || {};
+    const keysToRefresh = Object.keys(state).filter(k => state[k] === 'loaded' || state[k] === 'cached');
+    keysToRefresh.forEach(pathKey => {
+      state[pathKey] = 'loading';
+      const path = LAZY_PATHS[pathKey];
+      get(ref(db, `companies/${currentCompany}/${path}`)).then(snapshot => {
+        state[pathKey] = 'loaded';
+        companyData[currentCompany][pathKey] = snapshot.val();
+        saveToCache(currentCompany, pathKey, snapshot.val());
+        render();
+        refreshOpenOverlays();
+      }).catch(err => {
+        state[pathKey] = 'loaded'; // keep whatever we had
+        console.error(`Refresh failed for ${pathKey}:`, err);
+      });
+    });
+    document.getElementById('sync-text').textContent = 'Refreshing…';
+  }
+
+  document.getElementById('manual-refresh-btn').addEventListener('click', () => {
+    const btn = document.getElementById('manual-refresh-btn');
+    btn.classList.add('spinning');
+    forceRefreshCurrentCompany();
+    setTimeout(() => btn.classList.remove('spinning'), 1200);
+  });
 
   // ================= RENDER =================
   function render() {
@@ -1011,12 +1193,13 @@
     attachRowClickHandlers(contentArea);
   }
 
-  let ledgerFilter = 'all'; // 'all' | 'debtors' | 'creditors' | 'other'
+  let ledgerFilter = 'debtors'; // 'debtors' | 'creditors' | 'bank' | 'other'
 
   function classifyLedger(group) {
     const g = (group || '').trim().toLowerCase();
     if (g === 'sundry debtors') return 'debtors';
     if (g === 'sundry creditors') return 'creditors';
+    if (g.includes('bank')) return 'bank'; // catches "Bank Accounts", "Bank OCC A/c", "Bank OD A/c", etc.
     return 'other';
   }
 
@@ -1028,14 +1211,13 @@
     }
     let rows = safeArray(data.ledgers);
     rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
-    if (ledgerFilter !== 'all') {
-      rows = rows.filter(r => classifyLedger(r.group) === ledgerFilter);
-    }
+    rows = rows.filter(r => classifyLedger(r.group) === ledgerFilter);
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const allRows = safeArray(data.ledgers);
     const debtorCount = allRows.filter(r => classifyLedger(r.group) === 'debtors').length;
     const creditorCount = allRows.filter(r => classifyLedger(r.group) === 'creditors').length;
+    const bankCount = allRows.filter(r => classifyLedger(r.group) === 'bank').length;
 
     summaryStrip.innerHTML = `
       <div class="summary-chip">
@@ -1054,9 +1236,9 @@
 
     const filterChipsHtml = `
       <div class="filter-chips">
-        <button class="filter-chip ${ledgerFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
         <button class="filter-chip ${ledgerFilter === 'debtors' ? 'active' : ''}" data-filter="debtors">Sundry Debtors</button>
         <button class="filter-chip ${ledgerFilter === 'creditors' ? 'active' : ''}" data-filter="creditors">Sundry Creditors</button>
+        <button class="filter-chip ${ledgerFilter === 'bank' ? 'active' : ''}" data-filter="bank">Bank Accounts (${bankCount})</button>
         <button class="filter-chip ${ledgerFilter === 'other' ? 'active' : ''}" data-filter="other">Other</button>
       </div>
     `;
@@ -1072,7 +1254,8 @@
       const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
       const kind = classifyLedger(r.group);
       const badge = kind === 'debtors' ? '<span class="badge badge-debtor">Debtor</span>' :
-                    kind === 'creditors' ? '<span class="badge badge-creditor">Creditor</span>' : '';
+                    kind === 'creditors' ? '<span class="badge badge-creditor">Creditor</span>' :
+                    kind === 'bank' ? '<span class="badge badge-bank">Bank</span>' : '';
       return `
       <div class="row clickable-row" data-party="${escapeHtml(r.name || '')}">
         <div>
@@ -1169,7 +1352,7 @@
     }
 
     contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => `
-      <div class="row">
+      <div class="row clickable-row" data-item="${escapeHtml(r.name || '')}">
         <div>
           <div class="name">${escapeHtml(r.name || '—')}</div>
           <div class="sub">${escapeHtml(r.group || '')}</div>
@@ -1181,6 +1364,82 @@
       </div>
     `).join('')}</div>
     ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openStockItemDetail(row.dataset.item));
+    });
+  }
+
+  function openStockItemDetail(itemName) {
+    const data = companyData[currentCompany] || {};
+    const readyStock = ensureSectionLoaded(currentCompany, 'stock_items');
+    const readySales = ensureSectionLoaded(currentCompany, 'sales_vouchers');
+
+    document.getElementById('stock-item-detail-title').textContent = itemName;
+    const body = document.getElementById('stock-item-detail-body');
+
+    if (!readyStock || !readySales) {
+      body.innerHTML = '<div class="loading-state">Loading item history…</div>';
+      openOverlay('stock-item-detail-overlay');
+      return;
+    }
+
+    const stockEntry = safeArray(data.stock_items).find(s => s.name === itemName) || {};
+
+    // Sales history — only Sales vouchers carry itemized line detail, so
+    // this shows "what this item sold for and to whom" rather than a
+    // full stock ledger (which would also need Purchase-side item
+    // detail we don't currently sync).
+    const salesMatches = [];
+    safeArray(Object.values(data.sales_vouchers || {})).forEach(v => {
+      safeArray(v.items).forEach(item => {
+        if (item.item_name === itemName) {
+          salesMatches.push({
+            date: v.date,
+            party: v.party,
+            voucher_number: v.voucher_number,
+            qty: item.billed_qty,
+            rate: item.rate,
+            amount: item.amount,
+          });
+        }
+      });
+    });
+    salesMatches.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    const totalSold = salesMatches.reduce((s, m) => s + Math.abs(parseAmt(m.amount)), 0);
+
+    body.innerHTML = `
+      <div class="summary-strip" style="margin-bottom:14px;">
+        <div class="summary-chip">
+          <div class="label">Closing Qty</div>
+          <div class="value mono">${stockEntry.closing_qty || '0'}</div>
+        </div>
+        <div class="summary-chip">
+          <div class="label">Closing Value</div>
+          <div class="value mono">${formatCurrency(parseAmt(stockEntry.closing_value))}</div>
+        </div>
+      </div>
+      <div class="dash-section-title">Sales History${salesMatches.length ? ` (${salesMatches.length}, total ${formatCurrency(totalSold)})` : ''}</div>
+      ${salesMatches.length === 0
+        ? emptyState('No sales found for this item', 'Either it hasn\'t sold in the synced period, or it only appears on Purchase-side vouchers, which we don\'t track item-by-item yet.')
+        : `<div class="list-card">${salesMatches.map(m => `
+            <div class="row">
+              <div>
+                <div class="name">${escapeHtml(m.party || '—')}</div>
+                <div class="sub">${escapeHtml(formatTallyDate(m.date))} &middot; Qty ${escapeHtml((m.qty || '').trim())} @ ${escapeHtml((m.rate || '').trim())}</div>
+              </div>
+              <div class="amount neutral mono">${formatCurrency(parseAmt(m.amount))}</div>
+            </div>
+          `).join('')}</div>`
+      }
+    `;
+
+    openOverlay('stock-item-detail-overlay');
+  }
+
+  document.getElementById('stock-item-detail-back').addEventListener('click', () => {
+    goBackFromOverlay();
+  });
   }
 
   function renderGroupRow(g, depth = 0, useAbsolute = false) {
@@ -1417,15 +1676,104 @@
 
     const listHtml = `
       <div class="list-card">${[...months].reverse().map(([key, amt]) => `
-        <div class="row">
+        <div class="row clickable-row" data-month="${key}">
           <div class="name">${monthLabel(key)}</div>
           <div class="amount positive mono">${formatCurrency(amt)}</div>
         </div>
       `).join('')}</div>
+      <div style="margin-top:12px;">
+        <button class="export-btn" id="monthly-sales-share-btn" style="width:100%;">Share Sales Report</button>
+      </div>
     `;
 
     contentArea.innerHTML = chartHtml + listHtml;
+
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openMonthDetail(row.dataset.month, monthLabel(row.dataset.month)));
+    });
+
+    document.getElementById('monthly-sales-share-btn').addEventListener('click', async () => {
+      if (!window.jspdf) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+      let y = 16;
+      doc.setFontSize(14);
+      doc.text(`${companyLabel} — Monthly Sales Report`, 14, y);
+      y += 10;
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Month', 14, y);
+      doc.text('Amount', 195, y, { align: 'right' });
+      doc.setFont(undefined, 'normal');
+      y += 3;
+      doc.line(14, y, 195, y);
+      y += 7;
+      months.forEach(([key, amt]) => {
+        if (y > 280) { doc.addPage(); y = 16; }
+        doc.text(monthLabel(key), 14, y);
+        doc.text(formatCurrencyPDF(amt), 195, y, { align: 'right' });
+        y += 6;
+      });
+      y += 2;
+      doc.line(14, y, 195, y);
+      y += 7;
+      doc.setFont(undefined, 'bold');
+      doc.text('Total', 14, y);
+      doc.text(formatCurrencyPDF(total), 195, y, { align: 'right' });
+      viewOrSharePdf(doc, `${currentCompany}_monthly_sales.pdf`);
+    });
   }
+
+  function openMonthDetail(monthKey, monthLabelStr) {
+    const data = companyData[currentCompany] || {};
+    const vouchers = safeArray(Object.values(data.sales_vouchers || {}))
+      .filter(v => v.date && v.date.slice(0, 6) === monthKey)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    document.getElementById('month-detail-title').textContent = monthLabelStr;
+    const body = document.getElementById('month-detail-body');
+
+    if (vouchers.length === 0) {
+      body.innerHTML = emptyState('No sales vouchers found', 'Nothing synced for this month.');
+    } else {
+      const monthTotal = vouchers.reduce((s, v) => s + Math.abs(parseAmt(v.amount)), 0);
+      body.innerHTML = `
+        <div class="summary-strip" style="margin-bottom:14px;">
+          <div class="summary-chip">
+            <div class="label">Vouchers</div>
+            <div class="value mono">${vouchers.length}</div>
+          </div>
+          <div class="summary-chip">
+            <div class="label">Total</div>
+            <div class="value mono">${formatCurrency(monthTotal)}</div>
+          </div>
+        </div>
+        <div class="list-card">${vouchers.map(v => `
+          <div class="row clickable-row" data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}">
+            <div>
+              <div class="name">${escapeHtml(v.party || '—')}</div>
+              <div class="sub">Sales ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(v.date))}</div>
+            </div>
+            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+          </div>
+        `).join('')}</div>
+      `;
+      body.querySelectorAll('.clickable-row').forEach(row => {
+        row.addEventListener('click', () => {
+          openVoucherDetail(row.dataset.vdate, row.dataset.vnum);
+        });
+      });
+    }
+
+    openOverlay('month-detail-overlay');
+  }
+
+  document.getElementById('month-detail-back').addEventListener('click', () => {
+    goBackFromOverlay();
+  });
 
   // Walks a group's parent chain upward, checking at each level whether
   // it reaches targetGroupName — handles ledgers nested several sub-group
@@ -1451,7 +1799,7 @@
 
     if (!ready) {
       body.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
-      document.getElementById('group-detail-overlay').classList.add('open');
+      openOverlay('group-detail-overlay');
       return;
     }
 
@@ -1494,11 +1842,11 @@
       });
     }
 
-    document.getElementById('group-detail-overlay').classList.add('open');
+    openOverlay('group-detail-overlay');
   }
 
   document.getElementById('group-detail-back').addEventListener('click', () => {
-    document.getElementById('group-detail-overlay').classList.remove('open');
+    goBackFromOverlay();
   });
 
   function emptyState(title, desc) {
@@ -1591,7 +1939,7 @@
 
     if (!daybookReady) {
       body.innerHTML = '<div class="loading-state">Loading transaction history…</div>';
-      document.getElementById('ledger-detail-overlay').classList.add('open');
+      openOverlay('ledger-detail-overlay');
       return;
     }
 
@@ -1671,23 +2019,18 @@
       });
     }
 
-    document.getElementById('ledger-detail-overlay').classList.add('open');
+    openOverlay('ledger-detail-overlay');
   }
 
   document.getElementById('ledger-detail-back').addEventListener('click', () => {
-    document.getElementById('ledger-detail-overlay').classList.remove('open');
+    goBackFromOverlay();
   });
 
-  document.getElementById('ledger-date-from').addEventListener('change', e => {
-    statementDateFilter.from = inputFormatToTallyDate(e.target.value);
-    if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
-  });
-  document.getElementById('ledger-date-to').addEventListener('change', e => {
-    statementDateFilter.to = inputFormatToTallyDate(e.target.value);
-    if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
-  });
-  document.getElementById('ledger-date-reset').addEventListener('click', () => {
-    statementDateFilter = { from: null, to: null };
+  document.getElementById('ledger-date-apply').addEventListener('click', () => {
+    const fromVal = document.getElementById('ledger-date-from').value;
+    const toVal = document.getElementById('ledger-date-to').value;
+    statementDateFilter.from = inputFormatToTallyDate(fromVal);
+    statementDateFilter.to = inputFormatToTallyDate(toVal);
     if (currentLedgerDetailParty) openLedgerDetail(currentLedgerDetailParty);
   });
 
@@ -1914,7 +2257,7 @@
     y += 6;
     doc.line(marginX, y, marginX + contentWidth, y);
 
-    doc.save(`${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`);
+    viewOrSharePdf(doc, `${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`);
   }
 
   // ================= VOUCHER DETAIL / INVOICE =================
@@ -1958,7 +2301,7 @@
     const salesReady = ensureSectionLoaded(currentCompany, 'sales_vouchers');
     if (!salesReady) {
       body.innerHTML = '<div class="loading-state">Loading invoice…</div>';
-      document.getElementById('voucher-detail-overlay').classList.add('open');
+      openOverlay('voucher-detail-overlay');
       return;
     }
 
@@ -1970,7 +2313,7 @@
         'This voucher is outside the itemized sync window, or hasn\'t synced yet. Try again after the next PC sync.'
       );
       currentVoucherDetail = null;
-      document.getElementById('voucher-detail-overlay').classList.add('open');
+      openOverlay('voucher-detail-overlay');
       return;
     }
 
@@ -2034,11 +2377,11 @@
         ${companyInfo.bank_ifsc ? `<div class="tax-row" style="font-size:12.5px;"><div>IFSC: ${escapeHtml(companyInfo.bank_ifsc)}</div><div></div></div>` : ''}
       </div>` : ''}    `;
 
-    document.getElementById('voucher-detail-overlay').classList.add('open');
+    openOverlay('voucher-detail-overlay');
   }
 
   document.getElementById('voucher-detail-back').addEventListener('click', () => {
-    document.getElementById('voucher-detail-overlay').classList.remove('open');
+    goBackFromOverlay();
   });
 
   document.getElementById('voucher-export-pdf-btn').addEventListener('click', exportInvoicePDF);
@@ -2458,7 +2801,7 @@
     doc.setFont(undefined, 'italic');
     doc.text('This is a Computer Generated Invoice', pageWidth / 2, y, { align: 'center' });
 
-    doc.save(`invoice_${v.voucher_number || 'export'}.pdf`);
+    viewOrSharePdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
   }
 
   // ================= HELPERS =================
@@ -2571,7 +2914,26 @@
       doc.text(line.slice(0, 120), 14, y);
       y += 5.5;
     });
-    doc.save(`${currentCompany}_${currentSection}.pdf`);
+    viewOrSharePdf(doc, `${currentCompany}_${currentSection}.pdf`);
+  }
+
+  // Opens a generated PDF for VIEWING instead of immediately forcing a
+  // download — the browser's own PDF viewer (Chrome on Android, Safari
+  // on iOS) has built-in share and download controls once it's open, so
+  // this gives the person a chance to look at it first and choose what
+  // to do, rather than a file just landing in their Downloads folder.
+  function viewOrSharePdf(doc, filename) {
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      // Popup blocked — fall back to a direct download so the person
+      // still gets the file one way or another.
+      doc.save(filename);
+    }
+    // Release the blob URL after a delay long enough for the new tab to
+    // have loaded it — freeing it immediately can break the viewer.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
   function loadScript(src) {
