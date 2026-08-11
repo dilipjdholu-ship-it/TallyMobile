@@ -611,6 +611,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
   import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
@@ -624,6 +625,7 @@
 
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getDatabase(firebaseApp);
+  const auth = getAuth(firebaseApp);
 
   // ================= CONFIG =================
   const COMPANIES = [
@@ -692,11 +694,21 @@
   async function attemptLogin() {
     const input = document.getElementById('password-input').value;
     const hash = await sha256(input);
-    if (hash === ACCESS_CODE_HASH) {
+    if (hash !== ACCESS_CODE_HASH) {
+      document.getElementById('login-error').textContent = "Incorrect access code.";
+      return;
+    }
+    // Establishes a real Firebase Auth session — required once database
+    // security rules are locked down (rules will require auth != null).
+    // Without this, the password screen would only gate the UI, not the
+    // actual database, which anyone could still query directly.
+    try {
+      await signInAnonymously(auth);
       localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() }));
       afterLogin();
-    } else {
-      document.getElementById('login-error').textContent = "Incorrect access code.";
+    } catch (err) {
+      console.error('Firebase auth failed:', err);
+      document.getElementById('login-error').textContent = "Could not connect securely. Check your connection and try again.";
     }
   }
 
@@ -738,9 +750,28 @@
     listenToCurrentCompany(); // always (re)subscribe — handles company switching too
   }
 
-  if (checkExistingSession()) {
-    afterLogin();
-  }
+  // Session restoration: wait for Firebase's own auth state to resolve
+  // before deciding whether to auto-login. A valid local session (our
+  // 24-hour flag) is only useful if there's also a real Firebase Auth
+  // user — otherwise every database read would be denied once security
+  // rules are locked down, even though the UI thinks it's "logged in".
+  onAuthStateChanged(auth, (user) => {
+    if (!checkExistingSession()) return;
+    if (user) {
+      afterLogin();
+    } else {
+      // Local session says "logged in" but no Firebase Auth session
+      // exists (e.g. browser data was partially cleared) — silently
+      // re-establish one rather than forcing a re-login, since the
+      // person already proved they know the access code once.
+      signInAnonymously(auth).then(() => {
+        afterLogin();
+      }).catch((err) => {
+        console.error('Could not restore secure session:', err);
+        localStorage.removeItem(SESSION_KEY); // force a real re-login
+      });
+    }
+  });
 
   document.getElementById('company-switcher-btn').addEventListener('click', () => {
     showCompanySelect();
