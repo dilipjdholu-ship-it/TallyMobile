@@ -648,6 +648,23 @@
 
 <!-- Firebase (modular SDK) -->
 <script type="module">
+  // ---- TEMPORARY diagnostic aid ----
+  // Shows any uncaught JS error directly on-screen, so it can be
+  // screenshotted from a phone without needing desktop DevTools. Safe
+  // to remove once the current login issue is resolved.
+  window.addEventListener('error', (e) => {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#b33f2e; color:white; padding:14px; font-size:12px; font-family:monospace; z-index:99999; white-space:pre-wrap; word-break:break-word;';
+    banner.textContent = 'JS ERROR: ' + (e.message || e.error) + '\n at ' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '');
+    document.body.prepend(banner);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#c77d2e; color:white; padding:14px; font-size:12px; font-family:monospace; z-index:99999; white-space:pre-wrap; word-break:break-word;';
+    banner.textContent = 'PROMISE ERROR: ' + (e.reason?.message || e.reason);
+    document.body.prepend(banner);
+  });
+
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
   import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
