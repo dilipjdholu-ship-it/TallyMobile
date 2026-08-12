@@ -2188,15 +2188,29 @@
     // the previous widths left it only 18mm, causing text to wrap and
     // overlap between rows. Rebalanced so every column fits its content.
     const cols = [
-      { key: 'date', label: 'Date', w: 18, align: 'left' },
-      { key: 'particulars', label: 'Particulars', w: 38, align: 'left' },
-      { key: 'vchType', label: 'Vch Type', w: 22, align: 'left' },
-      { key: 'vchNo', label: 'Vch No.', w: 18, align: 'left' },
-      { key: 'debit', label: 'Debit', w: 26, align: 'right' },
-      { key: 'credit', label: 'Credit', w: 24, align: 'right' },
+      { key: 'date', label: 'Date', w: 16, align: 'left' },
+      { key: 'particulars', label: 'Particulars', w: 52, align: 'left' },
+      { key: 'vchType', label: 'Vch Type', w: 20, align: 'left' },
+      { key: 'vchNo', label: 'Vch No.', w: 16, align: 'left' },
+      { key: 'debit', label: 'Debit', w: 24, align: 'right' },
+      { key: 'credit', label: 'Credit', w: 22, align: 'right' },
       { key: 'balance', label: 'Balance', w: 0, align: 'right' }, // filled in below
     ];
     cols[cols.length - 1].w = contentWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
+
+    // Truncates text with an ellipsis if it would exceed the column width,
+    // instead of letting jsPDF wrap it onto a second line — a wrapped
+    // line doesn't fit within our fixed row height and visually collides
+    // with the row below it. A single truncated line never does that.
+    function truncateToWidth(doc, text, maxWidthMm) {
+      if (!text) return '';
+      if (doc.getTextWidth(text) <= maxWidthMm) return text;
+      let result = text;
+      while (result.length > 1 && doc.getTextWidth(result + '…') > maxWidthMm) {
+        result = result.slice(0, -1);
+      }
+      return result + '…';
+    }
 
     // Column x-position lookup, computed once — used consistently for the
     // header, every row, AND the closing balance row, so they can never
@@ -2251,9 +2265,9 @@
         balance: balLabel,
       };
       cols.forEach(c => {
-        const text = String(vals[c.key] || '');
+        const text = truncateToWidth(doc, String(vals[c.key] || ''), c.w - 2);
         doc.text(text, c.align === 'right' ? cx2 + c.w - 1 : cx2 + 1, y, {
-          align: c.align === 'right' ? 'right' : 'left', maxWidth: c.w - 2,
+          align: c.align === 'right' ? 'right' : 'left',
         });
         cx2 += c.w;
       });
