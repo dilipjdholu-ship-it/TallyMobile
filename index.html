@@ -426,6 +426,167 @@
   }
   .overlay-body { padding: 16px; max-width: 720px; margin: 0 auto 60px; }
 
+  /* ===== Invoice Scan / Upload ===== */
+  .scan-fab {
+    position: fixed;
+    right: 18px;
+    bottom: calc(70px + env(safe-area-inset-bottom));
+    z-index: 30;
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    border: none;
+    box-shadow: 0 6px 18px rgba(21,101,192,0.45);
+    font-size: 24px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .scan-step { display: none; }
+  .scan-step.active { display: block; }
+
+  .scan-capture-area {
+    text-align: center;
+    padding: 30px 16px;
+  }
+  .scan-capture-area .glyph { font-size: 40px; margin-bottom: 12px; }
+  .scan-capture-area p { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 22px; }
+  .scan-btn {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto 12px;
+    padding: 14px;
+    border-radius: 10px;
+    border: none;
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .scan-btn.secondary {
+    background: var(--paper-card);
+    color: var(--ink);
+    border: 1.5px solid var(--border);
+  }
+  .scan-preview {
+    max-width: 100%;
+    max-height: 50vh;
+    border-radius: 10px;
+    margin: 0 auto 16px;
+    display: block;
+    box-shadow: var(--shadow);
+  }
+  .scan-progress {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ink-soft);
+  }
+  .scan-progress .spinner {
+    width: 32px; height: 32px;
+    margin: 0 auto 16px;
+    border: 3px solid var(--paper-line);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: scan-spin 0.8s linear infinite;
+  }
+  @keyframes scan-spin { to { transform: rotate(360deg); } }
+
+  .map-section { margin-bottom: 22px; }
+  .map-section-title {
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--ink-soft); margin-bottom: 8px;
+  }
+  .map-ocr-text {
+    font-size: 13px; color: var(--ink-soft);
+    margin-bottom: 8px;
+  }
+  .map-ocr-text .mono { color: var(--ink); }
+  .map-item-meta {
+    font-size: 11.5px; color: var(--ink-soft);
+    margin-bottom: 8px;
+  }
+  .map-item-meta.warn { color: var(--amber); font-weight: 600; }
+  .map-options {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 10px;
+  }
+  .map-option {
+    padding: 9px 13px;
+    border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    font-size: 13px;
+    color: var(--ink);
+    text-align: left;
+  }
+  .map-option .conf { color: var(--ink-soft); font-size: 11px; }
+  .map-option.remembered { border-color: var(--forest); background: var(--forest-soft); }
+  .map-option.selected { border-color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+  .map-search-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .map-search-row input {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    font-size: 13.5px;
+  }
+  .map-search-row button {
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .map-create-row { display: flex; gap: 8px; }
+  .map-create-row input {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1.5px solid var(--rust);
+    font-size: 13.5px;
+  }
+  .map-create-row button {
+    padding: 0 14px;
+    border-radius: 8px;
+    border: none;
+    background: var(--rust);
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .map-gst-row { display: flex; gap: 6px; margin-top: 8px; }
+  .map-gst-chip {
+    padding: 6px 11px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .map-gst-chip.selected { background: var(--primary); border-color: var(--primary); color: white; }
+  .map-confirm-btn {
+    display: block;
+    width: 100%;
+    padding: 15px;
+    border-radius: 10px;
+    border: none;
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+    font-size: 15px;
+    margin-top: 20px;
+    position: sticky;
+    bottom: 12px;
+  }
+  .map-confirm-btn:disabled { background: var(--ink-soft); opacity: 0.6; }
+  .map-result { text-align: center; padding: 40px 20px; }
+  .map-result .glyph { font-size: 40px; margin-bottom: 14px; }
+  .map-result.success .glyph { color: var(--forest); }
+  .map-result.error .glyph { color: var(--rust); }
+  .map-result .detail { font-size: 13px; color: var(--ink-soft); margin-top: 10px; word-break: break-word; }
+
   .date-range-bar {
     display: flex; align-items: center; gap: 8px;
     padding: 10px 16px;
@@ -584,6 +745,53 @@
     <button class="bottom-nav-tab" data-section="stock"><span class="bn-icon">◫</span>Stock</button>
   </nav>
 
+  <button class="scan-fab" id="scan-invoice-fab" title="Scan Invoice" aria-label="Scan Invoice">📷</button>
+
+  <!-- Invoice Scan / Upload / Review Overlay -->
+  <div id="invoice-upload-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="invoice-upload-back">&larr; Back</button>
+        <div class="overlay-title" id="invoice-upload-title">Scan Invoice</div>
+      </div>
+      <div class="overlay-body" id="invoice-upload-body">
+
+        <div class="scan-step active" id="scan-step-capture">
+          <div class="scan-capture-area">
+            <div class="glyph">🧾</div>
+            <p>Photograph a supplier invoice to pull it into Tally as a draft (Optional Voucher) for review.</p>
+            <input type="file" accept="image/*" capture="environment" id="scan-camera-input" style="display:none;">
+            <input type="file" accept="image/*" id="scan-gallery-input" style="display:none;">
+            <button class="scan-btn" id="scan-camera-btn">Take Photo</button>
+            <button class="scan-btn secondary" id="scan-gallery-btn">Choose from Gallery</button>
+          </div>
+        </div>
+
+        <div class="scan-step" id="scan-step-preview">
+          <img class="scan-preview" id="scan-preview-img" alt="Invoice preview">
+          <button class="scan-btn" id="scan-upload-btn">Upload &amp; Process</button>
+          <button class="scan-btn secondary" id="scan-retake-btn">Retake</button>
+        </div>
+
+        <div class="scan-step" id="scan-step-progress">
+          <div class="scan-progress">
+            <div class="spinner"></div>
+            <div id="scan-progress-text">Uploading photo…</div>
+          </div>
+        </div>
+
+        <div class="scan-step" id="scan-step-review">
+          <div id="invoice-mapping-body"></div>
+        </div>
+
+        <div class="scan-step" id="scan-step-result">
+          <div id="invoice-result-body"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Ledger Detail Overlay -->
   <!-- P&L / Balance Sheet Group Detail Overlay -->
   <div id="group-detail-overlay" class="overlay">
@@ -668,6 +876,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
   import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
@@ -682,6 +891,7 @@
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getDatabase(firebaseApp);
   const auth = getAuth(firebaseApp);
+  const storage = getStorage(firebaseApp);
 
   // ================= CONFIG =================
   const COMPANIES = [
@@ -708,7 +918,7 @@
   // has no history entry for "overlay open" to go back to. Pushing a
   // history entry when an overlay opens, and closing overlays on
   // popstate, makes back-button behavior match a native app.
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay'];
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -2984,6 +3194,449 @@
         console.error('Service worker registration failed:', err);
       });
     });
+  }
+
+  // ================= INVOICE SCAN / UPLOAD / REVIEW =================
+  // Flow: capture photo -> upload to Firebase Storage -> write a
+  // pending_invoices node the PC's sync tool is watching -> PC runs OCR
+  // and writes ranked matches back -> render tap-to-select mapping UI ->
+  // write confirmed mappings back -> PC posts to Tally as an Optional
+  // Voucher -> show the result.
+
+  let scanCurrentFile = null;
+  let scanCurrentInvoiceId = null;
+  let scanUnsub = null;
+  let mappingData = null;       // the ready_for_review payload from the PC
+  let mappingState = { party: null, items: [] };
+
+  function resetScanFlow() {
+    scanCurrentFile = null;
+    scanCurrentInvoiceId = null;
+    if (scanUnsub) { scanUnsub(); scanUnsub = null; }
+    mappingData = null;
+    mappingState = { party: null, items: [] };
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-capture').classList.add('active');
+    document.getElementById('invoice-upload-title').textContent = 'Scan Invoice';
+    document.getElementById('scan-camera-input').value = '';
+    document.getElementById('scan-gallery-input').value = '';
+  }
+
+  document.getElementById('scan-invoice-fab').addEventListener('click', () => {
+    resetScanFlow();
+    openOverlay('invoice-upload-overlay');
+  });
+  document.getElementById('invoice-upload-back').addEventListener('click', () => {
+    if (scanUnsub) { scanUnsub(); scanUnsub = null; }
+    goBackFromOverlay();
+  });
+
+  document.getElementById('scan-camera-btn').addEventListener('click', () => {
+    document.getElementById('scan-camera-input').click();
+  });
+  document.getElementById('scan-gallery-btn').addEventListener('click', () => {
+    document.getElementById('scan-gallery-input').click();
+  });
+
+  function onFilePicked(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    scanCurrentFile = file;
+    const url = URL.createObjectURL(file);
+    document.getElementById('scan-preview-img').src = url;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-preview').classList.add('active');
+  }
+  document.getElementById('scan-camera-input').addEventListener('change', onFilePicked);
+  document.getElementById('scan-gallery-input').addEventListener('change', onFilePicked);
+
+  document.getElementById('scan-retake-btn').addEventListener('click', () => {
+    scanCurrentFile = null;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-capture').classList.add('active');
+  });
+
+  document.getElementById('scan-upload-btn').addEventListener('click', uploadInvoicePhoto);
+
+  async function uploadInvoicePhoto() {
+    if (!scanCurrentFile) return;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-progress').classList.add('active');
+    document.getElementById('scan-progress-text').textContent = 'Uploading photo…';
+
+    const invoiceId = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    scanCurrentInvoiceId = invoiceId;
+
+    try {
+      const path = `invoices/${currentCompany}/${invoiceId}.jpg`;
+      const sRef = storageRef(storage, path);
+      await uploadBytes(sRef, scanCurrentFile);
+      const imageUrl = await getDownloadURL(sRef);
+
+      await set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
+        status: 'uploaded',
+        image_url: imageUrl,
+        uploaded_at: new Date().toISOString(),
+      });
+
+      document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
+      listenForInvoiceUpdates(invoiceId);
+    } catch (err) {
+      console.error('Invoice upload failed:', err);
+      showInvoiceResult(false, 'Upload failed', err.message || String(err));
+    }
+  }
+
+  function listenForInvoiceUpdates(invoiceId) {
+    const nodeRef = ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`);
+    scanUnsub = onValue(nodeRef, (snap) => {
+      const data = snap.val();
+      if (!data) return;
+      handleInvoiceStatusChange(data);
+    });
+  }
+
+  function handleInvoiceStatusChange(data) {
+    const status = data.status;
+    if (status === 'uploaded') {
+      document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
+    } else if (status === 'ready_for_review') {
+      mappingData = data;
+      mappingState = {
+        party: null,
+        items: (data.item_matches || []).map(() => ({ confirmed: null, gst_rate: null })),
+      };
+      renderMappingScreen();
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('scan-step-review').classList.add('active');
+      document.getElementById('invoice-upload-title').textContent = 'Review Invoice';
+    } else if (status === 'failed') {
+      showInvoiceResult(false, 'Processing failed', data.error || 'Unknown error');
+    } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('scan-step-progress').classList.add('active');
+      document.getElementById('scan-progress-text').textContent = 'Posting to Tally…';
+    } else if (status === 'posted') {
+      showInvoiceResult(true, 'Posted as Optional Voucher',
+        "Nothing has affected your books yet — open it in Tally to review and confirm.");
+    } else if (status === 'post_failed') {
+      showInvoiceResult(false, 'Posting failed', data.error || 'Unknown error');
+    }
+  }
+
+  function showInvoiceResult(success, title, detail) {
+    if (scanUnsub) { scanUnsub(); scanUnsub = null; }
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-result').classList.add('active');
+    document.getElementById('invoice-upload-title').textContent = success ? 'Done' : 'Error';
+    document.getElementById('invoice-result-body').innerHTML = `
+      <div class="map-result ${success ? 'success' : 'error'}">
+        <div class="glyph">${success ? '✓' : '✕'}</div>
+        <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
+        <div class="detail">${escapeHtml(detail || '')}</div>
+      </div>
+    `;
+  }
+
+  // ---- Mapping / picker rendering ----
+
+  function renderMappingScreen() {
+    const container = document.getElementById('invoice-mapping-body');
+    const partyResult = mappingData.party_result || {};
+    const itemMatches = mappingData.item_matches || [];
+
+    let html = '';
+    html += `<div class="map-section">
+      <div class="map-section-title">Party</div>
+      ${renderPickerHtml('party', -1, partyResult.ocr_party_name, partyResult.remembered_match, partyResult.suggestions)}
+    </div>`;
+
+    itemMatches.forEach((item, idx) => {
+      const metaWarn = item.needs_manual_check ? ' warn' : '';
+      const metaBits = [`Qty: ${item.quantity ?? '—'}`, `Rate: ${item.rate ?? '—'}`, `Amount: ${item.amount ?? '—'}`];
+      if (item.needs_manual_check) metaBits.push('⚠ check this line — quantity/rate/amount looks incomplete');
+      html += `<div class="map-section">
+        <div class="map-section-title">Item ${idx + 1}</div>
+        <div class="map-item-meta${metaWarn}">${escapeHtml(metaBits.join('   '))}</div>
+        ${renderPickerHtml('item', idx, item.ocr_description, item.remembered_match, item.suggestions)}
+        <div class="map-gst-row" data-gst-row="${idx}">
+          ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
+        </div>
+      </div>`;
+    });
+
+    html += `<button class="map-confirm-btn" id="map-confirm-btn" disabled>Confirm &amp; Post</button>`;
+
+    container.innerHTML = html;
+    attachMappingHandlers();
+  }
+
+  function renderPickerHtml(kind, idx, ocrText, remembered, suggestions) {
+    const rememberedList = Array.isArray(remembered) ? remembered : (remembered ? [{ candidate: remembered, confidence: null }] : []);
+    let optionsHtml = '';
+    rememberedList.forEach(r => {
+      optionsHtml += `<button class="map-option remembered" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(r.candidate)}" data-isnew="false">
+        ${escapeHtml(r.candidate)}<div class="conf">${r.confidence != null ? `remembered · ${r.confidence}%` : 'remembered'}</div>
+      </button>`;
+    });
+    (suggestions || []).forEach(s => {
+      optionsHtml += `<button class="map-option" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(s.candidate)}" data-isnew="false">
+        ${escapeHtml(s.candidate)}<div class="conf">${s.confidence}%</div>
+      </button>`;
+    });
+
+    return `
+      <div class="map-ocr-text">OCR: <span class="mono">${escapeHtml(ocrText || '(not detected)')}</span></div>
+      <div class="map-options" data-options-for="${kind}-${idx}">${optionsHtml}</div>
+      <div class="map-search-row">
+        <input type="text" placeholder="Search your real list…" data-search-kind="${kind}" data-search-idx="${idx}">
+        <button data-search-btn-kind="${kind}" data-search-btn-idx="${idx}">Search</button>
+      </div>
+      <div class="map-options" data-search-results-for="${kind}-${idx}"></div>
+      <div class="map-create-row">
+        <input type="text" placeholder="Or type a new name to create…" data-create-kind="${kind}" data-create-idx="${idx}">
+        <button data-create-btn-kind="${kind}" data-create-btn-idx="${idx}">Create New</button>
+      </div>
+    `;
+  }
+
+  // Simple client-side ranking for the search box -- not meant to replace
+  // the server-side rapidfuzz matching (that already happened), just to
+  // help find something in your real list when none of the top-3
+  // suggestions fit. Scores by how many query words appear in the
+  // candidate name, then by substring position -- good enough for a
+  // manual "let me look through the list myself" fallback.
+  function simpleSearchRank(query, candidates) {
+    const qWords = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return candidates
+      .map(name => {
+        const lower = name.toLowerCase();
+        let score = 0;
+        qWords.forEach(w => { if (lower.includes(w)) score += 10; });
+        if (lower.includes(query.toLowerCase())) score += 20;
+        return { name, score };
+      })
+      .filter(r => r.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map(r => r.name);
+  }
+
+  async function fetchMasterList(kind) {
+    if (kind === 'party') {
+      const snap = await get(ref(db, `companies/${currentCompany}/ledgers`));
+      const rows = snap.val() || [];
+      return rows.filter(r => classifyLedger(r.group) === 'creditors').map(r => r.name).filter(Boolean);
+    } else {
+      const snap = await get(ref(db, `companies/${currentCompany}/stock_items`));
+      const rows = snap.val() || [];
+      return rows.map(r => r.name).filter(Boolean);
+    }
+  }
+
+  // Real units actually in use in Tally -- derived client-side from the
+  // same stock_items sync already used for item search, no extra backend
+  // call needed. Used as a picker for new-item creation so a typo/guess
+  // can't create a unit mismatch the way "pcs" vs "Nos" once did.
+  async function fetchRealUnits() {
+    const snap = await get(ref(db, `companies/${currentCompany}/stock_items`));
+    const rows = snap.val() || [];
+    const units = new Set();
+    rows.forEach(r => { if (r.unit) units.add(r.unit); });
+    return Array.from(units).sort();
+  }
+
+  async function showNewItemDetailsForm(idx, typedName) {
+    const item = mappingData.item_matches[idx];
+    const container = document.querySelector(`[data-search-results-for="item-${idx}"]`);
+    container.innerHTML = '<div style="font-size:12px; color:var(--ink-soft);">Loading your unit list…</div>';
+
+    let realUnits = [];
+    try {
+      realUnits = await fetchRealUnits();
+    } catch (err) {
+      console.error('Failed to fetch units:', err);
+    }
+
+    const ocrUnit = item.unit || '';
+    const ocrHsn = item.hsn_guess || '';
+
+    container.innerHTML = `
+      <div style="border:1.5px solid var(--rust); border-radius:9px; padding:12px; margin-top:6px;">
+        <div style="font-weight:700; font-size:13px; margin-bottom:8px;">New item: ${escapeHtml(typedName)}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">HSN/SAC Code</div>
+        <input type="text" id="new-item-hsn-${idx}" value="${escapeHtml(ocrHsn)}" placeholder="e.g. 40021100"
+          style="width:100%; padding:9px 11px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin-bottom:10px;">
+        <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">
+          Unit${ocrUnit ? ` (OCR guessed: ${escapeHtml(ocrUnit)})` : ''}
+        </div>
+        <div class="map-options" id="new-item-unit-options-${idx}">
+          ${realUnits.map(u => `<button type="button" class="map-option unit-chip" data-unit="${escapeHtml(u)}">${escapeHtml(u)}</button>`).join('')}
+        </div>
+        <input type="text" id="new-item-unit-custom-${idx}" placeholder="Or type a unit not in the list above…"
+          style="width:100%; padding:9px 11px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin:8px 0 10px;">
+        <button type="button" id="new-item-confirm-${idx}" class="scan-btn" style="margin:0;">Confirm New Item</button>
+      </div>
+    `;
+
+    let selectedUnit = realUnits.includes(ocrUnit) ? ocrUnit : null;
+    const unitChips = container.querySelectorAll('.unit-chip');
+    unitChips.forEach(chip => {
+      if (chip.dataset.unit === selectedUnit) chip.classList.add('selected');
+      chip.addEventListener('click', () => {
+        selectedUnit = chip.dataset.unit;
+        document.getElementById(`new-item-unit-custom-${idx}`).value = '';
+        unitChips.forEach(c => c.classList.toggle('selected', c === chip));
+      });
+    });
+    document.getElementById(`new-item-unit-custom-${idx}`).addEventListener('input', (e) => {
+      if (e.target.value.trim()) {
+        selectedUnit = null;
+        unitChips.forEach(c => c.classList.remove('selected'));
+      }
+    });
+
+    document.getElementById(`new-item-confirm-${idx}`).addEventListener('click', () => {
+      const hsn = document.getElementById(`new-item-hsn-${idx}`).value.trim();
+      const customUnit = document.getElementById(`new-item-unit-custom-${idx}`).value.trim();
+      const finalUnit = customUnit || selectedUnit;
+      if (!finalUnit) { alert('Pick or type a unit before continuing.'); return; }
+      if (!confirm(`Create NEW item "${typedName}" — HSN: ${hsn || '(blank)'}, Unit: ${finalUnit}. This doesn't exist in Tally yet.`)) return;
+
+      // Overwrite the OCR guesses with what was actually confirmed --
+      // confirmMapping() reads hsn_guess/unit straight from item_matches,
+      // so this is what actually reaches post_invoice_voucher.
+      mappingData.item_matches[idx].hsn_guess = hsn;
+      mappingData.item_matches[idx].unit = finalUnit;
+      selectMappingValue('item', idx, typedName, true);
+    });
+  }
+
+  function attachMappingHandlers() {
+    document.querySelectorAll('.map-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectMappingValue(btn.dataset.kind, parseInt(btn.dataset.idx, 10), btn.dataset.value, btn.dataset.isnew === 'true');
+      });
+    });
+
+    document.querySelectorAll('[data-search-btn-kind]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const kind = btn.dataset.searchBtnKind;
+        const idx = parseInt(btn.dataset.searchBtnIdx, 10);
+        const input = document.querySelector(`[data-search-kind="${kind}"][data-search-idx="${idx}"]`);
+        const query = (input.value || '').trim();
+        if (!query) return;
+        const resultsEl = document.querySelector(`[data-search-results-for="${kind}-${idx}"]`);
+        resultsEl.innerHTML = '<div style="font-size:12px; color:var(--ink-soft);">Searching…</div>';
+        try {
+          const masterList = await fetchMasterList(kind);
+          const matches = simpleSearchRank(query, masterList);
+          if (matches.length === 0) {
+            resultsEl.innerHTML = '<div style="font-size:12px; color:var(--ink-soft);">No matches — try different words, or use Create New below.</div>';
+          } else {
+            resultsEl.innerHTML = matches.map(name =>
+              `<button class="map-option" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(name)}" data-isnew="false">${escapeHtml(name)}</button>`
+            ).join('');
+            resultsEl.querySelectorAll('.map-option').forEach(btn => {
+              btn.addEventListener('click', () => selectMappingValue(kind, idx, btn.dataset.value, false));
+            });
+          }
+        } catch (err) {
+          console.error('Search failed:', err);
+          resultsEl.innerHTML = '<div style="font-size:12px; color:var(--rust);">Search failed — try again.</div>';
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-create-btn-kind]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const kind = btn.dataset.createBtnKind;
+        const idx = parseInt(btn.dataset.createBtnIdx, 10);
+        const input = document.querySelector(`[data-create-kind="${kind}"][data-create-idx="${idx}"]`);
+        const typed = (input.value || '').trim();
+        if (!typed) return;
+
+        if (kind === 'party') {
+          if (!confirm(`Create a NEW party named "${typed}"? This doesn't exist in your Tally list yet.`)) return;
+          selectMappingValue(kind, idx, typed, true);
+          return;
+        }
+
+        // Items need HSN + unit confirmed explicitly too -- these were
+        // silently passed through from the OCR guess before, with no
+        // review step, which is exactly the kind of blind auto-fill this
+        // whole app was built to avoid everywhere else.
+        await showNewItemDetailsForm(idx, typed);
+      });
+    });
+
+    document.querySelectorAll('.map-gst-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.item, 10);
+        mappingState.items[idx].gst_rate = btn.dataset.rate;
+        document.querySelectorAll(`[data-gst-row="${idx}"] .map-gst-chip`).forEach(c => c.classList.remove('selected'));
+        btn.classList.add('selected');
+        updateConfirmButtonState();
+      });
+    });
+
+    document.getElementById('map-confirm-btn').addEventListener('click', confirmMapping);
+  }
+
+  function selectMappingValue(kind, idx, value, isNew) {
+    const selection = { value, is_new: isNew };
+    if (kind === 'party') {
+      mappingState.party = selection;
+    } else {
+      mappingState.items[idx].confirmed = selection;
+    }
+    // visually mark the selected option within its own options group
+    const groupSelector = `[data-options-for="${kind}-${idx}"] .map-option, [data-search-results-for="${kind}-${idx}"] .map-option`;
+    document.querySelectorAll(groupSelector).forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.value === value);
+    });
+    updateConfirmButtonState();
+  }
+
+  function updateConfirmButtonState() {
+    const btn = document.getElementById('map-confirm-btn');
+    if (!btn) return;
+    const partyOk = !!mappingState.party;
+    const itemsOk = mappingState.items.length > 0 &&
+      mappingState.items.every(i => i.confirmed && i.gst_rate !== null);
+    btn.disabled = !(partyOk && itemsOk);
+  }
+
+  async function confirmMapping() {
+    const itemMatches = mappingData.item_matches || [];
+    const confirmedItems = itemMatches.map((item, idx) => ({
+      ocr_description: item.ocr_description,
+      confirmed: mappingState.items[idx].confirmed,
+      quantity: item.quantity,
+      rate: item.rate,
+      amount: item.amount,
+      unit: item.unit,
+      hsn_guess: item.hsn_guess,
+      gst_rate: parseInt(mappingState.items[idx].gst_rate, 10),
+    }));
+
+    const payload = {
+      status: 'confirmed',
+      confirmed_party: mappingState.party,
+      confirmed_items: confirmedItems,
+    };
+
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-progress').classList.add('active');
+    document.getElementById('scan-progress-text').textContent = 'Posting to Tally…';
+
+    try {
+      await set(ref(db, `companies/${currentCompany}/pending_invoices/${scanCurrentInvoiceId}`),
+        Object.assign({}, mappingData, payload));
+    } catch (err) {
+      console.error('Failed to save confirmation:', err);
+      showInvoiceResult(false, 'Could not save your confirmation', err.message || String(err));
+    }
   }
 </script>
 </body>
