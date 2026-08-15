@@ -3268,9 +3268,41 @@
     document.getElementById('scan-gallery-input').value = '';
   }
 
-  document.getElementById('scan-invoice-fab').addEventListener('click', () => {
-    resetScanFlow();
+  document.getElementById('scan-invoice-fab').addEventListener('click', async () => {
     openOverlay('invoice-upload-overlay');
+    resetScanFlow();
+    document.getElementById('scan-progress-text').textContent = 'Checking for in-progress invoices…';
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-progress').classList.add('active');
+
+    // Resume an unfinished invoice instead of always starting fresh --
+    // without this, navigating away while OCR was still running (a
+    // multi-minute wait) left NO way back to the review screen, even
+    // though the result was sitting ready in Firebase the whole time.
+    // "posted" is the only truly-done state; everything else still needs
+    // the person's attention.
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/pending_invoices`));
+      const all = snap.val() || {};
+      let latest = null;
+      for (const [id, data] of Object.entries(all)) {
+        if (data.status === 'posted') continue;
+        if (!latest || (data.uploaded_at || '') > (latest.data.uploaded_at || '')) {
+          latest = { id, data };
+        }
+      }
+      if (latest) {
+        scanCurrentInvoiceId = latest.id;
+        handleInvoiceStatusChange(latest.data);
+        listenForInvoiceUpdates(latest.id);
+        return;
+      }
+    } catch (err) {
+      console.error('Could not check for in-progress invoices:', err);
+      // Fall through to a normal fresh scan -- better than getting stuck.
+    }
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-capture').classList.add('active');
   });
   document.getElementById('invoice-upload-back').addEventListener('click', () => {
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
