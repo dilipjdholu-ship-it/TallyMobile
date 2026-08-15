@@ -476,6 +476,16 @@
     display: block;
     box-shadow: var(--shadow);
   }
+  .scan-pdf-preview {
+    text-align: center;
+    padding: 40px 20px;
+    background: var(--paper-card);
+    border-radius: 10px;
+    margin: 0 auto 16px;
+    box-shadow: var(--shadow);
+  }
+  .scan-pdf-preview .glyph { font-size: 48px; margin-bottom: 10px; }
+  .scan-pdf-preview #scan-pdf-filename { color: var(--ink-soft); font-size: 13.5px; word-break: break-all; }
   .scan-progress {
     text-align: center;
     padding: 60px 20px;
@@ -793,16 +803,22 @@
         <div class="scan-step active" id="scan-step-capture">
           <div class="scan-capture-area">
             <div class="glyph">🧾</div>
-            <p>Photograph a supplier invoice to pull it into Tally as a draft (Optional Voucher) for review.</p>
+            <p>Photograph a supplier invoice, or upload a PDF, to pull it into Tally as a draft (Optional Voucher) for review.</p>
             <input type="file" accept="image/*" capture="environment" id="scan-camera-input" style="display:none;">
             <input type="file" accept="image/*" id="scan-gallery-input" style="display:none;">
+            <input type="file" accept="application/pdf" id="scan-pdf-input" style="display:none;">
             <button class="scan-btn" id="scan-camera-btn">Take Photo</button>
             <button class="scan-btn secondary" id="scan-gallery-btn">Choose from Gallery</button>
+            <button class="scan-btn secondary" id="scan-pdf-btn">Upload PDF</button>
           </div>
         </div>
 
         <div class="scan-step" id="scan-step-preview">
           <img class="scan-preview" id="scan-preview-img" alt="Invoice preview">
+          <div class="scan-pdf-preview" id="scan-pdf-preview" style="display:none;">
+            <div class="glyph">📄</div>
+            <div id="scan-pdf-filename"></div>
+          </div>
           <button class="scan-btn" id="scan-upload-btn">Upload &amp; Process</button>
           <button class="scan-btn secondary" id="scan-retake-btn">Retake</button>
         </div>
@@ -3299,6 +3315,7 @@
     document.getElementById('invoice-upload-title').textContent = 'Scan Invoice';
     document.getElementById('scan-camera-input').value = '';
     document.getElementById('scan-gallery-input').value = '';
+    document.getElementById('scan-pdf-input').value = '';
   }
 
   document.getElementById('scan-invoice-fab').addEventListener('click', async () => {
@@ -3348,15 +3365,46 @@
   document.getElementById('scan-gallery-btn').addEventListener('click', () => {
     document.getElementById('scan-gallery-input').click();
   });
+  document.getElementById('scan-pdf-btn').addEventListener('click', () => {
+    document.getElementById('scan-pdf-input').click();
+  });
 
   function onFilePicked(e) {
     const file = e.target.files[0];
     if (!file) return;
     scanCurrentFile = file;
-    const url = URL.createObjectURL(file);
-    document.getElementById('scan-preview-img').src = url;
+    const isPdf = file.type === 'application/pdf';
+    document.getElementById('scan-preview-img').style.display = isPdf ? 'none' : '';
+    document.getElementById('scan-pdf-preview').style.display = isPdf ? '' : 'none';
+    if (isPdf) {
+      document.getElementById('scan-pdf-filename').textContent = file.name;
+    } else {
+      const url = URL.createObjectURL(file);
+      document.getElementById('scan-preview-img').src = url;
+    }
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-preview').classList.add('active');
+  }
+
+  // Reads a PDF as base64 directly -- no resizing/recompression, unlike
+  // photos. A PDF can't be canvas-resized the way an image can, and per
+  // real-world usage supplier PDF invoices already run well under 500KB
+  // (smaller than a compressed camera photo already is), so there's no
+  // real size problem to solve here the way there was for raw phone
+  // photos. A generous cap still guards against an unusually large
+  // multi-page PDF blowing up the database write.
+  const MAX_PDF_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+  function readPdfAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      if (file.size > MAX_PDF_SIZE_BYTES) {
+        reject(new Error(`This PDF is ${(file.size / 1024 / 1024).toFixed(1)}MB, larger than the ${MAX_PDF_SIZE_BYTES / 1024 / 1024}MB limit. Try a smaller/scanned-at-lower-quality version.`));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('Could not read PDF'));
+      reader.readAsDataURL(file);
+    });
   }
 
   // Resizes+recompresses a camera photo before it's ever base64-encoded
@@ -3391,6 +3439,7 @@
       img.src = objectUrl;
     });
   }
+  document.getElementById('scan-pdf-input').addEventListener('change', onFilePicked);
   document.getElementById('scan-camera-input').addEventListener('change', onFilePicked);
   document.getElementById('scan-gallery-input').addEventListener('change', onFilePicked);
 
@@ -3405,26 +3454,29 @@
 
   async function uploadInvoicePhoto() {
     if (!scanCurrentFile) return;
+    const isPdf = scanCurrentFile.type === 'application/pdf';
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-progress').classList.add('active');
-    document.getElementById('scan-progress-text').textContent = 'Uploading photo…';
+    document.getElementById('scan-progress-text').textContent = isPdf ? 'Uploading PDF…' : 'Uploading photo…';
 
     const invoiceId = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     scanCurrentInvoiceId = invoiceId;
 
     try {
-      const photoBase64 = await resizeAndEncodeToBase64(scanCurrentFile);
+      const fileBase64 = isPdf
+        ? await readPdfAsBase64(scanCurrentFile)
+        : await resizeAndEncodeToBase64(scanCurrentFile);
 
-      // Photo lives on its OWN path (invoice_photos/...), separate from
+      // File lives on its OWN path (invoice_photos/...), separate from
       // pending_invoices/... which the status listener below watches.
-      // If the photo lived on the same node as status, every status
-      // update (uploaded -> ready_for_review -> confirmed -> posted)
-      // would re-download the whole multi-hundred-KB blob to the phone
-      // for no reason. Writing it separately means it's fetched once,
-      // by whoever actually needs the pixels (the PC-side OCR pipeline).
+      // If it lived on the same node as status, every status update
+      // (uploaded -> ready_for_review -> confirmed -> posted) would
+      // re-download the whole blob to the phone for no reason. Writing
+      // it separately means it's fetched once, by whoever actually needs
+      // the bytes (the PC-side OCR/PDF-extraction pipeline).
       await set(ref(db, `companies/${currentCompany}/invoice_photos/${invoiceId}`), {
-        photo_base64: photoBase64,
-        mime: 'image/jpeg',
+        photo_base64: fileBase64,
+        mime: isPdf ? 'application/pdf' : 'image/jpeg',
       });
 
       await set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
