@@ -1081,6 +1081,20 @@
   // screen, so behavior is identical whether this is a fresh sign-in or a
   // restored session.
   onAuthStateChanged(auth, (user) => {
+    if (user && user.isAnonymous) {
+      // Leftover anonymous session from before this app switched to real
+      // email/password auth. Disabling the Anonymous provider in the
+      // Firebase Console only blocks NEW anonymous sign-ins -- it does
+      // NOT invalidate sessions already persisted on a device, so this
+      // must be handled explicitly or an old device stays logged in
+      // forever with no real credential check. Sign it out and fall
+      // through to the real login screen.
+      signOut(auth).catch(err => console.error('Failed to clear stale anonymous session:', err));
+      document.getElementById('app-screen').style.display = 'none';
+      document.getElementById('company-select-screen').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      return;
+    }
     if (user) {
       afterLogin();
     } else {
