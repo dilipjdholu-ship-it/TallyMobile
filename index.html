@@ -683,8 +683,9 @@
     <div class="login-mark">S</div>
     <h1>TallyMobile</h1>
     <p>Shivam Hardware &middot; Satyam Traders &middot; Shivam Traders</p>
-    <input type="password" id="password-input" placeholder="Enter access code" autocomplete="off">
-    <button class="primary" id="login-btn">Unlock</button>
+    <input type="email" id="email-input" placeholder="Email" autocomplete="username">
+    <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="login-btn">Sign in</button>
     <div class="login-error" id="login-error"></div>
   </div>
 </div>
@@ -706,6 +707,7 @@
       <div class="top-row-right">
         <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
         <button class="refresh-btn" id="manual-refresh-btn" title="Refresh data" aria-label="Refresh data">&#8635;</button>
+        <button class="refresh-btn" id="logout-btn" title="Sign out" aria-label="Sign out">&#9211;</button>
       </div>
     </div>
     <button class="company-switcher" id="company-switcher-btn">
@@ -875,8 +877,7 @@
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
   import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
-  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
-  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyA2h5SVC9gCPmiFq0rqmaZ667RR97dqD7Q",
@@ -891,7 +892,6 @@
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getDatabase(firebaseApp);
   const auth = getAuth(firebaseApp);
-  const storage = getStorage(firebaseApp);
 
   // ================= CONFIG =================
   const COMPANIES = [
@@ -900,14 +900,11 @@
     { key: "shivam_traders", label: "Shivam Traders" },
   ];
 
-  // SHA-256 hash of the access code. Default code: "shivam2026"
-  // To change: run in any browser console:
-  //   crypto.subtle.digest('SHA-256', new TextEncoder().encode('yourcode'))
-  //     .then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
-  const ACCESS_CODE_HASH = "dba45ed3a18527c10f48501158da825fa2a6ef833da91b78a6cde9b66da59719";
-
-  const SESSION_KEY = "tallymobile_session";
-  const SESSION_HOURS = 24;
+  // Login is now real Firebase Auth (email/password) -- accounts are
+  // created manually per person via Firebase Console > Authentication >
+  // Add User. There is no self-signup path in this app. Firebase persists
+  // the signed-in session itself (survives reload/app restart), so no
+  // custom localStorage session logic is needed any more.
 
   // ================= STATE =================
   let currentCompany = COMPANIES[0].key;
@@ -985,21 +982,6 @@
   let companyData = {}; // key -> { ledgers, outstanding_receivables, daybook, stock_items, last_synced }
 
   // ================= AUTH =================
-  async function sha256(text) {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  function checkExistingSession() {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return false;
-    try {
-      const session = JSON.parse(raw);
-      const ageHours = (Date.now() - session.ts) / (1000 * 60 * 60);
-      return ageHours < SESSION_HOURS;
-    } catch { return false; }
-  }
-
   const COMPANY_SELECTION_KEY = "tallymobile_selected_company";
 
   document.getElementById('login-btn').addEventListener('click', attemptLogin);
@@ -1008,25 +990,51 @@
   });
 
   async function attemptLogin() {
-    const input = document.getElementById('password-input').value;
-    const hash = await sha256(input);
-    if (hash !== ACCESS_CODE_HASH) {
-      document.getElementById('login-error').textContent = "Incorrect access code.";
+    const email = document.getElementById('email-input').value.trim();
+    const password = document.getElementById('password-input').value;
+    const errEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-btn');
+    errEl.textContent = "";
+    if (!email || !password) {
+      errEl.textContent = "Enter your email and password.";
       return;
     }
-    // Establishes a real Firebase Auth session — required once database
-    // security rules are locked down (rules will require auth != null).
-    // Without this, the password screen would only gate the UI, not the
-    // actual database, which anyone could still query directly.
+    btn.disabled = true;
     try {
-      await signInAnonymously(auth);
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() }));
-      afterLogin();
+      // afterLogin() is NOT called here directly -- onAuthStateChanged
+      // below fires once Firebase confirms the session, and handles
+      // showing the app from a single place whether this is a fresh
+      // sign-in or a restored session from a previous visit.
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (err) {
-      console.error('Firebase auth failed:', err);
-      document.getElementById('login-error').textContent = "Could not connect securely. Check your connection and try again.";
+      console.error('Login failed:', err.code || err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+        errEl.textContent = "Incorrect email or password.";
+      } else if (err.code === 'auth/too-many-requests') {
+        errEl.textContent = "Too many attempts. Try again in a few minutes.";
+      } else {
+        errEl.textContent = "Could not sign in. Check your connection and try again.";
+      }
+    } finally {
+      btn.disabled = false;
     }
   }
+
+  async function logOut() {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Sign out failed:', err);
+    }
+    localStorage.removeItem(COMPANY_SELECTION_KEY);
+    // Reload to guarantee every in-memory data cache (companyData, etc.)
+    // is cleared -- simpler and safer than trying to reset dozens of
+    // pieces of app state by hand.
+    location.reload();
+  }
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    if (confirm('Sign out?')) logOut();
+  });
 
   function afterLogin() {
     document.getElementById('login-screen').style.display = 'none';
@@ -1066,26 +1074,19 @@
     listenToCurrentCompany(); // always (re)subscribe — handles company switching too
   }
 
-  // Session restoration: wait for Firebase's own auth state to resolve
-  // before deciding whether to auto-login. A valid local session (our
-  // 24-hour flag) is only useful if there's also a real Firebase Auth
-  // user — otherwise every database read would be denied once security
-  // rules are locked down, even though the UI thinks it's "logged in".
+  // Firebase Auth persists the signed-in session itself (survives reload
+  // and app restart) -- this fires once on page load with whatever the
+  // real current session is, and again on every sign-in/sign-out. This is
+  // now the ONLY place that decides whether to show the app or the login
+  // screen, so behavior is identical whether this is a fresh sign-in or a
+  // restored session.
   onAuthStateChanged(auth, (user) => {
-    if (!checkExistingSession()) return;
     if (user) {
       afterLogin();
     } else {
-      // Local session says "logged in" but no Firebase Auth session
-      // exists (e.g. browser data was partially cleared) — silently
-      // re-establish one rather than forcing a re-login, since the
-      // person already proved they know the access code once.
-      signInAnonymously(auth).then(() => {
-        afterLogin();
-      }).catch((err) => {
-        console.error('Could not restore secure session:', err);
-        localStorage.removeItem(SESSION_KEY); // force a real re-login
-      });
+      document.getElementById('app-screen').style.display = 'none';
+      document.getElementById('company-select-screen').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
     }
   });
 
@@ -2712,6 +2713,30 @@
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
+
+    // HSN is looked up from stock_items (see hsnFor() below), but that
+    // section is normally only loaded when the person visits the Stock
+    // Items tab directly -- nothing else in the app triggers it. Without
+    // this, exporting a PDF from a fresh session (never having opened
+    // Stock Items) would silently show every HSN cell as blank, since
+    // ensureSectionLoaded() only WARMS the cache in the background; it
+    // doesn't block until data actually arrives.
+    if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
+      const exportBtn = document.getElementById('voucher-export-pdf-btn');
+      const originalLabel = exportBtn.textContent;
+      exportBtn.textContent = 'Loading item data…';
+      exportBtn.disabled = true;
+      const start = Date.now();
+      while (!(companyData[currentCompany] || {}).stock_items && Date.now() - start < 8000) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+      exportBtn.textContent = originalLabel;
+      exportBtn.disabled = false;
+      if (!(companyData[currentCompany] || {}).stock_items) {
+        console.error('Timed out waiting for stock_items before PDF export -- HSN column may be blank.');
+      }
+    }
+
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     const v = currentVoucherDetail;
@@ -2844,9 +2869,16 @@
 
     drawTableHeader();
 
-    // Look up HSN per item from the already-synced stock item list
-    function hsnFor(itemName) {
-      const match = stockItems.find(s => s.name === itemName);
+    // HSN per item: the sync engine already attaches hsn_code directly to
+    // each sales voucher line (case-insensitive, trimmed match against
+    // stock_items -- see sync_company() in tally_firebase_sync_v2.py).
+    // That's always present once sales_vouchers has synced, and is more
+    // reliable than re-deriving it here. Falls back to a local lookup
+    // against the separately-loaded stock_items list only if the backend
+    // value is missing (e.g. an older, not-yet-resynced voucher).
+    function hsnFor(item) {
+      if (item.hsn_code) return item.hsn_code;
+      const match = stockItems.find(s => s.name === item.item_name);
       return match && match.hsn_code ? match.hsn_code : '';
     }
 
@@ -2865,7 +2897,7 @@
       const rowVals = {
         sl: String(idx + 1),
         desc: item.item_name || '-',
-        hsn: hsnFor(item.item_name) || '',
+        hsn: hsnFor(item) || '',
         gst: gstRate ? `${gstRate}%` : '',
         qty: `${qty} ${unit}`.trim(),
         rate: rate.trim(),
@@ -2918,7 +2950,7 @@
     // ---- HSN-wise tax summary table ----
     const hsnGroups = {};
     items.forEach(item => {
-      const hsn = hsnFor(item.item_name) || 'N/A';
+      const hsn = hsnFor(item) || 'N/A';
       const gstRate = extractGstRate(item.sales_ledger_name) || 0;
       const key = `${hsn}|${gstRate}`;
       if (!hsnGroups[key]) hsnGroups[key] = { hsn, gstRate, taxable: 0 };
@@ -3247,6 +3279,39 @@
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-preview').classList.add('active');
   }
+
+  // Resizes+recompresses a camera photo before it's ever base64-encoded
+  // and written to the database. A raw phone photo can be 3000px+ wide
+  // and several MB -- far more resolution than OCR needs, and base64
+  // inflates size by ~33% on top of that. Downscaling to maxDim + JPEG
+  // quality 0.7 typically cuts the payload 5-10x with no real OCR accuracy
+  // loss, which keeps both the upload and every later read fast.
+  function resizeAndEncodeToBase64(file, maxDim = 1500, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(objectUrl);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        // Strip the "data:image/jpeg;base64," prefix -- store just the
+        // payload, since the mime type is always JPEG here and doesn't
+        // need to be re-derived on read.
+        resolve(dataUrl.split(',')[1]);
+      };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Could not read photo')); };
+      img.src = objectUrl;
+    });
+  }
   document.getElementById('scan-camera-input').addEventListener('change', onFilePicked);
   document.getElementById('scan-gallery-input').addEventListener('change', onFilePicked);
 
@@ -3268,14 +3333,22 @@
     scanCurrentInvoiceId = invoiceId;
 
     try {
-      const path = `invoices/${currentCompany}/${invoiceId}.jpg`;
-      const sRef = storageRef(storage, path);
-      await uploadBytes(sRef, scanCurrentFile);
-      const imageUrl = await getDownloadURL(sRef);
+      const photoBase64 = await resizeAndEncodeToBase64(scanCurrentFile);
+
+      // Photo lives on its OWN path (invoice_photos/...), separate from
+      // pending_invoices/... which the status listener below watches.
+      // If the photo lived on the same node as status, every status
+      // update (uploaded -> ready_for_review -> confirmed -> posted)
+      // would re-download the whole multi-hundred-KB blob to the phone
+      // for no reason. Writing it separately means it's fetched once,
+      // by whoever actually needs the pixels (the PC-side OCR pipeline).
+      await set(ref(db, `companies/${currentCompany}/invoice_photos/${invoiceId}`), {
+        photo_base64: photoBase64,
+        mime: 'image/jpeg',
+      });
 
       await set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
         status: 'uploaded',
-        image_url: imageUrl,
         uploaded_at: new Date().toISOString(),
       });
 
