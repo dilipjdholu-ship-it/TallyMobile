@@ -496,6 +496,37 @@
     font-size: 12px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.04em; color: var(--ink-soft); margin-bottom: 8px;
   }
+  .map-section-title-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .map-section-title-row .map-section-title { margin-bottom: 0; }
+  .map-remove-item-btn {
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1.5px solid var(--rust);
+    background: transparent;
+    color: var(--rust);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .map-rate-unit-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .map-discard-btn {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1.5px solid var(--rust);
+    background: transparent;
+    color: var(--rust);
+    font-weight: 600;
+    font-size: 13.5px;
+    margin-top: 10px;
+  }
   .map-ocr-text {
     font-size: 13px; color: var(--ink-soft);
     margin-bottom: 8px;
@@ -780,6 +811,7 @@
             <div class="spinner"></div>
             <div id="scan-progress-text">Uploading photo…</div>
           </div>
+          <button type="button" class="map-discard-btn" id="progress-discard-btn">Discard this invoice</button>
         </div>
 
         <div class="scan-step" id="scan-step-review">
@@ -876,7 +908,7 @@
   });
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-  import { getDatabase, ref, onValue, get, set } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+  import { getDatabase, ref, onValue, get, set, remove } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
   import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 
   const firebaseConfig = {
@@ -3368,6 +3400,7 @@
   });
 
   document.getElementById('scan-upload-btn').addEventListener('click', uploadInvoicePhoto);
+  document.getElementById('progress-discard-btn').addEventListener('click', discardInvoice);
 
   async function uploadInvoicePhoto() {
     if (!scanCurrentFile) return;
@@ -3423,7 +3456,17 @@
       mappingData = data;
       mappingState = {
         party: null,
-        items: (data.item_matches || []).map(() => ({ confirmed: null, gst_rate: null })),
+        items: (data.item_matches || []).map(item => ({
+          confirmed: null,
+          gst_rate: null,
+          // Editable copies of rate/unit -- start as the OCR guess, but
+          // the person can correct these before posting (e.g. a supplier
+          // invoice uses "Box" while the matched Tally item is tracked
+          // in "Nos" -- OCR can't know the right conversion, only a
+          // person checking the actual invoice can).
+          rate: item.rate,
+          unit: item.unit,
+        })),
       };
       renderMappingScreen();
       document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
@@ -3459,6 +3502,27 @@
 
   // ---- Mapping / picker rendering ----
 
+  async function discardInvoice() {
+    if (!confirm('Discard this scanned invoice? This cannot be undone, and it will need to be re-scanned from scratch.')) return;
+    if (scanUnsub) { scanUnsub(); scanUnsub = null; }
+    const idToDelete = scanCurrentInvoiceId;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-progress').classList.add('active');
+    document.getElementById('scan-progress-text').textContent = 'Discarding…';
+    try {
+      if (idToDelete) {
+        await remove(ref(db, `companies/${currentCompany}/pending_invoices/${idToDelete}`));
+        await remove(ref(db, `companies/${currentCompany}/invoice_photos/${idToDelete}`));
+      }
+    } catch (err) {
+      console.error('Failed to discard invoice:', err);
+      alert('Could not fully discard this invoice -- check your connection and try again from the invoice list.');
+    }
+    resetScanFlow();
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-capture').classList.add('active');
+  }
+
   function renderMappingScreen() {
     const container = document.getElementById('invoice-mapping-body');
     const partyResult = mappingData.party_result || {};
@@ -3472,19 +3536,40 @@
 
     itemMatches.forEach((item, idx) => {
       const metaWarn = item.needs_manual_check ? ' warn' : '';
-      const metaBits = [`Qty: ${item.quantity ?? '—'}`, `Rate: ${item.rate ?? '—'}`, `Amount: ${item.amount ?? '—'}`];
-      if (item.needs_manual_check) metaBits.push('⚠ check this line — quantity/rate/amount looks incomplete');
+      const st = mappingState.items[idx] || {};
+      if (item.needs_manual_check) {
+        // keep the original warning text; rate/unit are now edited below,
+        // not just displayed, so drop them from this line to avoid
+        // showing two different values for the same thing.
+      }
       html += `<div class="map-section">
-        <div class="map-section-title">Item ${idx + 1}</div>
-        <div class="map-item-meta${metaWarn}">${escapeHtml(metaBits.join('   '))}</div>
+        <div class="map-section-title-row">
+          <div class="map-section-title">Item ${idx + 1}</div>
+          <button type="button" class="map-remove-item-btn" data-remove-item="${idx}" title="Remove this item">✕ Remove</button>
+        </div>
+        <div class="map-item-meta${metaWarn}">Qty: ${escapeHtml(item.quantity ?? '—')}   Amount: ${escapeHtml(item.amount ?? '—')}${item.needs_manual_check ? '   ⚠ check this line — quantity/rate/amount looks incomplete' : ''}</div>
         ${renderPickerHtml('item', idx, item.ocr_description, item.remembered_match, item.suggestions)}
+        <div class="map-rate-unit-row">
+          <div>
+            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Rate</div>
+            <input type="text" class="map-rate-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}"
+              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+          </div>
+          <div>
+            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Unit</div>
+            <input type="text" class="map-unit-input" data-unit-idx="${idx}" value="${escapeHtml(st.unit ?? '')}"
+              placeholder="e.g. Nos, Kg"
+              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+          </div>
+        </div>
         <div class="map-gst-row" data-gst-row="${idx}">
-          ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
+          ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip${st.gst_rate === String(r) ? ' selected' : ''}" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
         </div>
       </div>`;
     });
 
     html += `<button class="map-confirm-btn" id="map-confirm-btn" disabled>Confirm &amp; Post</button>`;
+    html += `<button type="button" class="map-discard-btn" id="map-discard-btn">Discard this scanned invoice</button>`;
 
     container.innerHTML = html;
     attachMappingHandlers();
@@ -3699,6 +3784,35 @@
       });
     });
 
+    document.querySelectorAll('[data-rate-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        mappingState.items[parseInt(input.dataset.rateIdx, 10)].rate = input.value;
+      });
+    });
+    document.querySelectorAll('[data-unit-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        mappingState.items[parseInt(input.dataset.unitIdx, 10)].unit = input.value;
+      });
+    });
+
+    document.querySelectorAll('[data-remove-item]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.removeItem, 10);
+        const item = mappingData.item_matches[idx];
+        if (!confirm(`Remove "${item.ocr_description || 'Item ' + (idx + 1)}" from this invoice? This just drops it from what gets posted -- it won't touch anything already in Tally.`)) return;
+        // Splice out of BOTH arrays together so indices stay aligned,
+        // then re-render entirely rather than patching the DOM in place
+        // -- every remaining item's data-idx attributes need to shift
+        // down by one, which a full re-render handles automatically.
+        mappingData.item_matches.splice(idx, 1);
+        mappingState.items.splice(idx, 1);
+        renderMappingScreen();
+        updateConfirmButtonState();
+      });
+    });
+
+    document.getElementById('map-discard-btn').addEventListener('click', discardInvoice);
+
     document.getElementById('map-confirm-btn').addEventListener('click', confirmMapping);
   }
 
@@ -3732,9 +3846,9 @@
       ocr_description: item.ocr_description,
       confirmed: mappingState.items[idx].confirmed,
       quantity: item.quantity,
-      rate: item.rate,
+      rate: mappingState.items[idx].rate,
       amount: item.amount,
-      unit: item.unit,
+      unit: mappingState.items[idx].unit,
       hsn_guess: item.hsn_guess,
       gst_rate: parseInt(mappingState.items[idx].gst_rate, 10),
     }));
