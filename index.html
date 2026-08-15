@@ -3651,16 +3651,32 @@
     }
   }
 
-  // Real units actually in use in Tally -- derived client-side from the
-  // same stock_items sync already used for item search, no extra backend
-  // call needed. Used as a picker for new-item creation so a typo/guess
-  // can't create a unit mismatch the way "pcs" vs "Nos" once did.
+  // Real units actually defined in Tally -- pulled directly from Tally's
+  // own Unit masters (see pull_units() in tally_firebase_sync_v2.py),
+  // NOT inferred from what stock_items happen to already use. A Unit
+  // master can exist in Tally without any current item using it, which
+  // would never show up if derived only from stock_items -- and
+  // BASEUNITS only REFERENCES a unit by name (it doesn't create one), so
+  // this needs to be the real, complete list to guarantee whatever's
+  // picked here actually exists in Tally.
   async function fetchRealUnits() {
+    const snap = await get(ref(db, `companies/${currentCompany}/units`));
+    const rows = snap.val() || [];
+    return rows.map(r => r.name).filter(Boolean).sort();
+  }
+
+  // The specific real unit for ONE existing stock item -- used to
+  // auto-fill Unit the moment an item gets matched to something already
+  // in Tally, so there's never a "Nos" vs "pcs" mismatch to catch at
+  // posting time. This mirrors what post_invoice_voucher already does
+  // server-side for existing items (it always uses the real Tally unit,
+  // silently ignoring whatever was typed) -- showing the real value up
+  // front means the review screen isn't lying about what's editable.
+  async function fetchStockItemUnit(itemName) {
     const snap = await get(ref(db, `companies/${currentCompany}/stock_items`));
     const rows = snap.val() || [];
-    const units = new Set();
-    rows.forEach(r => { if (r.unit) units.add(r.unit); });
-    return Array.from(units).sort();
+    const match = rows.find(r => r.name === itemName);
+    return match ? match.unit : null;
   }
 
   async function showNewItemDetailsForm(idx, typedName) {
@@ -3718,6 +3734,17 @@
       const customUnit = document.getElementById(`new-item-unit-custom-${idx}`).value.trim();
       const finalUnit = customUnit || selectedUnit;
       if (!finalUnit) { alert('Pick or type a unit before continuing.'); return; }
+
+      // BASEUNITS only REFERENCES a unit by name -- it doesn't create
+      // one. A typed unit that doesn't already exist as a real Tally
+      // Unit master will make item creation fail. realUnits is the
+      // actual, complete list pulled from Tally itself, so this catches
+      // a typo/non-existent unit here, before posting, rather than
+      // finding out from a failed sync later.
+      if (customUnit && !realUnits.some(u => u.toLowerCase() === customUnit.toLowerCase())) {
+        if (!confirm(`"${customUnit}" doesn't match any unit that exists in Tally right now. If it's not a real Unit master there, creating this item will fail. Continue anyway?`)) return;
+      }
+
       if (!confirm(`Create NEW item "${typedName}" — HSN: ${hsn || '(blank)'}, Unit: ${finalUnit}. This doesn't exist in Tally yet.`)) return;
 
       // Overwrite the OCR guesses with what was actually confirmed --
@@ -3857,12 +3884,50 @@
     document.getElementById('map-confirm-btn').addEventListener('click', confirmMapping);
   }
 
-  function selectMappingValue(kind, idx, value, isNew) {
+  async function selectMappingValue(kind, idx, value, isNew) {
     const selection = { value, is_new: isNew };
     if (kind === 'party') {
       mappingState.party = selection;
     } else {
       mappingState.items[idx].confirmed = selection;
+      const unitInput = document.querySelector(`[data-unit-idx="${idx}"]`);
+      if (!isNew) {
+        // Matched to something that already exists in Tally -- fetch its
+        // REAL unit and lock the field. Editing it here would be
+        // pointless anyway: post_invoice_voucher always uses the real
+        // Tally unit for existing items and silently ignores whatever
+        // was typed, so showing (and locking) the real value up front
+        // means what's on screen actually matches what gets posted.
+        if (unitInput) { unitInput.disabled = true; unitInput.value = 'Loading…'; }
+        try {
+          const realUnit = await fetchStockItemUnit(value);
+          if (realUnit) {
+            mappingState.items[idx].unit = realUnit;
+            if (unitInput) {
+              unitInput.value = realUnit;
+              unitInput.title = "Matched to this item's real unit in Tally -- can't be changed here, since Tally always uses its own unit for an existing item.";
+            }
+          } else if (unitInput) {
+            // Couldn't resolve a real unit -- don't leave it stuck on
+            // "Loading…"; fall back to editable so it can be fixed by hand.
+            unitInput.value = mappingState.items[idx].unit || '';
+            unitInput.disabled = false;
+          }
+        } catch (err) {
+          console.error('Failed to fetch real unit for', value, err);
+          if (unitInput) unitInput.disabled = false;
+        }
+      } else {
+        // New item -- its real unit comes from showNewItemDetailsForm's
+        // own confirm step, which sets mappingData.item_matches[idx].unit
+        // directly (not mappingState). Sync that into mappingState here
+        // so confirmMapping() (which reads from mappingState, for the
+        // editable-fields feature) actually sends what was confirmed,
+        // not a stale OCR guess. Stays editable, since for a genuinely
+        // new item whatever's entered here IS what creates the item.
+        mappingState.items[idx].unit = mappingData.item_matches[idx].unit || mappingState.items[idx].unit;
+        if (unitInput) { unitInput.disabled = false; unitInput.value = mappingState.items[idx].unit || ''; }
+      }
     }
     // visually mark the selected option within its own options group
     const groupSelector = `[data-options-for="${kind}-${idx}"] .map-option, [data-search-results-for="${kind}-${idx}"] .map-option`;
