@@ -515,6 +515,7 @@
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     margin-bottom: 10px;
   }
+  .map-qty-rate-unit-row { grid-template-columns: 1fr 1fr 1fr; }
   .map-discard-btn {
     display: block;
     width: 100%;
@@ -3459,13 +3460,15 @@
         items: (data.item_matches || []).map(item => ({
           confirmed: null,
           gst_rate: null,
-          // Editable copies of rate/unit -- start as the OCR guess, but
-          // the person can correct these before posting (e.g. a supplier
-          // invoice uses "Box" while the matched Tally item is tracked
-          // in "Nos" -- OCR can't know the right conversion, only a
-          // person checking the actual invoice can).
+          // Editable copies of quantity/rate/unit -- start as the OCR
+          // guess, but the person can correct these before posting (OCR
+          // misreads a quantity digit, or a supplier invoice uses "Box"
+          // while the matched Tally item is tracked in "Nos" -- only a
+          // person checking the actual invoice can fix either one).
+          quantity: item.quantity,
           rate: item.rate,
           unit: item.unit,
+          amount: item.amount,
         })),
       };
       renderMappingScreen();
@@ -3547,9 +3550,14 @@
           <div class="map-section-title">Item ${idx + 1}</div>
           <button type="button" class="map-remove-item-btn" data-remove-item="${idx}" title="Remove this item">✕ Remove</button>
         </div>
-        <div class="map-item-meta${metaWarn}">Qty: ${escapeHtml(item.quantity ?? '—')}   Amount: ${escapeHtml(item.amount ?? '—')}${item.needs_manual_check ? '   ⚠ check this line — quantity/rate/amount looks incomplete' : ''}</div>
+        <div class="map-item-meta${metaWarn}">${item.needs_manual_check ? '⚠ check this line — quantity/rate/amount looks incomplete' : ''}</div>
         ${renderPickerHtml('item', idx, item.ocr_description, item.remembered_match, item.suggestions)}
-        <div class="map-rate-unit-row">
+        <div class="map-rate-unit-row map-qty-rate-unit-row">
+          <div>
+            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Quantity</div>
+            <input type="text" class="map-qty-input" data-qty-idx="${idx}" value="${escapeHtml(st.quantity ?? '')}"
+              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+          </div>
           <div>
             <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Rate</div>
             <input type="text" class="map-rate-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}"
@@ -3561,6 +3569,11 @@
               placeholder="e.g. Nos, Kg"
               style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
           </div>
+        </div>
+        <div>
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Amount (auto-fills from Qty × Rate — edit if it should differ, e.g. after a discount)</div>
+          <input type="text" class="map-amount-input" data-amount-idx="${idx}" value="${escapeHtml(st.amount ?? '')}"
+            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin-bottom:10px;">
         </div>
         <div class="map-gst-row" data-gst-row="${idx}">
           ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip${st.gst_rate === String(r) ? ' selected' : ''}" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
@@ -3784,9 +3797,37 @@
       });
     });
 
+    // Amount auto-recalculates from Quantity x Rate whenever either
+    // changes, since the posted voucher uses the amount field directly
+    // (not re-derived from qty/rate) -- without this, correcting a
+    // misread quantity or rate would leave a stale, now-wrong amount
+    // silently posted to Tally. Still directly editable afterward for
+    // cases like a discount where amount legitimately isn't qty x rate.
+    function recalcAmount(idx) {
+      const q = parseFloat(mappingState.items[idx].quantity);
+      const r = parseFloat(mappingState.items[idx].rate);
+      if (!isNaN(q) && !isNaN(r)) {
+        const newAmount = (q * r).toFixed(2);
+        mappingState.items[idx].amount = newAmount;
+        const amountInput = document.querySelector(`[data-amount-idx="${idx}"]`);
+        if (amountInput) amountInput.value = newAmount;
+      }
+    }
+    document.querySelectorAll('[data-qty-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        mappingState.items[parseInt(input.dataset.qtyIdx, 10)].quantity = input.value;
+        recalcAmount(parseInt(input.dataset.qtyIdx, 10));
+      });
+    });
     document.querySelectorAll('[data-rate-idx]').forEach(input => {
       input.addEventListener('input', () => {
         mappingState.items[parseInt(input.dataset.rateIdx, 10)].rate = input.value;
+        recalcAmount(parseInt(input.dataset.rateIdx, 10));
+      });
+    });
+    document.querySelectorAll('[data-amount-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        mappingState.items[parseInt(input.dataset.amountIdx, 10)].amount = input.value;
       });
     });
     document.querySelectorAll('[data-unit-idx]').forEach(input => {
@@ -3845,9 +3886,9 @@
     const confirmedItems = itemMatches.map((item, idx) => ({
       ocr_description: item.ocr_description,
       confirmed: mappingState.items[idx].confirmed,
-      quantity: item.quantity,
+      quantity: mappingState.items[idx].quantity,
       rate: mappingState.items[idx].rate,
-      amount: item.amount,
+      amount: mappingState.items[idx].amount,
       unit: mappingState.items[idx].unit,
       hsn_guess: item.hsn_guess,
       gst_rate: parseInt(mappingState.items[idx].gst_rate, 10),
