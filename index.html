@@ -280,6 +280,125 @@
     font-size: 19px;
   }
   .dash-tile .dt-label { font-size: 10.5px; font-weight: 600; color: var(--ink); text-align: center; }
+  .dash-tile { position: relative; }
+  .dt-count-badge {
+    position: absolute; top: 8px; right: 10px;
+    background: var(--rust); color: white;
+    font-size: 10px; font-weight: 700;
+    min-width: 16px; height: 16px; padding: 0 4px;
+    border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ===== Review queue alert on Home ===== */
+  .queue-alert {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--amber-soft);
+    border: 1px solid var(--amber);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+  .queue-alert .glyph { font-size: 20px; }
+  .queue-alert .qa-text { flex: 1; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .queue-alert .qa-sub { font-size: 11.5px; color: var(--ink-soft); font-weight: 400; margin-top: 2px; }
+  .queue-alert .qa-arrow { color: var(--amber); font-weight: 700; }
+
+  /* ===== FAB upload chooser (bottom sheet) ===== */
+  .fab-chooser-backdrop {
+    display: none;
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(16,24,40,0.4);
+  }
+  .fab-chooser-backdrop.open { display: block; }
+  .fab-chooser-sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 41;
+    background: var(--paper-card);
+    border-radius: 18px 18px 0 0;
+    padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
+    box-shadow: 0 -4px 20px rgba(16,24,40,0.15);
+  }
+  .fab-chooser-handle {
+    width: 36px; height: 4px; border-radius: 4px;
+    background: var(--border);
+    margin: 6px auto 14px;
+  }
+  .fab-chooser-title { font-size: 13px; font-weight: 700; color: var(--ink-soft); margin-bottom: 10px; padding-left: 2px; }
+  .fab-chooser-option {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; text-align: left;
+    padding: 13px 10px;
+    border: none; background: none;
+    border-bottom: 1px solid var(--paper-line);
+    font-size: 15px; font-weight: 600; color: var(--ink);
+  }
+  .fab-chooser-option:last-of-type { border-bottom: none; }
+  .fab-chooser-option .fc-icon { font-size: 20px; width: 28px; text-align: center; }
+  .fab-chooser-cancel {
+    display: block; width: 100%; margin-top: 8px;
+    padding: 13px; text-align: center;
+    border: none; background: var(--paper);
+    border-radius: 10px;
+    font-size: 14px; font-weight: 600; color: var(--ink-soft);
+  }
+
+  /* ===== Review Queue / History lists ===== */
+  .queue-row-status {
+    font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 20px;
+    margin-left: 8px; white-space: nowrap;
+  }
+  .queue-row-status.st-wait { background: var(--primary-soft); color: var(--primary); }
+  .queue-row-status.st-review { background: var(--amber-soft); color: var(--amber); }
+  .queue-row-status.st-error { background: var(--rust-soft); color: var(--rust); }
+  .history-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .history-tab {
+    flex: 1; padding: 9px; border-radius: 9px;
+    border: 1.5px solid var(--border); background: var(--paper-card);
+    font-size: 12.5px; font-weight: 600; color: var(--ink-soft);
+  }
+  .history-tab.active { background: var(--primary); border-color: var(--primary); color: white; }
+  .history-row-delete {
+    background: none; border: none; color: var(--rust);
+    font-size: 12px; font-weight: 600; padding: 6px 8px; flex-shrink: 0;
+  }
+  .history-retention-note {
+    text-align: center; font-size: 11px; color: var(--ink-soft);
+    padding: 14px 20px 4px;
+  }
+
+  /* ===== Bank statement transaction review ===== */
+  .txn-row {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .txn-row-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+  .txn-narration { font-size: 13px; color: var(--ink); line-height: 1.4; flex: 1; }
+  .txn-date { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .txn-type-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1.5px solid var(--border); flex-shrink: 0; }
+  .txn-type-btn { padding: 6px 10px; border: none; background: var(--paper-card); font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+  .txn-type-btn.active.receipt { background: var(--forest); color: white; }
+  .txn-type-btn.active.payment { background: var(--rust); color: white; }
+  .txn-amount-row { display: flex; align-items: center; gap: 8px; }
+  .txn-amount-row input {
+    flex: 1; padding: 8px 10px; border-radius: 8px;
+    border: 1.5px solid var(--border); font-size: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .txn-remove-btn { background: none; border: none; color: var(--ink-soft); font-size: 18px; padding: 0 4px; }
+  .txn-mismatch-banner {
+    background: var(--rust-soft); border: 1px solid var(--rust);
+    border-radius: 10px; padding: 12px; margin-bottom: 16px;
+    font-size: 12.5px; color: var(--rust); line-height: 1.5;
+  }
+  .txn-totals-banner {
+    background: var(--forest-soft); border: 1px solid var(--forest);
+    border-radius: 10px; padding: 12px; margin-bottom: 16px;
+    font-size: 12.5px; color: var(--forest); line-height: 1.5;
+  }
 
   .search-bar {
     display: flex; gap: 8px; margin-bottom: 14px;
@@ -789,7 +908,105 @@
     <button class="bottom-nav-tab" data-section="stock"><span class="bn-icon">◫</span>Stock</button>
   </nav>
 
-  <button class="scan-fab" id="scan-invoice-fab" title="Scan Invoice" aria-label="Scan Invoice">📷</button>
+  <button class="scan-fab" id="scan-invoice-fab" title="Upload document" aria-label="Upload document">📷</button>
+
+  <!-- FAB upload chooser -- always starts a FRESH capture. Resuming an
+       in-progress invoice/statement now happens from the Review Queue
+       on the dashboard, not by tapping the camera button again, so the
+       camera is never blocked while something else is pending. -->
+  <div class="fab-chooser-backdrop" id="fab-chooser-backdrop"></div>
+  <div class="fab-chooser-sheet" id="fab-chooser-sheet" style="display:none;">
+    <div class="fab-chooser-handle"></div>
+    <div class="fab-chooser-title">Upload a document</div>
+    <button class="fab-chooser-option" id="fab-choose-invoice">
+      <span class="fc-icon">🧾</span><span>Scan / Upload Invoice</span>
+    </button>
+    <button class="fab-chooser-option" id="fab-choose-statement">
+      <span class="fc-icon">🏦</span><span>Upload Bank Statement</span>
+    </button>
+    <button class="fab-chooser-cancel" id="fab-chooser-cancel">Cancel</button>
+  </div>
+
+  <!-- Review Queue Overlay -- lists every not-yet-finished invoice and
+       bank statement across both types, newest first. Tapping an item
+       resumes it at whatever step it's currently at. -->
+  <div id="review-queue-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="review-queue-back">&larr; Back</button>
+        <div class="overlay-title">Pending Review</div>
+      </div>
+      <div class="overlay-body" id="review-queue-body">
+        <div class="loading-state">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Overlay -- posted/discarded invoices + bank statements.
+       Auto-deleted by the PC sync service after CONFIG['history_retention_days']. -->
+  <div id="history-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="history-back">&larr; Back</button>
+        <div class="overlay-title">History</div>
+      </div>
+      <div class="overlay-body">
+        <div class="history-tabs">
+          <button class="history-tab active" id="history-tab-invoices" data-kind="invoices">Invoices</button>
+          <button class="history-tab" id="history-tab-statements" data-kind="bank_statements">Bank Statements</button>
+        </div>
+        <div id="history-body"><div class="loading-state">Loading…</div></div>
+        <div class="history-retention-note">Entries are removed automatically after 30 days. You can also delete one any time.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bank Statement Upload / Review Overlay -->
+  <div id="statement-upload-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="statement-upload-back">&larr; Back</button>
+        <div class="overlay-title" id="statement-upload-title">Upload Bank Statement</div>
+      </div>
+      <div class="overlay-body" id="statement-upload-body">
+
+        <div class="scan-step active" id="stmt-step-capture">
+          <div class="scan-capture-area">
+            <div class="glyph">🏦</div>
+            <p>Upload a bank statement PDF to pull transactions into Tally as Receipt/Payment vouchers for review.</p>
+            <input type="file" accept="application/pdf" id="stmt-pdf-input" style="display:none;">
+            <button class="scan-btn" id="stmt-pdf-btn">Upload PDF</button>
+          </div>
+        </div>
+
+        <div class="scan-step" id="stmt-step-preview">
+          <div class="scan-pdf-preview">
+            <div class="glyph">📄</div>
+            <div id="stmt-pdf-filename"></div>
+          </div>
+          <button class="scan-btn" id="stmt-upload-btn">Upload &amp; Process</button>
+          <button class="scan-btn secondary" id="stmt-retake-btn">Choose a different file</button>
+        </div>
+
+        <div class="scan-step" id="stmt-step-progress">
+          <div class="scan-progress">
+            <div class="spinner"></div>
+            <div id="stmt-progress-text">Uploading PDF…</div>
+          </div>
+          <button type="button" class="map-discard-btn" id="stmt-progress-discard-btn">Discard this statement</button>
+        </div>
+
+        <div class="scan-step" id="stmt-step-review">
+          <div id="stmt-review-body"></div>
+        </div>
+
+        <div class="scan-step" id="stmt-step-result">
+          <div id="stmt-result-body"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
 
   <!-- Invoice Scan / Upload / Review Overlay -->
   <div id="invoice-upload-overlay" class="overlay">
@@ -964,7 +1181,7 @@
   // has no history entry for "overlay open" to go back to. Pushing a
   // history entry when an overlay opens, and closing overlays on
   // popstate, makes back-button behavior match a native app.
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay'];
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -1245,6 +1462,13 @@
       cd.company_info = val.company_info;
       cd.outstanding_receivables = val.outstanding_receivables;
       cd.last_synced = val.last_synced;
+      // Riding the same always-live root listener rather than opening a
+      // separate one -- val already contains the whole company node, so
+      // pending_invoices/pending_bank_statements come along for free.
+      // Not cached to localStorage: these are queue/live-status data,
+      // stale counts here would be actively misleading (unlike reports).
+      cd.pending_invoices = val.pending_invoices;
+      cd.pending_bank_statements = val.pending_bank_statements;
       saveToCache(currentCompany, 'company_info', val.company_info);
       saveToCache(currentCompany, 'outstanding_receivables', val.outstanding_receivables);
       document.getElementById('sync-text').textContent = 'Live';
@@ -1389,9 +1613,28 @@
     const voucherCount = daybookReady ? safeArray(data.daybook).length : '…';
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
 
+    // Queue counts come from the live root listener (see
+    // listenToCurrentCompany) -- no separate fetch needed here. Once an
+    // item posts successfully it's removed from pending_* by the PC
+    // sync service (moved to history_*), so everything still present
+    // here genuinely needs attention: still processing, ready for
+    // review, or errored.
+    const pendingInvoiceCount = Object.keys(data.pending_invoices || {}).length;
+    const pendingStatementCount = Object.keys(data.pending_bank_statements || {}).length;
+    const pendingTotal = pendingInvoiceCount + pendingStatementCount;
+
     contentArea.innerHTML = `
       <div class="dash-greeting">Welcome back</div>
       <div class="dash-company-name">${escapeHtml(companyLabel)}</div>
+
+      ${pendingTotal > 0 ? `
+      <button class="queue-alert" id="home-queue-alert" style="width:100%; border:1px solid var(--amber); cursor:pointer;">
+        <span class="glyph">⏳</span>
+        <span class="qa-text">${pendingTotal} document${pendingTotal === 1 ? '' : 's'} waiting on you
+          <div class="qa-sub">${pendingInvoiceCount} invoice${pendingInvoiceCount === 1 ? '' : 's'} · ${pendingStatementCount} bank statement${pendingStatementCount === 1 ? '' : 's'}</div>
+        </span>
+        <span class="qa-arrow">&rarr;</span>
+      </button>` : ''}
 
       <div class="dash-stat-grid">
         <div class="dash-stat-card primary">
@@ -1410,6 +1653,19 @@
           <div class="ds-label">Vouchers (1yr)</div>
           <div class="ds-value">${voucherCount}</div>
         </div>
+      </div>
+
+      <div class="dash-section-title">Documents</div>
+      <div class="dash-tile-grid">
+        <button class="dash-tile" data-goto="__review_queue">
+          <span class="dt-icon" style="background:var(--amber-soft); color:var(--amber);">⏳</span>
+          <span class="dt-label">Review Queue</span>
+          ${pendingTotal > 0 ? `<span class="dt-count-badge">${pendingTotal}</span>` : ''}
+        </button>
+        <button class="dash-tile" data-goto="__history">
+          <span class="dt-icon" style="background:var(--primary-soft); color:var(--primary);">🕘</span>
+          <span class="dt-label">History</span>
+        </button>
       </div>
 
       <div class="dash-section-title">Reports</div>
@@ -1446,8 +1702,17 @@
     `;
 
     contentArea.querySelectorAll('.dash-tile').forEach(tile => {
-      tile.addEventListener('click', () => goToSection(tile.dataset.goto));
+      const goto = tile.dataset.goto;
+      if (goto === '__review_queue') {
+        tile.addEventListener('click', openReviewQueue);
+      } else if (goto === '__history') {
+        tile.addEventListener('click', openHistoryOverlay);
+      } else {
+        tile.addEventListener('click', () => goToSection(goto));
+      }
     });
+    const alertBtn = document.getElementById('home-queue-alert');
+    if (alertBtn) alertBtn.addEventListener('click', openReviewQueue);
   }
 
   function renderOutstanding(data, contentArea, summaryStrip) {
@@ -3318,46 +3583,209 @@
     document.getElementById('scan-pdf-input').value = '';
   }
 
-  document.getElementById('scan-invoice-fab').addEventListener('click', async () => {
-    openOverlay('invoice-upload-overlay');
+  // The camera FAB always opens a fresh upload -- it no longer checks
+  // for an in-progress invoice and blocks on it. Any document still
+  // being processed or awaiting review shows up in the Review Queue
+  // (dashboard tile / home banner) instead, so uploading a NEW document
+  // never has to wait on finishing a review of an OLD one.
+  function openFabChooser() {
+    document.getElementById('fab-chooser-backdrop').classList.add('open');
+    document.getElementById('fab-chooser-sheet').style.display = 'block';
+  }
+  function closeFabChooser() {
+    document.getElementById('fab-chooser-backdrop').classList.remove('open');
+    document.getElementById('fab-chooser-sheet').style.display = 'none';
+  }
+  document.getElementById('scan-invoice-fab').addEventListener('click', openFabChooser);
+  document.getElementById('fab-chooser-backdrop').addEventListener('click', closeFabChooser);
+  document.getElementById('fab-chooser-cancel').addEventListener('click', closeFabChooser);
+  document.getElementById('fab-choose-invoice').addEventListener('click', () => {
+    closeFabChooser();
     resetScanFlow();
-    document.getElementById('scan-progress-text').textContent = 'Checking for in-progress invoices…';
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('scan-step-progress').classList.add('active');
-
-    // Resume an unfinished invoice instead of always starting fresh --
-    // without this, navigating away while OCR was still running (a
-    // multi-minute wait) left NO way back to the review screen, even
-    // though the result was sitting ready in Firebase the whole time.
-    // "posted" is the only truly-done state; everything else still needs
-    // the person's attention.
-    try {
-      const snap = await get(ref(db, `companies/${currentCompany}/pending_invoices`));
-      const all = snap.val() || {};
-      let latest = null;
-      for (const [id, data] of Object.entries(all)) {
-        if (data.status === 'posted') continue;
-        if (!latest || (data.uploaded_at || '') > (latest.data.uploaded_at || '')) {
-          latest = { id, data };
-        }
-      }
-      if (latest) {
-        scanCurrentInvoiceId = latest.id;
-        handleInvoiceStatusChange(latest.data);
-        listenForInvoiceUpdates(latest.id);
-        return;
-      }
-    } catch (err) {
-      console.error('Could not check for in-progress invoices:', err);
-      // Fall through to a normal fresh scan -- better than getting stuck.
-    }
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('scan-step-capture').classList.add('active');
+    openOverlay('invoice-upload-overlay');
   });
+  document.getElementById('fab-choose-statement').addEventListener('click', () => {
+    closeFabChooser();
+    resetStatementFlow();
+    openOverlay('statement-upload-overlay');
+  });
+
   document.getElementById('invoice-upload-back').addEventListener('click', () => {
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
     goBackFromOverlay();
   });
+
+  // ---- Review Queue: lists every not-yet-finished invoice + bank
+  // statement, live, and resumes whichever one is tapped at its
+  // current step. This is what replaced the FAB's old auto-resume. ----
+  let queueUnsubInv = null, queueUnsubStmt = null;
+  let queueInvoices = {}, queueStatements = {};
+
+  function openReviewQueue() {
+    openOverlay('review-queue-overlay');
+    renderReviewQueueLoading();
+    if (queueUnsubInv) queueUnsubInv();
+    if (queueUnsubStmt) queueUnsubStmt();
+    queueUnsubInv = onValue(ref(db, `companies/${currentCompany}/pending_invoices`), snap => {
+      queueInvoices = snap.val() || {};
+      renderReviewQueue();
+    });
+    queueUnsubStmt = onValue(ref(db, `companies/${currentCompany}/pending_bank_statements`), snap => {
+      queueStatements = snap.val() || {};
+      renderReviewQueue();
+    });
+  }
+  document.getElementById('review-queue-back').addEventListener('click', () => {
+    if (queueUnsubInv) { queueUnsubInv(); queueUnsubInv = null; }
+    if (queueUnsubStmt) { queueUnsubStmt(); queueUnsubStmt = null; }
+    goBackFromOverlay();
+  });
+
+  function renderReviewQueueLoading() {
+    document.getElementById('review-queue-body').innerHTML = '<div class="loading-state">Loading…</div>';
+  }
+
+  function queueStatusMeta(status) {
+    if (status === 'uploaded') return { label: 'Processing…', cls: 'st-wait' };
+    if (status === 'ready_for_review') return { label: 'Needs review', cls: 'st-review' };
+    if (status === 'confirmed' || status === 'confirmed_pending_post') return { label: 'Posting…', cls: 'st-wait' };
+    if (status === 'failed' || status === 'post_failed') return { label: 'Error', cls: 'st-error' };
+    return { label: status || 'Pending', cls: 'st-wait' };
+  }
+
+  function renderReviewQueue() {
+    const invItems = Object.entries(queueInvoices).map(([id, d]) => ({ id, d, kind: 'invoice' }));
+    const stmtItems = Object.entries(queueStatements).map(([id, d]) => ({ id, d, kind: 'statement' }));
+    const all = [...invItems, ...stmtItems].sort((a, b) =>
+      (b.d.uploaded_at || '').localeCompare(a.d.uploaded_at || ''));
+
+    const body = document.getElementById('review-queue-body');
+    if (all.length === 0) {
+      body.innerHTML = `<div class="empty-state">
+        <div class="glyph">✓</div>
+        <div class="title">Nothing pending</div>
+        <div class="desc">Scanned invoices and uploaded bank statements will show up here until they're posted.</div>
+      </div>`;
+      return;
+    }
+
+    let html = '<div class="list-card">';
+    all.forEach(({ id, d, kind }) => {
+      const meta = queueStatusMeta(d.status);
+      const icon = kind === 'invoice' ? '🧾' : '🏦';
+      const title = kind === 'invoice'
+        ? (d.party_ocr || d.fields?.party_name || 'Invoice')
+        : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
+      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at) : '';
+      html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
+        <div>
+          <div class="name">${icon} ${escapeHtml(title)}</div>
+          <div class="sub">${escapeHtml(sub)}</div>
+        </div>
+        <span class="queue-row-status ${meta.cls}">${escapeHtml(meta.label)}</span>
+      </div>`;
+    });
+    html += '</div>';
+    body.innerHTML = html;
+
+    body.querySelectorAll('.queue-item').forEach(row => {
+      row.addEventListener('click', () => {
+        const id = row.dataset.id;
+        const kind = row.dataset.kind;
+        if (queueUnsubInv) { queueUnsubInv(); queueUnsubInv = null; }
+        if (queueUnsubStmt) { queueUnsubStmt(); queueUnsubStmt = null; }
+        goBackFromOverlay(); // close the queue overlay
+        if (kind === 'invoice') {
+          resetScanFlow();
+          scanCurrentInvoiceId = id;
+          openOverlay('invoice-upload-overlay');
+          handleInvoiceStatusChange(queueInvoices[id]);
+          listenForInvoiceUpdates(id);
+        } else {
+          resetStatementFlow();
+          stmtCurrentId = id;
+          openOverlay('statement-upload-overlay');
+          handleStatementStatusChange(queueStatements[id]);
+          listenForStatementUpdates(id);
+        }
+      });
+    });
+  }
+
+  // ---- History: posted + discarded invoices and bank statements ----
+  let historyUnsub = null;
+  let historyKind = 'invoices';
+
+  function openHistoryOverlay() {
+    openOverlay('history-overlay');
+    loadHistoryTab('invoices');
+  }
+  document.getElementById('history-back').addEventListener('click', () => {
+    if (historyUnsub) { historyUnsub(); historyUnsub = null; }
+    goBackFromOverlay();
+  });
+  document.getElementById('history-tab-invoices').addEventListener('click', () => loadHistoryTab('invoices'));
+  document.getElementById('history-tab-statements').addEventListener('click', () => loadHistoryTab('bank_statements'));
+
+  function loadHistoryTab(kind) {
+    historyKind = kind;
+    document.getElementById('history-tab-invoices').classList.toggle('active', kind === 'invoices');
+    document.getElementById('history-tab-statements').classList.toggle('active', kind === 'bank_statements');
+    document.getElementById('history-body').innerHTML = '<div class="loading-state">Loading…</div>';
+    if (historyUnsub) { historyUnsub(); historyUnsub = null; }
+    historyUnsub = onValue(ref(db, `companies/${currentCompany}/history_${kind}`), snap => {
+      renderHistoryList(kind, snap.val() || {});
+    });
+  }
+
+  function renderHistoryList(kind, entries) {
+    if (kind !== historyKind) return; // a tab switch raced this callback
+    const items = Object.entries(entries).sort((a, b) =>
+      (b[1].finalized_at || '').localeCompare(a[1].finalized_at || ''));
+    const body = document.getElementById('history-body');
+    if (items.length === 0) {
+      body.innerHTML = `<div class="empty-state">
+        <div class="glyph">🕘</div>
+        <div class="title">No history yet</div>
+        <div class="desc">Posted and discarded documents will appear here.</div>
+      </div>`;
+      return;
+    }
+    let html = '<div class="list-card">';
+    items.forEach(([id, d]) => {
+      const icon = kind === 'invoices' ? '🧾' : '🏦';
+      const title = kind === 'invoices'
+        ? (d.confirmed_party?.value || d.party_ocr || 'Invoice')
+        : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
+      const outcomeLabel = d.outcome === 'posted' ? 'Posted' : 'Discarded';
+      const outcomeCls = d.outcome === 'posted' ? 'st-review' : 'st-error';
+      html += `<div class="row">
+        <div>
+          <div class="name">${icon} ${escapeHtml(title)}</div>
+          <div class="sub">${d.finalized_at ? formatDateTime(d.finalized_at) : ''}</div>
+        </div>
+        <span class="queue-row-status ${outcomeCls}">${outcomeLabel}</span>
+        <button class="history-row-delete" data-id="${escapeHtml(id)}" data-kind="${kind}">Delete</button>
+      </div>`;
+    });
+    html += '</div>';
+    body.innerHTML = html;
+
+    body.querySelectorAll('.history-row-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const k = btn.dataset.kind;
+        if (!confirm('Delete this history entry? This cannot be undone.')) return;
+        try {
+          await remove(ref(db, `companies/${currentCompany}/history_${k}/${id}`));
+        } catch (err) {
+          console.error('Failed to delete history entry:', err);
+          alert('Could not delete -- check your connection and try again.');
+        }
+      });
+    });
+  }
 
   document.getElementById('scan-camera-btn').addEventListener('click', () => {
     document.getElementById('scan-camera-input').click();
@@ -3566,6 +3994,15 @@
     document.getElementById('scan-progress-text').textContent = 'Discarding…';
     try {
       if (idToDelete) {
+        // Write a history record BEFORE removing -- otherwise a discard
+        // simply vanishes with no trace, and the person can't later
+        // confirm "yes, I did mean to throw that one out."
+        const snap = await get(ref(db, `companies/${currentCompany}/pending_invoices/${idToDelete}`));
+        const finalData = snap.val();
+        if (finalData) {
+          await set(ref(db, `companies/${currentCompany}/history_invoices/${idToDelete}`),
+            Object.assign({}, finalData, { outcome: 'discarded', finalized_at: new Date().toISOString() }));
+        }
         await remove(ref(db, `companies/${currentCompany}/pending_invoices/${idToDelete}`));
         await remove(ref(db, `companies/${currentCompany}/invoice_photos/${idToDelete}`));
       }
@@ -4027,6 +4464,298 @@
     } catch (err) {
       console.error('Failed to save confirmation:', err);
       showInvoiceResult(false, 'Could not save your confirmation', err.message || String(err));
+    }
+  }
+
+  // ================= BANK STATEMENT UPLOAD / REVIEW =================
+  // Flow: upload PDF -> write a pending_bank_statements node the PC's
+  // sync tool is watching -> PC parses transactions + Receipt/Payment
+  // per bankcore.determine_vtype and writes them back -> render an
+  // editable transaction list (mirrors the invoice mapping screen but
+  // simpler: no fuzzy matching, just per-row edit/remove and a
+  // Receipt/Payment toggle) -> write confirmed transactions back -> PC
+  // posts to Tally -> show the result.
+
+  let stmtCurrentFile = null;
+  let stmtCurrentId = null;
+  let stmtUnsub = null;
+  let stmtReviewData = null;      // the ready_for_review payload from the PC
+  let stmtState = { transactions: [] };
+
+  function resetStatementFlow() {
+    stmtCurrentFile = null;
+    stmtCurrentId = null;
+    if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
+    stmtReviewData = null;
+    stmtState = { transactions: [] };
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-capture').classList.add('active');
+    document.getElementById('statement-upload-title').textContent = 'Upload Bank Statement';
+    document.getElementById('stmt-pdf-input').value = '';
+  }
+
+  document.getElementById('statement-upload-back').addEventListener('click', () => {
+    if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
+    goBackFromOverlay();
+  });
+
+  document.getElementById('stmt-pdf-btn').addEventListener('click', () => {
+    document.getElementById('stmt-pdf-input').click();
+  });
+
+  function onStatementFilePicked(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    stmtCurrentFile = file;
+    document.getElementById('stmt-pdf-filename').textContent = file.name;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-preview').classList.add('active');
+  }
+  document.getElementById('stmt-pdf-input').addEventListener('change', onStatementFilePicked);
+
+  document.getElementById('stmt-retake-btn').addEventListener('click', () => {
+    stmtCurrentFile = null;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-capture').classList.add('active');
+  });
+
+  document.getElementById('stmt-upload-btn').addEventListener('click', uploadStatementPdf);
+  document.getElementById('stmt-progress-discard-btn').addEventListener('click', discardStatement);
+
+  async function uploadStatementPdf() {
+    if (!stmtCurrentFile) return;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-progress').classList.add('active');
+    document.getElementById('stmt-progress-text').textContent = 'Uploading PDF…';
+
+    const stmtId = 'stmt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    stmtCurrentId = stmtId;
+
+    try {
+      // Reuses the same base64 reader as invoice PDF uploads -- same
+      // 5MB cap, same "no resize, PDFs already come in small" reasoning.
+      const fileBase64 = await readPdfAsBase64(stmtCurrentFile);
+
+      await set(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${stmtId}`), {
+        pdf_base64: fileBase64,
+        mime: 'application/pdf',
+      });
+
+      await set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`), {
+        status: 'uploaded',
+        uploaded_at: new Date().toISOString(),
+      });
+
+      document.getElementById('stmt-progress-text').textContent = 'Processing statement (this can take a minute)…';
+      listenForStatementUpdates(stmtId);
+    } catch (err) {
+      console.error('Bank statement upload failed:', err);
+      showStatementResult(false, 'Upload failed', err.message || String(err));
+    }
+  }
+
+  function listenForStatementUpdates(stmtId) {
+    const nodeRef = ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`);
+    stmtUnsub = onValue(nodeRef, (snap) => {
+      const data = snap.val();
+      if (!data) return;
+      handleStatementStatusChange(data);
+    });
+  }
+
+  function handleStatementStatusChange(data) {
+    const status = data.status;
+    if (status === 'uploaded') {
+      document.getElementById('stmt-progress-text').textContent = 'Processing statement (this can take a minute)…';
+    } else if (status === 'ready_for_review') {
+      stmtReviewData = data;
+      stmtState = {
+        transactions: (data.transactions || []).map(t => ({
+          date: t.date,
+          narration: t.narration,
+          instrument: t.instrument,
+          // Editable copies -- the parser's Receipt/Payment call and
+          // amount are usually right but not infallible (see
+          // bankcore.determine_vtype), so both stay correctable here,
+          // same principle as invoice quantity/rate/unit.
+          amount: t.amount,
+          voucher_type: t.voucher_type,
+          removed: false,
+        })),
+      };
+      renderStatementReviewScreen();
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('stmt-step-review').classList.add('active');
+      document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
+    } else if (status === 'failed') {
+      showStatementResult(false, 'Processing failed', data.error || 'Unknown error');
+    } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('stmt-step-progress').classList.add('active');
+      document.getElementById('stmt-progress-text').textContent = 'Posting to Tally…';
+    } else if (status === 'posted') {
+      showStatementResult(true, 'Posted to Tally', data.post_message || 'Vouchers were created in Tally.');
+    } else if (status === 'post_failed') {
+      showStatementResult(false, 'Posting failed', data.error || 'Unknown error');
+    }
+  }
+
+  function showStatementResult(success, title, detail) {
+    if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-result').classList.add('active');
+    document.getElementById('statement-upload-title').textContent = success ? 'Done' : 'Error';
+    document.getElementById('stmt-result-body').innerHTML = `
+      <div class="map-result ${success ? 'success' : 'error'}">
+        <div class="glyph">${success ? '✓' : '✕'}</div>
+        <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
+        <div class="detail">${escapeHtml(detail || '')}</div>
+      </div>
+    `;
+  }
+
+  async function discardStatement() {
+    if (!confirm('Discard this bank statement? This cannot be undone, and it will need to be re-uploaded from scratch.')) return;
+    if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
+    const idToDelete = stmtCurrentId;
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-progress').classList.add('active');
+    document.getElementById('stmt-progress-text').textContent = 'Discarding…';
+    try {
+      if (idToDelete) {
+        const snap = await get(ref(db, `companies/${currentCompany}/pending_bank_statements/${idToDelete}`));
+        const finalData = snap.val();
+        if (finalData) {
+          await set(ref(db, `companies/${currentCompany}/history_bank_statements/${idToDelete}`),
+            Object.assign({}, finalData, { outcome: 'discarded', finalized_at: new Date().toISOString() }));
+        }
+        await remove(ref(db, `companies/${currentCompany}/pending_bank_statements/${idToDelete}`));
+        await remove(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${idToDelete}`));
+      }
+    } catch (err) {
+      console.error('Failed to discard bank statement:', err);
+      alert('Could not fully discard this statement -- check your connection and try again from the Review Queue.');
+    }
+    resetStatementFlow();
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-capture').classList.add('active');
+  }
+
+  // ---- Transaction review rendering ----
+
+  function renderStatementReviewScreen() {
+    const container = document.getElementById('stmt-review-body');
+    const txns = stmtState.transactions;
+
+    const stmtDr = stmtReviewData.stmt_dr;
+    const stmtCr = stmtReviewData.stmt_cr;
+    const computedDr = txns.filter(t => !t.removed && t.voucher_type === 'Payment').reduce((s, t) => s + parseAmt(t.amount), 0);
+    const computedCr = txns.filter(t => !t.removed && t.voucher_type === 'Receipt').reduce((s, t) => s + parseAmt(t.amount), 0);
+
+    let html = '';
+
+    // Mismatch check -- mirrors the desktop importer's totals
+    // validation against what the bank itself printed on the
+    // statement. A small rounding difference is normal; a real
+    // mismatch usually means a transaction was mis-parsed or missed.
+    if (stmtDr != null && stmtCr != null) {
+      const mismatch = Math.abs(stmtDr - computedDr) > 1 || Math.abs(stmtCr - computedCr) > 1;
+      if (mismatch) {
+        html += `<div class="txn-mismatch-banner">
+          <strong>⚠ Totals don't match the statement.</strong><br>
+          Statement: DR ${formatCurrency(stmtDr)} / CR ${formatCurrency(stmtCr)}<br>
+          Parsed: DR ${formatCurrency(computedDr)} / CR ${formatCurrency(computedCr)}<br>
+          Check for a missed or misread transaction before posting.
+        </div>`;
+      } else {
+        html += `<div class="txn-totals-banner">
+          <strong>✓ Totals match the statement.</strong><br>
+          DR ${formatCurrency(computedDr)} / CR ${formatCurrency(computedCr)}
+        </div>`;
+      }
+    }
+
+    html += `<div class="map-section-title">Bank: ${escapeHtml(stmtReviewData.bank_ledger || '')} · Contra: ${escapeHtml(stmtReviewData.contra_ledger || '')}</div>`;
+
+    txns.forEach((t, idx) => {
+      if (t.removed) return;
+      html += `<div class="txn-row" data-idx="${idx}">
+        <div class="txn-row-top">
+          <div>
+            <div class="txn-narration">${escapeHtml(t.narration || '')}</div>
+            <div class="txn-date">${escapeHtml(t.date || '')}${t.instrument ? ' · Chq: ' + escapeHtml(t.instrument) : ''}</div>
+          </div>
+          <button class="txn-remove-btn" data-remove-idx="${idx}" title="Remove this transaction">✕</button>
+        </div>
+        <div class="txn-amount-row">
+          <div class="txn-type-toggle">
+            <button class="txn-type-btn receipt ${t.voucher_type === 'Receipt' ? 'active receipt' : ''}" data-type-idx="${idx}" data-type="Receipt">Receipt</button>
+            <button class="txn-type-btn payment ${t.voucher_type === 'Payment' ? 'active payment' : ''}" data-type-idx="${idx}" data-type="Payment">Payment</button>
+          </div>
+          <input type="number" step="0.01" inputmode="decimal" data-amount-idx="${idx}" value="${t.amount}">
+        </div>
+      </div>`;
+    });
+
+    const anyLeft = txns.some(t => !t.removed);
+    html += `<button class="map-confirm-btn" id="stmt-confirm-btn" ${anyLeft ? '' : 'disabled'}>Confirm &amp; Post</button>`;
+    html += `<button type="button" class="map-discard-btn" id="stmt-discard-btn">Discard this bank statement</button>`;
+
+    container.innerHTML = html;
+
+    container.querySelectorAll('[data-type-idx]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.typeIdx, 10);
+        stmtState.transactions[idx].voucher_type = btn.dataset.type;
+        renderStatementReviewScreen();
+      });
+    });
+    container.querySelectorAll('[data-amount-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        const idx = parseInt(input.dataset.amountIdx, 10);
+        stmtState.transactions[idx].amount = input.value;
+      });
+      input.addEventListener('blur', () => renderStatementReviewScreen());
+    });
+    container.querySelectorAll('[data-remove-idx]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.removeIdx, 10);
+        stmtState.transactions[idx].removed = true;
+        renderStatementReviewScreen();
+      });
+    });
+    const confirmBtn = document.getElementById('stmt-confirm-btn');
+    if (confirmBtn) confirmBtn.addEventListener('click', confirmStatement);
+    const discardBtn = document.getElementById('stmt-discard-btn');
+    if (discardBtn) discardBtn.addEventListener('click', discardStatement);
+  }
+
+  async function confirmStatement() {
+    const confirmedTransactions = stmtState.transactions
+      .filter(t => !t.removed)
+      .map(t => ({
+        date: t.date,
+        narration: t.narration,
+        instrument: t.instrument,
+        amount: parseAmt(t.amount),
+        voucher_type: t.voucher_type,
+      }));
+
+    const payload = {
+      status: 'confirmed',
+      confirmed_transactions: confirmedTransactions,
+    };
+
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('stmt-step-progress').classList.add('active');
+    document.getElementById('stmt-progress-text').textContent = 'Posting to Tally…';
+
+    try {
+      await set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtCurrentId}`),
+        Object.assign({}, stmtReviewData, payload));
+    } catch (err) {
+      console.error('Failed to save confirmation:', err);
+      showStatementResult(false, 'Could not save your confirmation', err.message || String(err));
     }
   }
 </script>
