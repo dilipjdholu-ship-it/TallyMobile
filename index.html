@@ -360,6 +360,26 @@
     font-size: 14px; font-weight: 600; color: var(--ink-soft);
   }
 
+  /* ===== Export column-picker sheet (ledger statement) ===== */
+  .export-col-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 4px;
+    border-bottom: 1px solid var(--paper-line);
+    font-size: 14.5px; color: var(--ink);
+  }
+  .export-col-row:last-of-type { border-bottom: none; }
+  .export-col-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: var(--primary); }
+  .export-col-row.locked { color: var(--ink-soft); }
+  .export-col-row .locked-tag { margin-left: auto; font-size: 10.5px; color: var(--ink-soft); font-weight: 600; }
+  .export-action-row { display: flex; gap: 10px; margin-top: 14px; }
+  .export-action-btn {
+    flex: 1; padding: 12px; border-radius: 10px;
+    font-size: 14px; font-weight: 700; text-align: center;
+    border: 1.5px solid var(--border);
+  }
+  .export-action-btn.primary { background: var(--primary); border-color: var(--primary); color: white; }
+  .export-action-btn.secondary { background: var(--paper-card); color: var(--ink); }
+
   /* ===== Review Queue / History lists ===== */
   .queue-row-status {
     font-size: 10.5px; font-weight: 600;
@@ -584,9 +604,10 @@
     font-size: 18px; padding: 4px 6px; opacity: 0.9;
   }
   .overlay-title {
-    flex: 1;
+    flex: 1; min-width: 0;
     font-family: 'Inter', sans-serif; font-weight: 800;
     font-size: 16px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .overlay-body { padding: 16px; max-width: 720px; margin: 0 auto 60px; }
 
@@ -1182,7 +1203,7 @@
       <div class="overlay-header">
         <button class="overlay-back" id="ledger-detail-back">&larr; Back</button>
         <div class="overlay-title" id="ledger-detail-title"></div>
-        <button class="export-btn" id="ledger-statement-pdf-btn">View Statement</button>
+        <button class="export-btn" id="ledger-statement-export-btn">Export</button>
       </div>
       <div class="date-range-bar">
         <input type="date" id="ledger-date-from">
@@ -1194,13 +1215,66 @@
     </div>
   </div>
 
+  <!-- Ledger statement export: column picker + View/Download. Date,
+       Particulars, Debit, Credit are always included -- everything else
+       is optional, since not everyone wants Voucher Type/No./Narration
+       cluttering a statement meant to just be glanced at or handed to
+       someone else. -->
+  <div class="fab-chooser-backdrop" id="ledger-export-backdrop"></div>
+  <div class="fab-chooser-sheet" id="ledger-export-sheet" style="display:none;">
+    <div class="fab-chooser-handle"></div>
+    <div class="fab-chooser-title">Export Ledger Statement</div>
+    <div class="export-col-row locked">
+      <input type="checkbox" checked disabled>
+      <span>Date</span>
+      <span class="locked-tag">Always included</span>
+    </div>
+    <div class="export-col-row locked">
+      <input type="checkbox" checked disabled>
+      <span>Particulars</span>
+      <span class="locked-tag">Always included</span>
+    </div>
+    <div class="export-col-row locked">
+      <input type="checkbox" checked disabled>
+      <span>Debit</span>
+      <span class="locked-tag">Always included</span>
+    </div>
+    <div class="export-col-row locked">
+      <input type="checkbox" checked disabled>
+      <span>Credit</span>
+      <span class="locked-tag">Always included</span>
+    </div>
+    <div class="export-col-row">
+      <input type="checkbox" id="ledger-export-col-vchtype" checked>
+      <span>Voucher Type</span>
+    </div>
+    <div class="export-col-row">
+      <input type="checkbox" id="ledger-export-col-vchno" checked>
+      <span>Voucher No.</span>
+    </div>
+    <div class="export-col-row">
+      <input type="checkbox" id="ledger-export-col-balance" checked>
+      <span>Balance</span>
+    </div>
+    <div class="export-col-row">
+      <input type="checkbox" id="ledger-export-col-narration">
+      <span>Narration</span>
+    </div>
+    <div class="export-action-row">
+      <button class="export-action-btn secondary" id="ledger-export-view-btn">View</button>
+      <button class="export-action-btn primary" id="ledger-export-download-btn">Download</button>
+    </div>
+    <button class="fab-chooser-cancel" id="ledger-export-cancel-btn">Cancel</button>
+  </div>
+
   <!-- Voucher Detail / Invoice Overlay -->
   <div id="voucher-detail-overlay" class="overlay">
     <div class="overlay-panel">
       <div class="overlay-header">
         <button class="overlay-back" id="voucher-detail-back">&larr; Back</button>
-        <div class="overlay-title">Invoice</div>
-        <button class="export-btn" id="voucher-export-pdf-btn">View Invoice</button>
+        <div class="overlay-title" id="voucher-detail-title">Invoice</div>
+        <button class="export-btn" id="voucher-view-btn" style="padding:0 10px;">View</button>
+        <button class="export-btn" id="voucher-download-btn" style="padding:0 10px; margin-left:6px;">Download</button>
       </div>
       <div class="overlay-body" id="voucher-detail-body"></div>
     </div>
@@ -1322,6 +1396,7 @@
     daybook: 'daybook',
     stock_items: 'stock_items',
     sales_vouchers: 'sales_vouchers',
+    purchase_vouchers: 'purchase_vouchers',
     party_details: 'party_details',
     bank_related_vouchers: 'bank_related_vouchers',
     profit_and_loss: 'profit_and_loss',
@@ -1695,7 +1770,7 @@
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
 
-    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales') ? 'none' : 'flex';
+    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales' || currentSection === 'monthlypurchases') ? 'none' : 'flex';
     document.getElementById('report-date-bar').style.display = (currentSection === 'pnl' || currentSection === 'balancesheet') ? 'flex' : 'none';
 
     if (currentSection === 'home') renderHome(data, contentArea, summaryStrip);
@@ -1706,6 +1781,7 @@
     else if (currentSection === 'pnl') renderProfitAndLoss(data, contentArea, summaryStrip);
     else if (currentSection === 'balancesheet') renderBalanceSheet(data, contentArea, summaryStrip);
     else if (currentSection === 'monthlysales') renderMonthlySales(data, contentArea, summaryStrip);
+    else if (currentSection === 'monthlypurchases') renderMonthlyPurchases(data, contentArea, summaryStrip);
   }
 
   function goToSection(section) {
@@ -1818,6 +1894,10 @@
         <button class="dash-tile" data-goto="monthlysales">
           <span class="dt-icon" style="background:var(--forest-soft); color:var(--forest);">▁▃▅</span>
           <span class="dt-label">Monthly Sales</span>
+        </button>
+        <button class="dash-tile" data-goto="monthlypurchases">
+          <span class="dt-icon" style="background:var(--rust-soft); color:var(--rust);">▁▃▅</span>
+          <span class="dt-label">Monthly Purchases</span>
         </button>
       </div>
     `;
@@ -1983,11 +2063,13 @@
 
     contentArea.innerHTML = `<div class="list-card">${rows.map(r => {
       const isSales = (r.voucher_type || '').toLowerCase() === 'sales';
+      const isPurchase = (r.voucher_type || '').toLowerCase() === 'purchase';
+      const isClickable = isSales || isPurchase;
       return `
-      <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}"` : ''}>
+      <div class="row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
         <div>
           <div class="name">${escapeHtml(r.party || r.voucher_type || '—')}</div>
-          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}${isClickable ? ' · tap to view' : ''}</div>
           ${r.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(r.narration)}</div>` : ''}
         </div>
         <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
@@ -1995,8 +2077,9 @@
     }).join('')}</div>`;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => {
-        ensureSectionLoaded(currentCompany, 'sales_vouchers');
-        openVoucherDetail(row.dataset.vdate, row.dataset.vnum);
+        const kind = row.dataset.vkind || 'sales';
+        ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
+        openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
       });
     });
   }
@@ -2459,6 +2542,176 @@
     goBackFromOverlay();
   });
 
+  // ================= MONTHLY PURCHASES =================
+  // Mirrors renderMonthlySales/openMonthDetail above -- same chart, same
+  // month-list, same overflow fix already baked into the shared CSS.
+  // Deliberately does NOT wire rows to a full itemized invoice view the
+  // way Sales does (openVoucherDetail) -- that's built specifically
+  // around sales_vouchers' own render path, and a Purchase-side
+  // equivalent wasn't asked for here; totals + a per-voucher list is.
+
+  function renderMonthlyPurchases(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'purchase_vouchers')) {
+      contentArea.innerHTML = '<div class="loading-state">Loading purchase data…</div>';
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    const vouchers = excludeOptionalVouchers(safeArray(Object.values(data.purchase_vouchers || {})));
+
+    if (vouchers.length === 0) {
+      contentArea.innerHTML = emptyState('No purchase data', 'Check back after the next sync.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const monthTotals = new Map();
+    vouchers.forEach(v => {
+      if (!v.date || v.date.length < 6) return;
+      const monthKey = v.date.slice(0, 6);
+      const amt = Math.abs(parseAmt(v.amount));
+      monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + amt);
+    });
+
+    const months = [...monthTotals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const total = months.reduce((s, [, amt]) => s + amt, 0);
+    const maxMonth = Math.max(...months.map(([, amt]) => amt), 1);
+    const avgMonth = months.length ? total / months.length : 0;
+
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function monthLabel(key) {
+      const y = key.slice(2, 4);
+      const m = parseInt(key.slice(4, 6), 10) - 1;
+      return `${MONTH_NAMES[m] || '?'} '${y}`;
+    }
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip rust">
+        <div class="label">Total (${months.length} mo)</div>
+        <div class="value mono">${formatCurrency(total)}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Monthly Avg</div>
+        <div class="value mono">${formatCurrency(avgMonth)}</div>
+      </div>
+    `;
+
+    const chartHtml = `
+      <div class="month-chart">
+        <div class="month-bars">
+          ${months.map(([key, amt]) => `
+            <div class="month-bar-col">
+              <div class="month-bar" style="height: ${Math.max(2, (amt / maxMonth) * 100)}%; background: var(--rust);" title="${monthLabel(key)}: ${formatCurrency(amt)}"></div>
+              <div class="month-bar-label">${monthLabel(key)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    const listHtml = `
+      <div class="list-card">${[...months].reverse().map(([key, amt]) => `
+        <div class="row clickable-row" data-month="${key}">
+          <div class="name">${monthLabel(key)}</div>
+          <div class="amount negative mono">${formatCurrency(amt)}</div>
+        </div>
+      `).join('')}</div>
+      <div style="margin-top:12px;">
+        <button class="export-btn" id="monthly-purchases-share-btn" style="width:100%;">Share Purchases Report</button>
+      </div>
+    `;
+
+    contentArea.innerHTML = chartHtml + listHtml;
+
+    const monthBarsEl = contentArea.querySelector('.month-bars');
+    if (monthBarsEl) monthBarsEl.scrollLeft = monthBarsEl.scrollWidth;
+
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openPurchaseMonthDetail(row.dataset.month, monthLabel(row.dataset.month)));
+    });
+
+    document.getElementById('monthly-purchases-share-btn').addEventListener('click', async () => {
+      if (!window.jspdf) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+      let y = 16;
+      doc.setFontSize(14);
+      doc.text(`${companyLabel} — Monthly Purchases Report`, 14, y);
+      y += 10;
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Month', 14, y);
+      doc.text('Amount', 195, y, { align: 'right' });
+      doc.setFont(undefined, 'normal');
+      y += 3;
+      doc.line(14, y, 195, y);
+      y += 7;
+      months.forEach(([key, amt]) => {
+        if (y > 280) { doc.addPage(); y = 16; }
+        doc.text(monthLabel(key), 14, y);
+        doc.text(formatCurrencyPDF(amt), 195, y, { align: 'right' });
+        y += 6;
+      });
+      y += 2;
+      doc.line(14, y, 195, y);
+      y += 7;
+      doc.setFont(undefined, 'bold');
+      doc.text('Total', 14, y);
+      doc.text(formatCurrencyPDF(total), 195, y, { align: 'right' });
+      viewOrSharePdf(doc, `${currentCompany}_monthly_purchases.pdf`);
+    });
+  }
+
+  function openPurchaseMonthDetail(monthKey, monthLabelStr) {
+    const data = companyData[currentCompany] || {};
+    const vouchers = excludeOptionalVouchers(safeArray(Object.values(data.purchase_vouchers || {})))
+      .filter(v => v.date && v.date.slice(0, 6) === monthKey)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // Reuses the same generic month-detail-overlay as Sales' openMonthDetail
+    // -- one title/body overlay, two different data sources feeding it,
+    // rather than duplicating the overlay markup for a screen that's
+    // otherwise identical in shape.
+    document.getElementById('month-detail-title').textContent = monthLabelStr;
+    const body = document.getElementById('month-detail-body');
+
+    if (vouchers.length === 0) {
+      body.innerHTML = emptyState('No purchase vouchers found', 'Nothing synced for this month.');
+    } else {
+      const monthTotal = vouchers.reduce((s, v) => s + Math.abs(parseAmt(v.amount)), 0);
+      body.innerHTML = `
+        <div class="summary-strip" style="margin-bottom:14px;">
+          <div class="summary-chip">
+            <div class="label">Vouchers</div>
+            <div class="value mono">${vouchers.length}</div>
+          </div>
+          <div class="summary-chip">
+            <div class="label">Total</div>
+            <div class="value mono">${formatCurrency(monthTotal)}</div>
+          </div>
+        </div>
+        <div class="list-card">${vouchers.map(v => `
+          <div class="row clickable-row" data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}">
+            <div>
+              <div class="name">${escapeHtml(v.party || '—')}</div>
+              <div class="sub">Purchase ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(v.date))}</div>
+            </div>
+            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+          </div>
+        `).join('')}</div>
+      `;
+      body.querySelectorAll('.clickable-row').forEach(row => {
+        row.addEventListener('click', () => {
+          openVoucherDetail(row.dataset.vdate, row.dataset.vnum, 'purchase');
+        });
+      });
+    }
+
+    openOverlay('month-detail-overlay');
+  }
+
   // Walks a group's parent chain upward, checking at each level whether
   // it reaches targetGroupName — handles ledgers nested several sub-group
   // levels deep (e.g. a ledger under "Domestic Sales", itself a sub-group
@@ -2659,7 +2912,7 @@
       openLedgerDetail(currentLedgerDetailParty);
     }
     if (document.getElementById('voucher-detail-overlay').classList.contains('open') && currentVoucherLookup) {
-      openVoucherDetail(currentVoucherLookup.date, currentVoucherLookup.voucherNumber);
+      openVoucherDetail(currentVoucherLookup.date, currentVoucherLookup.voucherNumber, currentVoucherLookup.kind);
     }
   }
 
@@ -2759,13 +3012,15 @@
         </div>
         <div class="list-card">${vouchers.map(v => {
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
+          const isPurchase = (v.voucher_type || '').toLowerCase() === 'purchase';
+          const isClickable = isSales || isPurchase;
           const displayName = getVoucherCounterLedgerName(v, partyName);
           const vchLabel = `${escapeHtml(v.voucher_type || '')}${v.voucher_number ? ' #' + escapeHtml(v.voucher_number) : ''}`;
           return `
-          <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}"` : ''}>
+          <div class="row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
             <div>
               <div class="name">${escapeHtml(displayName)}</div>
-              <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isSales ? ' · tap to view invoice' : ''}</div>
+              <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isClickable ? ' · tap to view' : ''}</div>
               ${v.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(v.narration)}</div>` : ''}
             </div>
             <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
@@ -2774,7 +3029,9 @@
       `;
       body.querySelectorAll('.clickable-row').forEach(row => {
         row.addEventListener('click', () => {
-          openVoucherDetail(row.dataset.vdate, row.dataset.vnum);
+          const kind = row.dataset.vkind || 'sales';
+          ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
+          openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
         });
       });
     }
@@ -2836,9 +3093,38 @@
     });
   }
 
-  document.getElementById('ledger-statement-pdf-btn').addEventListener('click', exportLedgerStatementPDF);
+  document.getElementById('ledger-statement-export-btn').addEventListener('click', openLedgerExportSheet);
 
-  async function exportLedgerStatementPDF() {
+  function openLedgerExportSheet() {
+    document.getElementById('ledger-export-backdrop').classList.add('open');
+    document.getElementById('ledger-export-sheet').style.display = 'block';
+  }
+  function closeLedgerExportSheet() {
+    document.getElementById('ledger-export-backdrop').classList.remove('open');
+    document.getElementById('ledger-export-sheet').style.display = 'none';
+  }
+  document.getElementById('ledger-export-backdrop').addEventListener('click', closeLedgerExportSheet);
+  document.getElementById('ledger-export-cancel-btn').addEventListener('click', closeLedgerExportSheet);
+
+  function getSelectedLedgerColumns() {
+    return {
+      vchType: document.getElementById('ledger-export-col-vchtype').checked,
+      vchNo: document.getElementById('ledger-export-col-vchno').checked,
+      balance: document.getElementById('ledger-export-col-balance').checked,
+      narration: document.getElementById('ledger-export-col-narration').checked,
+    };
+  }
+
+  document.getElementById('ledger-export-view-btn').addEventListener('click', () => {
+    closeLedgerExportSheet();
+    exportLedgerStatementPDF(getSelectedLedgerColumns(), 'view');
+  });
+  document.getElementById('ledger-export-download-btn').addEventListener('click', () => {
+    closeLedgerExportSheet();
+    exportLedgerStatementPDF(getSelectedLedgerColumns(), 'download');
+  });
+
+  async function exportLedgerStatementPDF(selectedColumns, mode = 'view') {
     const partyName = currentLedgerDetailParty;
     if (!partyName) { alert('No party selected.'); return; }
 
@@ -2933,16 +3219,22 @@
     // Balance needs the most room (e.g. "Rs. 7,23,715.00 Dr" is ~20 chars) —
     // the previous widths left it only 18mm, causing text to wrap and
     // overlap between rows. Rebalanced so every column fits its content.
+    // Column set is now caller-controlled (see the export column-picker
+    // sheet) -- Date/Particulars/Debit/Credit are always present, the
+    // rest are conditionally included. Whichever column ends up LAST
+    // absorbs the true remaining width, so the table always exactly
+    // fills contentWidth no matter which optional columns were picked.
     const cols = [
       { key: 'date', label: 'Date', w: 16, align: 'left' },
-      { key: 'particulars', label: 'Particulars', w: 52, align: 'left' },
-      { key: 'vchType', label: 'Vch Type', w: 20, align: 'left' },
-      { key: 'vchNo', label: 'Vch No.', w: 16, align: 'left' },
-      { key: 'debit', label: 'Debit', w: 24, align: 'right' },
-      { key: 'credit', label: 'Credit', w: 22, align: 'right' },
-      { key: 'balance', label: 'Balance', w: 0, align: 'right' }, // filled in below
+      { key: 'particulars', label: 'Particulars', w: 50, align: 'left' },
     ];
-    cols[cols.length - 1].w = contentWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
+    if (selectedColumns.vchType) cols.push({ key: 'vchType', label: 'Vch Type', w: 20, align: 'left' });
+    if (selectedColumns.vchNo) cols.push({ key: 'vchNo', label: 'Vch No.', w: 16, align: 'left' });
+    if (selectedColumns.narration) cols.push({ key: 'narration', label: 'Narration', w: 30, align: 'left' });
+    cols.push({ key: 'debit', label: 'Debit', w: 24, align: 'right' });
+    cols.push({ key: 'credit', label: 'Credit', w: 22, align: 'right' });
+    if (selectedColumns.balance) cols.push({ key: 'balance', label: 'Balance', w: 0, align: 'right' });
+    cols[cols.length - 1].w = Math.max(20, contentWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0));
 
     // Truncates text with an ellipsis if it would exceed the column width,
     // instead of letting jsPDF wrap it onto a second line — a wrapped
@@ -2984,12 +3276,16 @@
 
     // Opening Balance row — shows where the period actually starts from,
     // so the reader isn't confused why the first transaction's balance
-    // isn't just that transaction's own amount.
+    // isn't just that transaction's own amount. Positioned at the page's
+    // right edge directly rather than via colX('balance') -- that column
+    // is now optional (see the export column-picker), so this summary
+    // line stays correct whether or not "Balance" was included as a
+    // per-row column.
     doc.setFont(undefined, 'italic');
     doc.text('Opening Balance', colX('particulars') + 1, y);
     doc.text(
       `${formatAmountPlain(Math.abs(openingBalance))} ${openingBalance >= 0 ? 'Dr' : 'Cr'}`,
-      colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' }
+      marginX + contentWidth - 1, y, { align: 'right' }
     );
     doc.setFont(undefined, 'normal');
     y += 5;
@@ -3006,6 +3302,7 @@
         particulars: r.particulars || '',
         vchType: r.voucherType || '',
         vchNo: r.voucherNumber || '',
+        narration: r.narration || '',
         debit: r.debit ? formatAmountPlain(r.debit) : '',
         credit: r.credit ? formatAmountPlain(r.credit) : '',
         balance: balLabel,
@@ -3029,20 +3326,34 @@
     doc.text('Closing Balance', colX('particulars') + 1, y);
     doc.text(formatAmountPlain(totalDebit), colX('debit') + cols.find(c => c.key === 'debit').w - 1, y, { align: 'right' });
     doc.text(formatAmountPlain(totalCredit), colX('credit') + cols.find(c => c.key === 'credit').w - 1, y, { align: 'right' });
-    doc.text(`${formatAmountPlain(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`, colX('balance') + cols.find(c => c.key === 'balance').w - 1, y, { align: 'right' });
+    doc.text(`${formatAmountPlain(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Dr' : 'Cr'}`, marginX + contentWidth - 1, y, { align: 'right' });
     y += 6;
     doc.line(marginX, y, marginX + contentWidth, y);
 
-    viewOrSharePdf(doc, `${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`);
+    const filename = `${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`;
+    if (mode === 'download') {
+      downloadPdf(doc, filename);
+    } else {
+      viewOrSharePdf(doc, filename);
+    }
   }
 
   // ================= VOUCHER DETAIL / INVOICE =================
   let currentVoucherDetail = null;
+  let currentVoucherKind = 'sales';
 
   function findSalesVoucher(date, voucherNumber) {
     const data = companyData[currentCompany] || {};
     const salesVouchers = data.sales_vouchers || {};
     return Object.values(salesVouchers).find(
+      v => v.date === date && String(v.voucher_number) === String(voucherNumber)
+    );
+  }
+
+  function findPurchaseVoucher(date, voucherNumber) {
+    const data = companyData[currentCompany] || {};
+    const purchaseVouchers = data.purchase_vouchers || {};
+    return Object.values(purchaseVouchers).find(
       v => v.date === date && String(v.voucher_number) === String(voucherNumber)
     );
   }
@@ -3070,30 +3381,35 @@
     return [{ ledger_name: 'Taxable Value', amount: taxableAmount }, ...nonPartyLines];
   }
 
-  function openVoucherDetail(date, voucherNumber) {
-    currentVoucherLookup = { date, voucherNumber };
+  function openVoucherDetail(date, voucherNumber, kind = 'sales') {
+    currentVoucherLookup = { date, voucherNumber, kind };
     const body = document.getElementById('voucher-detail-body');
+    const isPurchase = kind === 'purchase';
+    const sectionKey = isPurchase ? 'purchase_vouchers' : 'sales_vouchers';
 
-    const salesReady = ensureSectionLoaded(currentCompany, 'sales_vouchers');
-    if (!salesReady) {
-      body.innerHTML = '<div class="loading-state">Loading invoice…</div>';
+    const ready = ensureSectionLoaded(currentCompany, sectionKey);
+    if (!ready) {
+      body.innerHTML = `<div class="loading-state">Loading ${isPurchase ? 'purchase voucher' : 'invoice'}…</div>`;
       openOverlay('voucher-detail-overlay');
       return;
     }
 
-    const voucher = findSalesVoucher(date, voucherNumber);
+    const voucher = isPurchase ? findPurchaseVoucher(date, voucherNumber) : findSalesVoucher(date, voucherNumber);
 
     if (!voucher) {
       body.innerHTML = emptyState(
-        'Full invoice detail not synced yet',
+        `Full ${isPurchase ? 'purchase voucher' : 'invoice'} detail not synced yet`,
         'This voucher is outside the itemized sync window, or hasn\'t synced yet. Try again after the next PC sync.'
       );
       currentVoucherDetail = null;
+      document.getElementById('voucher-detail-title').textContent = isPurchase ? 'Purchase Voucher' : 'Invoice';
       openOverlay('voucher-detail-overlay');
       return;
     }
 
     currentVoucherDetail = voucher;
+    currentVoucherKind = kind;
+    document.getElementById('voucher-detail-title').textContent = isPurchase ? 'Purchase Voucher' : 'Invoice';
 
     const items = safeArray(voucher.items);
     const ledgerLines = safeArray(voucher.ledger_lines);
@@ -3103,19 +3419,25 @@
     const companyInfo = data.company_info || {};
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || '';
 
-    // Look up the buyer's address/GSTIN/state from the already-synced Ledger list
-    const buyerLedger = (data.party_details || {})[voucher.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === voucher.party) || {};
+    // For a Sales invoice, "party" is the buyer we billed -- for a
+    // Purchase voucher, "party" is the supplier we bought FROM. Same
+    // party_details lookup either way (it's keyed by ledger name, not
+    // by which side of the transaction that ledger is on), just a
+    // different label so it reads correctly for which kind this is.
+    const counterpartLedger = (data.party_details || {})[voucher.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === voucher.party) || {};
+    const counterpartLabel = isPurchase ? 'Supplier' : 'Bill To';
+    const vchLabel = isPurchase ? 'Purchase Voucher' : 'Sales Invoice';
 
     body.innerHTML = `
       <div class="invoice-header">
         <div class="inv-num">${escapeHtml(companyLabel)}</div>
         ${companyInfo.address ? `<div class="sub" style="white-space:pre-line; margin-top:2px;">${escapeHtml(companyInfo.address)}</div>` : ''}
         ${companyInfo.gstin ? `<div class="sub">GSTIN: ${escapeHtml(companyInfo.gstin)}</div>` : ''}
-        <div class="inv-meta" style="margin-top:8px;">Sales Invoice ${voucher.voucher_number ? '#' + escapeHtml(voucher.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(voucher.date))}</div>
-        <div class="inv-party" style="margin-top:10px;">Bill To: ${escapeHtml(voucher.party || '—')}</div>
-        ${buyerLedger.address ? `<div class="sub" style="white-space:pre-line;">${escapeHtml(buyerLedger.address)}</div>` : ''}
-        ${buyerLedger.gstin ? `<div class="sub">GSTIN: ${escapeHtml(buyerLedger.gstin)}</div>` : ''}
-        ${buyerLedger.state ? `<div class="sub">${escapeHtml(buyerLedger.state)}</div>` : ''}
+        <div class="inv-meta" style="margin-top:8px;">${vchLabel} ${voucher.voucher_number ? '#' + escapeHtml(voucher.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(voucher.date))}</div>
+        <div class="inv-party" style="margin-top:10px;">${counterpartLabel}: ${escapeHtml(voucher.party || '—')}</div>
+        ${counterpartLedger.address ? `<div class="sub" style="white-space:pre-line;">${escapeHtml(counterpartLedger.address)}</div>` : ''}
+        ${counterpartLedger.gstin ? `<div class="sub">GSTIN: ${escapeHtml(counterpartLedger.gstin)}</div>` : ''}
+        ${counterpartLedger.state ? `<div class="sub">${escapeHtml(counterpartLedger.state)}</div>` : ''}
         ${voucher.narration ? `<div class="sub" style="margin-top:6px;">${escapeHtml(voucher.narration)}</div>` : ''}
       </div>
 
@@ -3160,7 +3482,16 @@
     goBackFromOverlay();
   });
 
-  document.getElementById('voucher-export-pdf-btn').addEventListener('click', exportInvoicePDF);
+  document.getElementById('voucher-view-btn').addEventListener('click', () => handleVoucherExport('view'));
+  document.getElementById('voucher-download-btn').addEventListener('click', () => handleVoucherExport('download'));
+
+  function handleVoucherExport(mode) {
+    if (currentVoucherKind === 'purchase') {
+      exportPurchaseVoucherPDF(mode);
+    } else {
+      exportInvoicePDF(mode);
+    }
+  }
 
   // ---- Invoice PDF helpers ----
 
@@ -3243,7 +3574,7 @@
     doc.text(String(text), tx, ty, { align, maxWidth: w - padX * 2 });
   }
 
-  async function exportInvoicePDF() {
+  async function exportInvoicePDF(mode = 'view') {
     if (!currentVoucherDetail) { alert('No invoice loaded to export.'); return; }
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
@@ -3257,9 +3588,9 @@
     // ensureSectionLoaded() only WARMS the cache in the background; it
     // doesn't block until data actually arrives.
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
-      const exportBtn = document.getElementById('voucher-export-pdf-btn');
+      const exportBtn = document.getElementById(mode === 'download' ? 'voucher-download-btn' : 'voucher-view-btn');
       const originalLabel = exportBtn.textContent;
-      exportBtn.textContent = 'Loading item data…';
+      exportBtn.textContent = '…';
       exportBtn.disabled = true;
       const start = Date.now();
       while (!(companyData[currentCompany] || {}).stock_items && Date.now() - start < 8000) {
@@ -3608,7 +3939,108 @@
     doc.setFont(undefined, 'italic');
     doc.text('This is a Computer Generated Invoice', pageWidth / 2, y, { align: 'center' });
 
-    viewOrSharePdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
+    if (mode === 'download') {
+      downloadPdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
+    } else {
+      viewOrSharePdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
+    }
+  }
+
+  // Purchase vouchers get a deliberately SIMPLER, plainly-labeled summary
+  // PDF -- NOT a copy of the Tax Invoice replica above. That layout
+  // mirrors what Tally itself prints for an invoice WE issued (our
+  // letterhead, "Buyer (Bill to)", a signature block for our company) --
+  // reusing it for a Purchase voucher would misrepresent the document as
+  // if we'd issued it, when it's actually the supplier's invoice we
+  // recorded. This is closer to what the on-screen voucher detail
+  // already shows: items, tax lines, total -- just as a shareable PDF.
+  async function exportPurchaseVoucherPDF(mode = 'view') {
+    if (!currentVoucherDetail) { alert('No purchase voucher loaded to export.'); return; }
+    if (!window.jspdf) {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const v = currentVoucherDetail;
+    const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    const data = companyData[currentCompany] || {};
+    const supplierLedger = (data.party_details || {})[v.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === v.party) || {};
+    const items = safeArray(v.items);
+    const ledgerLines = safeArray(v.ledger_lines);
+
+    const pageWidth = 210;
+    const marginX = 14;
+    const contentWidth = pageWidth - marginX * 2;
+    let y = 16;
+
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(`${companyLabel} — Purchase Voucher`, marginX, y);
+    y += 8;
+    doc.setFontSize(9.5);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Purchase #${v.voucher_number || '-'}  ·  ${formatTallyDate(v.date)}`, marginX, y);
+    y += 5;
+    doc.text(`Supplier: ${v.party || '-'}`, marginX, y);
+    y += 5;
+    if (supplierLedger.gstin) {
+      doc.text(`GSTIN: ${supplierLedger.gstin}`, marginX, y);
+      y += 5;
+    }
+    if (v.narration) {
+      doc.setFont(undefined, 'italic');
+      doc.text(v.narration, marginX, y, { maxWidth: contentWidth });
+      doc.setFont(undefined, 'normal');
+      y += 6;
+    }
+    y += 3;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 6;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.text('Item', marginX, y);
+    doc.text('Qty', marginX + 100, y, { align: 'right' });
+    doc.text('Rate', marginX + 135, y, { align: 'right' });
+    doc.text('Amount', pageWidth - marginX, y, { align: 'right' });
+    doc.setFont(undefined, 'normal');
+    y += 2;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 6;
+
+    items.forEach(item => {
+      if (y > 275) { doc.addPage(); y = 16; }
+      doc.text(String(item.item_name || '—'), marginX, y, { maxWidth: 95 });
+      doc.text(String((item.billed_qty || '').trim()), marginX + 100, y, { align: 'right' });
+      doc.text(String((item.rate || '').trim()), marginX + 135, y, { align: 'right' });
+      doc.text(formatCurrencyPDF(parseAmt(item.amount)), pageWidth - marginX, y, { align: 'right' });
+      y += 6;
+    });
+
+    y += 2;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 7;
+
+    doc.setFontSize(9);
+    buildDisplayTaxLines(items, ledgerLines, v.party).forEach(l => {
+      if (y > 280) { doc.addPage(); y = 16; }
+      doc.text(String(l.ledger_name || '—'), marginX, y);
+      doc.text(formatCurrencyPDF(Math.abs(parseAmt(l.amount))), pageWidth - marginX, y, { align: 'right' });
+      y += 6;
+    });
+
+    y += 2;
+    doc.setFont(undefined, 'bold');
+    doc.text('Total', marginX, y);
+    doc.text(formatCurrencyPDF(Math.abs(parseAmt(v.amount))), pageWidth - marginX, y, { align: 'right' });
+
+    const filename = `purchase_${v.voucher_number || 'export'}.pdf`;
+    if (mode === 'download') {
+      downloadPdf(doc, filename);
+    } else {
+      viewOrSharePdf(doc, filename);
+    }
   }
 
   // ================= HELPERS =================
@@ -3741,6 +4173,15 @@
     // Release the blob URL after a delay long enough for the new tab to
     // have loaded it — freeing it immediately can break the viewer.
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // Always forces a real download, never opens a tab -- this is the
+  // explicit "Download" action, distinct from "View" (which opens the
+  // PDF in the browser and only falls back to a download if popups are
+  // blocked). jsPDF's own .save() already handles the actual browser
+  // download trigger.
+  function downloadPdf(doc, filename) {
+    doc.save(filename);
   }
 
   function loadScript(src) {
