@@ -2543,6 +2543,20 @@
   // the transaction. Checking ledger_lines too catches every voucher that
   // actually involves this ledger, not just ones where it happened to be
   // recorded as "the party".
+  // Optional vouchers (this app's own draft mechanism for Optional
+  // Purchase Vouchers awaiting confirmation) don't affect Tally's real
+  // ledger balance until regularized -- Tally's own closing_balance
+  // figure already excludes them. Confirmed real bug: including them in
+  // a party's transaction list showed an unconfirmed draft exactly like
+  // a posted transaction, AND silently corrupted every anchored balance
+  // computed from that list (computeAnchoredStatementRows walks
+  // backward from the REAL closing balance through this exact array).
+  // Shared by both the on-screen ledger view and the PDF export so
+  // they can never show different vouchers for the same party.
+  function excludeOptionalVouchers(vouchers) {
+    return vouchers.filter(v => v.is_optional !== 'Yes');
+  }
+
   function voucherInvolvesLedger(v, ledgerName) {
     if ((v.party || '') === ledgerName) return true;
     return safeArray(v.ledger_lines).some(l => l.ledger_name === ledgerName);
@@ -2601,7 +2615,7 @@
       return;
     }
 
-    const allVouchers = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
+    const allVouchers = excludeOptionalVouchers(getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName)));
 
     // Pre-fill the date inputs to the full available span, but only while
     // no filter has been applied yet — once the person picks dates, don't
@@ -2679,7 +2693,22 @@
         <div class="list-card">${vouchers.map(v => {
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
           const lines = safeArray(v.ledger_lines);
-          const otherLine = lines.find(l => l.ledger_name !== partyName);
+          // Tax ledgers (CGST/SGST/IGST/UTGST) are never meaningful as
+          // "the other side" of a transaction -- confirmed real bug on
+          // Pushplila Wires' own ledger: an inventory Purchase voucher
+          // has no separate "Purchase A/c" ledger LINE at all (that's
+          // handled via inventory allocation, not a ledger entry), so
+          // the only non-party lines were CGST and SGST -- .find()
+          // picked whichever came first in Tally's data and showed
+          // "CGST" / "SGST" as the row title on a purchase from a real
+          // supplier, which is meaningless and confusing (worse: it
+          // reads like a totally different, unrelated voucher). Skip
+          // tax lines when looking for a real counter-ledger to name;
+          // Payment/Receipt/Contra vouchers (where the real bank name
+          // IS meaningful) are untouched since "bank"/"cash" ledgers
+          // never match this pattern.
+          const TAX_LEDGER_PATTERN = /\b(cgst|sgst|igst|utgst)\b/i;
+          const otherLine = lines.find(l => l.ledger_name !== partyName && !TAX_LEDGER_PATTERN.test(l.ledger_name || ''));
           const displayName = otherLine ? otherLine.ledger_name : (v.voucher_type || '—');
           const vchLabel = `${escapeHtml(v.voucher_type || '')}${v.voucher_number ? ' #' + escapeHtml(v.voucher_number) : ''}`;
           return `
@@ -2768,7 +2797,7 @@
       return;
     }
 
-    const allVouchers = getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName));
+    const allVouchers = excludeOptionalVouchers(getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName)));
     if (allVouchers.length === 0) { alert('No transactions to export.'); return; }
 
     if (!window.jspdf) {
