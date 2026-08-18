@@ -399,6 +399,26 @@
     border-radius: 10px; padding: 12px; margin-bottom: 16px;
     font-size: 12.5px; color: var(--forest); line-height: 1.5;
   }
+  .stmt-ledger-select {
+    display: block; width: 100%;
+    padding: 11px 12px; border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card); color: var(--ink);
+    font-size: 14px; font-family: inherit;
+  }
+  .upload-progress-bar {
+    width: 100%; max-width: 220px; height: 8px;
+    background: var(--paper); border-radius: 8px;
+    overflow: hidden; margin: 14px auto 0;
+  }
+  .upload-progress-fill {
+    height: 100%; background: var(--primary);
+    border-radius: 8px; transition: width 0.2s ease;
+  }
+  .upload-progress-pct {
+    text-align: center; font-size: 12.5px; color: var(--ink-soft);
+    margin-top: 6px; font-family: 'IBM Plex Mono', monospace;
+  }
 
   .search-bar {
     display: flex; gap: 8px; margin-bottom: 14px;
@@ -428,7 +448,7 @@
     overflow-x: auto;
   }
   .summary-chip {
-    flex: 1; min-width: 130px;
+    flex: 1 1 0; min-width: 0;
     background: var(--paper-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -436,7 +456,10 @@
     box-shadow: var(--shadow);
   }
   .summary-chip .label { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
-  .summary-chip .value { font-size: 18px; font-weight: 600; }
+  .summary-chip .value {
+    font-size: 18px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .summary-chip.rust .value { color: var(--rust); }
   .summary-chip.forest .value { color: var(--forest); }
 
@@ -537,6 +560,10 @@
   .overlay-back {
     background: none; border: none; color: var(--paper);
     font-size: 14px; font-weight: 600; padding: 4px 0;
+  }
+  .overlay-settings-btn {
+    background: none; border: none; color: var(--paper);
+    font-size: 18px; padding: 4px 6px; opacity: 0.9;
   }
   .overlay-title {
     flex: 1;
@@ -967,10 +994,34 @@
       <div class="overlay-header">
         <button class="overlay-back" id="statement-upload-back">&larr; Back</button>
         <div class="overlay-title" id="statement-upload-title">Upload Bank Statement</div>
+        <button class="overlay-settings-btn" id="stmt-settings-gear" title="Bank Statement Settings" aria-label="Bank Statement Settings">⚙</button>
       </div>
       <div class="overlay-body" id="statement-upload-body">
 
-        <div class="scan-step active" id="stmt-step-capture">
+        <!-- Bank Ledger / Contra Ledger mapping for the current company.
+             Shown automatically before the first upload for a company
+             that has no mapping saved yet, and any time via the gear
+             icon above to change it later. Saved once, reused for every
+             future statement -- same "set it once" idea as the desktop
+             importer's saved fields, but per-company and shared across
+             whoever uses the app for that company. -->
+        <div class="scan-step" id="stmt-step-settings">
+          <div class="map-section">
+            <div class="map-section-title">Bank Ledger</div>
+            <p style="font-size:12.5px; color:var(--ink-soft); margin:-4px 0 10px;">The ledger in Tally for this bank account -- every statement transaction posts against it.</p>
+            <select class="stmt-ledger-select" id="stmt-bank-ledger-select"></select>
+          </div>
+          <div class="map-section">
+            <div class="map-section-title">Contra Ledger</div>
+            <p style="font-size:12.5px; color:var(--ink-soft); margin:-4px 0 10px;">The other side of every entry (commonly "Suspense") -- correct it per-voucher later in Tally if needed.</p>
+            <select class="stmt-ledger-select" id="stmt-contra-ledger-select"></select>
+          </div>
+          <div id="stmt-settings-error" style="display:none; color:var(--rust); font-size:12.5px; margin-bottom:12px;"></div>
+          <button class="map-confirm-btn" id="stmt-settings-save-btn" disabled>Save Settings</button>
+          <button type="button" class="map-discard-btn" id="stmt-settings-cancel-btn" style="display:none;">Cancel</button>
+        </div>
+
+        <div class="scan-step" id="stmt-step-capture">
           <div class="scan-capture-area">
             <div class="glyph">🏦</div>
             <p>Upload a bank statement PDF to pull transactions into Tally as Receipt/Payment vouchers for review.</p>
@@ -984,14 +1035,26 @@
             <div class="glyph">📄</div>
             <div id="stmt-pdf-filename"></div>
           </div>
+          <div class="map-section">
+            <div class="map-section-title">Import only these dates (optional)</div>
+            <p style="font-size:12.5px; color:var(--ink-soft); margin:-4px 0 10px;">Leave blank to import every transaction in the statement.</p>
+            <div style="display:flex; gap:10px;">
+              <input type="date" id="stmt-date-from" class="stmt-ledger-select" style="flex:1;">
+              <input type="date" id="stmt-date-to" class="stmt-ledger-select" style="flex:1;">
+            </div>
+          </div>
           <button class="scan-btn" id="stmt-upload-btn">Upload &amp; Process</button>
           <button class="scan-btn secondary" id="stmt-retake-btn">Choose a different file</button>
         </div>
 
         <div class="scan-step" id="stmt-step-progress">
           <div class="scan-progress">
-            <div class="spinner"></div>
+            <div class="spinner" id="stmt-progress-spinner"></div>
             <div id="stmt-progress-text">Uploading PDF…</div>
+            <div class="upload-progress-bar" id="stmt-progress-bar" style="display:none;">
+              <div class="upload-progress-fill" id="stmt-progress-fill" style="width:0%;"></div>
+            </div>
+            <div class="upload-progress-pct" id="stmt-progress-pct" style="display:none;"></div>
           </div>
           <button type="button" class="map-discard-btn" id="stmt-progress-discard-btn">Discard this statement</button>
         </div>
@@ -1042,8 +1105,12 @@
 
         <div class="scan-step" id="scan-step-progress">
           <div class="scan-progress">
-            <div class="spinner"></div>
+            <div class="spinner" id="scan-progress-spinner"></div>
             <div id="scan-progress-text">Uploading photo…</div>
+            <div class="upload-progress-bar" id="scan-progress-bar" style="display:none;">
+              <div class="upload-progress-fill" id="scan-progress-fill" style="width:0%;"></div>
+            </div>
+            <div class="upload-progress-pct" id="scan-progress-pct" style="display:none;"></div>
           </div>
           <button type="button" class="map-discard-btn" id="progress-discard-btn">Discard this invoice</button>
         </div>
@@ -1249,6 +1316,14 @@
 
   // ================= AUTH =================
   const COMPANY_SELECTION_KEY = "tallymobile_selected_company";
+  const SESSION_STARTED_KEY = "tallymobile_session_started_at";
+  // How long a signed-in session is trusted before the app forces a
+  // real credential check again, even though Firebase Auth itself would
+  // happily keep the session alive indefinitely. 12 hours by default --
+  // long enough to cover a full working day without re-login, short
+  // enough that a lost/left-open phone isn't posting to Tally under a
+  // stale session weeks later. Adjust this one constant to change it.
+  const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
   document.getElementById('login-btn').addEventListener('click', attemptLogin);
   document.getElementById('password-input').addEventListener('keydown', e => {
@@ -1272,6 +1347,11 @@
       // showing the app from a single place whether this is a fresh
       // sign-in or a restored session from a previous visit.
       await signInWithEmailAndPassword(auth, email, password);
+      // Mark the moment of a REAL credential check -- this is what
+      // SESSION_MAX_AGE_MS counts from, not app-open/reload, which
+      // would otherwise reset the clock every time the app is merely
+      // reopened and defeat the point of a timeout entirely.
+      localStorage.setItem(SESSION_STARTED_KEY, String(Date.now()));
     } catch (err) {
       console.error('Login failed:', err.code || err);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
@@ -1293,6 +1373,7 @@
       console.error('Sign out failed:', err);
     }
     localStorage.removeItem(COMPANY_SELECTION_KEY);
+    localStorage.removeItem(SESSION_STARTED_KEY);
     // Reload to guarantee every in-memory data cache (companyData, etc.)
     // is cleared -- simpler and safer than trying to reset dozens of
     // pieces of app state by hand.
@@ -1362,6 +1443,28 @@
       return;
     }
     if (user) {
+      // Firebase Auth would restore this session forever with no
+      // expiry -- enforce SESSION_MAX_AGE_MS ourselves. If no start
+      // timestamp is on record at all (a session that existed before
+      // this check shipped), treat this moment as the start rather than
+      // forcing an immediate surprise logout -- the timeout still takes
+      // effect from here on, just not retroactively against a session
+      // this code has never actually timed.
+      let startedAt = parseInt(localStorage.getItem(SESSION_STARTED_KEY) || '', 10);
+      if (!startedAt) {
+        startedAt = Date.now();
+        localStorage.setItem(SESSION_STARTED_KEY, String(startedAt));
+      }
+      if (Date.now() - startedAt > SESSION_MAX_AGE_MS) {
+        localStorage.removeItem(SESSION_STARTED_KEY);
+        signOut(auth).catch(err => console.error('Failed to sign out expired session:', err));
+        document.getElementById('app-screen').style.display = 'none';
+        document.getElementById('company-select-screen').style.display = 'none';
+        document.getElementById('login-screen').style.display = 'flex';
+        const errEl = document.getElementById('login-error');
+        if (errEl) errEl.textContent = 'Your session expired. Please sign in again.';
+        return;
+      }
       afterLogin();
     } else {
       document.getElementById('app-screen').style.display = 'none';
@@ -2518,7 +2621,30 @@
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     if (vouchers.length === 0) {
-      body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the selected range.`);
+      // Even with zero transactions in the selected period, the ledger
+      // still has a real balance -- opening and closing are identical
+      // when nothing moved, but "No transactions" alone (with no
+      // balance shown at all) reads as if the ledger might be empty or
+      // broken, not just quiet for this date range.
+      const ledgerEntry = safeArray(data.ledgers).find(l => l.name === partyName);
+      if (ledgerEntry) {
+        const balance = -parseAmt(ledgerEntry.closing_balance);
+        body.innerHTML = `
+          <div class="summary-strip" style="margin-bottom:14px;">
+            <div class="summary-chip">
+              <div class="label">Opening Balance</div>
+              <div class="value mono">${formatCurrency(balance)}</div>
+            </div>
+            <div class="summary-chip">
+              <div class="label">Closing Balance</div>
+              <div class="value mono">${formatCurrency(balance)}</div>
+            </div>
+          </div>
+          ${emptyState('No transactions in this range', `The balance didn't move for ${escapeHtml(partyName)} between the selected dates.`)}
+        `;
+      } else {
+        body.innerHTML = emptyState('No vouchers found', `No transactions for ${escapeHtml(partyName)} in the selected range.`);
+      }
     } else {
       // Balance as of the END of the selected range — not always today's
       // live balance, since the person might be looking at a past period.
@@ -3608,6 +3734,7 @@
     closeFabChooser();
     resetStatementFlow();
     openOverlay('statement-upload-overlay');
+    openStatementFlowEntry();
   });
 
   document.getElementById('invoice-upload-back').addEventListener('click', () => {
@@ -3654,8 +3781,22 @@
   }
 
   function renderReviewQueue() {
-    const invItems = Object.entries(queueInvoices).map(([id, d]) => ({ id, d, kind: 'invoice' }));
-    const stmtItems = Object.entries(queueStatements).map(([id, d]) => ({ id, d, kind: 'statement' }));
+    // Only ACTIONABLE items belong in this queue -- something already
+    // 'posted' should have graduated to history server-side. If one is
+    // still sitting in pending_* with status 'posted' (confirmed real
+    // case: legacy Shivam Hardware invoices posted before the history
+    // feature existed, so nothing ever moved them), filter it out here
+    // too rather than showing a stale "done" item as if it needed
+    // attention -- this is a display safety net on top of the backend
+    // sweep that retroactively graduates these (see graduate_to_history
+    // / the 'posted' branch in check_and_handle_invoice_processing_
+    // requests in tally_firebase_sync_v2.py).
+    const invItems = Object.entries(queueInvoices)
+      .filter(([, d]) => d.status !== 'posted')
+      .map(([id, d]) => ({ id, d, kind: 'invoice' }));
+    const stmtItems = Object.entries(queueStatements)
+      .filter(([, d]) => d.status !== 'posted')
+      .map(([id, d]) => ({ id, d, kind: 'statement' }));
     const all = [...invItems, ...stmtItems].sort((a, b) =>
       (b.d.uploaded_at || '').localeCompare(a.d.uploaded_at || ''));
 
@@ -3759,10 +3900,25 @@
         : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
       const outcomeLabel = d.outcome === 'posted' ? 'Posted' : 'Discarded';
       const outcomeCls = d.outcome === 'posted' ? 'st-review' : 'st-error';
+      // For a bank statement, show WHICH dates were actually imported --
+      // without this, a statement narrowed to a subset of dates (see the
+      // date-range picker on the upload screen) looks identical in
+      // history to one where the whole document was imported, and
+      // there'd be no way to tell later what was or wasn't covered.
+      let dateRangeLine = '';
+      if (kind === 'bank_statements') {
+        const df = d.date_filter;
+        if (df && (df.from || df.to)) {
+          dateRangeLine = `<div class="sub">Imported ${df.from ? formatTallyDate(df.from.replace(/-/g,'')) : 'start'} – ${df.to ? formatTallyDate(df.to.replace(/-/g,'')) : 'end'}</div>`;
+        } else if (d.transactions) {
+          dateRangeLine = `<div class="sub">Imported: full statement</div>`;
+        }
+      }
       html += `<div class="row">
         <div>
           <div class="name">${icon} ${escapeHtml(title)}</div>
           <div class="sub">${d.finalized_at ? formatDateTime(d.finalized_at) : ''}</div>
+          ${dateRangeLine}
         </div>
         <span class="queue-row-status ${outcomeCls}">${outcomeLabel}</span>
         <button class="history-row-delete" data-id="${escapeHtml(id)}" data-kind="${kind}">Delete</button>
@@ -3821,18 +3977,77 @@
   // real size problem to solve here the way there was for raw phone
   // photos. A generous cap still guards against an unusually large
   // multi-page PDF blowing up the database write.
+  // Real upload progress has a hard limit worth being upfront about:
+  // Firebase Realtime Database's set() has no byte-level progress API
+  // (unlike Firebase Storage's uploadBytesResumable) -- so what's shown
+  // here is REAL for the file-read/encode phase (via FileReader's
+  // native onprogress event), and a smooth approximation for the
+  // actual database write phase, which genuinely can't be observed.
+  // Better than a bare spinner for a multi-second wait either way.
   const MAX_PDF_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
-  function readPdfAsBase64(file) {
+  function readPdfAsBase64(file, onProgress) {
     return new Promise((resolve, reject) => {
       if (file.size > MAX_PDF_SIZE_BYTES) {
         reject(new Error(`This PDF is ${(file.size / 1024 / 1024).toFixed(1)}MB, larger than the ${MAX_PDF_SIZE_BYTES / 1024 / 1024}MB limit. Try a smaller/scanned-at-lower-quality version.`));
         return;
       }
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onprogress = (e) => {
+        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      reader.onload = () => { if (onProgress) onProgress(1); resolve(reader.result.split(',')[1]); };
       reader.onerror = () => reject(new Error('Could not read PDF'));
       reader.readAsDataURL(file);
     });
+  }
+
+  // Shows a real percentage while `readFraction` climbs 0->1 (the file-
+  // read phase), then hands off to a smooth simulated climb toward
+  // (but never reaching) 95% while the actual Firebase write is in
+  // flight -- call .finish() once that write resolves to snap to 100%.
+  // prefix is 'scan' (invoice overlay) or 'stmt' (bank statement overlay).
+  function startUploadProgress(prefix) {
+    const bar = document.getElementById(`${prefix}-progress-bar`);
+    const fill = document.getElementById(`${prefix}-progress-fill`);
+    const pct = document.getElementById(`${prefix}-progress-pct`);
+    const spinner = document.getElementById(`${prefix}-progress-spinner`);
+    spinner.style.display = 'none';
+    bar.style.display = 'block';
+    pct.style.display = 'block';
+    let simInterval = null;
+    let current = 0;
+    const setPct = (p) => {
+      current = p;
+      fill.style.width = `${Math.round(p * 100)}%`;
+      pct.textContent = `${Math.round(p * 100)}%`;
+    };
+    setPct(0);
+    return {
+      readProgress(fraction) {
+        setPct(Math.min(fraction, 1) * 0.5); // file-read phase = first half of the bar, real numbers
+      },
+      startWritePhase() {
+        // No real signal available here (see note above) -- climbs
+        // slowly and asymptotically toward 95%, never claiming 100%
+        // until finish() is actually called.
+        if (simInterval) clearInterval(simInterval);
+        simInterval = setInterval(() => {
+          const next = current + (0.95 - current) * 0.08;
+          setPct(Math.min(next, 0.95));
+        }, 200);
+      },
+      finish() {
+        if (simInterval) clearInterval(simInterval);
+        setPct(1);
+      },
+      reset() {
+        if (simInterval) clearInterval(simInterval);
+        bar.style.display = 'none';
+        pct.style.display = 'none';
+        spinner.style.display = 'block';
+        setPct(0);
+      },
+    };
   }
 
   // Resizes+recompresses a camera photo before it's ever base64-encoded
@@ -3886,14 +4101,22 @@
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-progress').classList.add('active');
     document.getElementById('scan-progress-text').textContent = isPdf ? 'Uploading PDF…' : 'Uploading photo…';
+    const progress = startUploadProgress('scan');
 
     const invoiceId = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     scanCurrentInvoiceId = invoiceId;
 
     try {
+      // Real per-byte progress only exists for the PDF path (FileReader
+      // exposes it) -- a camera photo goes through canvas resize/encode
+      // first, which has no meaningful "percent done" of its own (it's
+      // effectively instant), so that path skips straight to the
+      // write-phase bar once encoding finishes.
       const fileBase64 = isPdf
-        ? await readPdfAsBase64(scanCurrentFile)
+        ? await readPdfAsBase64(scanCurrentFile, (frac) => progress.readProgress(frac))
         : await resizeAndEncodeToBase64(scanCurrentFile);
+
+      progress.startWritePhase();
 
       // File lives on its OWN path (invoice_photos/...), separate from
       // pending_invoices/... which the status listener below watches.
@@ -3911,11 +4134,14 @@
         status: 'uploaded',
         uploaded_at: new Date().toISOString(),
       });
+      progress.finish();
 
       document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
+      progress.reset();
       listenForInvoiceUpdates(invoiceId);
     } catch (err) {
       console.error('Invoice upload failed:', err);
+      progress.reset();
       showInvoiceResult(false, 'Upload failed', err.message || String(err));
     }
   }
@@ -4488,16 +4714,162 @@
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     stmtReviewData = null;
     stmtState = { transactions: [] };
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-capture').classList.add('active');
+    document.querySelectorAll('#statement-upload-body .scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('statement-upload-title').textContent = 'Upload Bank Statement';
     document.getElementById('stmt-pdf-input').value = '';
+    // Deliberately does NOT activate a step here -- the caller decides:
+    // openStatementFlowEntry() picks settings-gate vs capture for a
+    // fresh upload, while resuming a queued item goes straight through
+    // handleStatementStatusChange instead.
   }
 
   document.getElementById('statement-upload-back').addEventListener('click', () => {
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     goBackFromOverlay();
   });
+
+  function stmtActivateStep(stepId) {
+    document.querySelectorAll('#statement-upload-body .scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById(stepId).classList.add('active');
+  }
+
+  // ---- Bank Statement Settings (Bank Ledger / Contra Ledger mapping) ----
+  // Stored at companies/{key}/bank_statement_settings, read by the PC
+  // sync engine in preference to its hardcoded CONFIG table -- see
+  // process_pending_bank_statement in tally_firebase_sync_v2.py.
+  let stmtSettingsGateMode = false;
+  let stmtSettingsReturnStep = 'stmt-step-capture';
+
+  async function fetchLedgerNames() {
+    // Live company ledgers are already synced to Firebase for the
+    // Ledgers report -- read that instead of a fresh Tally pull, since
+    // this is just populating a picker, not posting anything.
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/ledgers`));
+      const ledgers = safeArray(snap.val());
+      return ledgers.map(l => l.name).filter(Boolean).sort();
+    } catch (err) {
+      console.error('Could not load ledgers for settings picker:', err);
+      return [];
+    }
+  }
+
+  function populateLedgerSelect(selectEl, names, currentValue) {
+    selectEl.innerHTML = '<option value="">Select…</option>' +
+      names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    if (currentValue) {
+      // The saved value might not be in the freshly-pulled ledger list
+      // (e.g. Tally not open right now) -- keep it selectable anyway
+      // rather than silently losing the existing setting.
+      if (!names.includes(currentValue)) {
+        selectEl.insertAdjacentHTML('afterbegin', `<option value="${escapeHtml(currentValue)}">${escapeHtml(currentValue)}</option>`);
+      }
+      selectEl.value = currentValue;
+    }
+  }
+
+  function updateStmtSettingsSaveState() {
+    const bank = document.getElementById('stmt-bank-ledger-select').value;
+    const contra = document.getElementById('stmt-contra-ledger-select').value;
+    document.getElementById('stmt-settings-save-btn').disabled = !(bank && contra);
+  }
+
+  async function openStatementSettingsStep(gate) {
+    stmtSettingsGateMode = gate;
+    document.getElementById('stmt-settings-error').style.display = 'none';
+    document.getElementById('stmt-settings-cancel-btn').style.display = gate ? 'none' : 'block';
+    document.getElementById('statement-upload-title').textContent = 'Bank Statement Settings';
+    stmtActivateStep('stmt-step-settings');
+
+    const bankSelect = document.getElementById('stmt-bank-ledger-select');
+    const contraSelect = document.getElementById('stmt-contra-ledger-select');
+    bankSelect.innerHTML = '<option>Loading ledgers…</option>';
+    contraSelect.innerHTML = '<option>Loading ledgers…</option>';
+
+    let existing = null;
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/bank_statement_settings`));
+      existing = snap.val();
+    } catch (err) {
+      console.error('Could not load existing bank statement settings:', err);
+    }
+
+    const names = await fetchLedgerNames();
+    if (names.length === 0) {
+      document.getElementById('stmt-settings-error').textContent =
+        'Could not load your ledger list (Tally may not have synced yet). You can still type exact ledger names below once options appear, or try again shortly.';
+      document.getElementById('stmt-settings-error').style.display = 'block';
+    }
+    populateLedgerSelect(bankSelect, names, existing?.bank_ledger);
+    populateLedgerSelect(contraSelect, names, existing?.contra_ledger);
+    updateStmtSettingsSaveState();
+  }
+
+  document.getElementById('stmt-settings-gear').addEventListener('click', () => {
+    // Remember whatever step was showing so Cancel can return to it --
+    // opening settings mid-review (e.g. to fix a typo'd ledger) shouldn't
+    // lose the transaction review the person was already on.
+    const active = document.querySelector('#statement-upload-body .scan-step.active');
+    stmtSettingsReturnStep = active ? active.id : 'stmt-step-capture';
+    openStatementSettingsStep(false);
+  });
+
+  document.getElementById('stmt-bank-ledger-select').addEventListener('change', updateStmtSettingsSaveState);
+  document.getElementById('stmt-contra-ledger-select').addEventListener('change', updateStmtSettingsSaveState);
+
+  document.getElementById('stmt-settings-cancel-btn').addEventListener('click', () => {
+    document.getElementById('statement-upload-title').textContent =
+      stmtSettingsReturnStep === 'stmt-step-review' ? 'Review Bank Statement' : 'Upload Bank Statement';
+    stmtActivateStep(stmtSettingsReturnStep);
+  });
+
+  document.getElementById('stmt-settings-save-btn').addEventListener('click', async () => {
+    const bank_ledger = document.getElementById('stmt-bank-ledger-select').value;
+    const contra_ledger = document.getElementById('stmt-contra-ledger-select').value;
+    if (!bank_ledger || !contra_ledger) return;
+
+    const btn = document.getElementById('stmt-settings-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      await set(ref(db, `companies/${currentCompany}/bank_statement_settings`), {
+        bank_ledger, contra_ledger, updated_at: new Date().toISOString(),
+      });
+      if (stmtSettingsGateMode) {
+        document.getElementById('statement-upload-title').textContent = 'Upload Bank Statement';
+        stmtActivateStep('stmt-step-capture');
+      } else {
+        document.getElementById('statement-upload-title').textContent =
+          stmtSettingsReturnStep === 'stmt-step-review' ? 'Review Bank Statement' : 'Upload Bank Statement';
+        stmtActivateStep(stmtSettingsReturnStep);
+      }
+    } catch (err) {
+      console.error('Failed to save bank statement settings:', err);
+      document.getElementById('stmt-settings-error').textContent = 'Could not save -- check your connection and try again.';
+      document.getElementById('stmt-settings-error').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save Settings';
+    }
+  });
+
+  // Entry point for a FRESH upload (from the FAB chooser) -- gates on
+  // Bank Ledger/Contra Ledger being set for this company before letting
+  // the person upload a PDF, instead of letting the upload go through
+  // and only failing on the PC side afterward.
+  async function openStatementFlowEntry() {
+    stmtActivateStep('stmt-step-capture'); // shown briefly while settings are checked
+    let existing = null;
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/bank_statement_settings`));
+      existing = snap.val();
+    } catch (err) {
+      console.error('Could not check bank statement settings:', err);
+    }
+    if (!existing || !existing.bank_ledger || !existing.contra_ledger) {
+      openStatementSettingsStep(true);
+    }
+  }
 
   document.getElementById('stmt-pdf-btn').addEventListener('click', () => {
     document.getElementById('stmt-pdf-input').click();
@@ -4508,15 +4880,13 @@
     if (!file) return;
     stmtCurrentFile = file;
     document.getElementById('stmt-pdf-filename').textContent = file.name;
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-preview').classList.add('active');
+    stmtActivateStep('stmt-step-preview');
   }
   document.getElementById('stmt-pdf-input').addEventListener('change', onStatementFilePicked);
 
   document.getElementById('stmt-retake-btn').addEventListener('click', () => {
     stmtCurrentFile = null;
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-capture').classList.add('active');
+    stmtActivateStep('stmt-step-capture');
   });
 
   document.getElementById('stmt-upload-btn').addEventListener('click', uploadStatementPdf);
@@ -4524,18 +4894,24 @@
 
   async function uploadStatementPdf() {
     if (!stmtCurrentFile) return;
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-progress').classList.add('active');
+    stmtActivateStep('stmt-step-progress');
     document.getElementById('stmt-progress-text').textContent = 'Uploading PDF…';
+    const progress = startUploadProgress('stmt');
 
     const stmtId = 'stmt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     stmtCurrentId = stmtId;
 
+    // Optional date-range filter -- blank means "import everything",
+    // same as leaving both fields untouched.
+    const dateFrom = document.getElementById('stmt-date-from').value || null;
+    const dateTo = document.getElementById('stmt-date-to').value || null;
+
     try {
       // Reuses the same base64 reader as invoice PDF uploads -- same
       // 5MB cap, same "no resize, PDFs already come in small" reasoning.
-      const fileBase64 = await readPdfAsBase64(stmtCurrentFile);
+      const fileBase64 = await readPdfAsBase64(stmtCurrentFile, (frac) => progress.readProgress(frac));
 
+      progress.startWritePhase();
       await set(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${stmtId}`), {
         pdf_base64: fileBase64,
         mime: 'application/pdf',
@@ -4544,12 +4920,16 @@
       await set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`), {
         status: 'uploaded',
         uploaded_at: new Date().toISOString(),
+        date_filter: (dateFrom || dateTo) ? { from: dateFrom, to: dateTo } : null,
       });
+      progress.finish();
 
       document.getElementById('stmt-progress-text').textContent = 'Processing statement (this can take a minute)…';
+      progress.reset();
       listenForStatementUpdates(stmtId);
     } catch (err) {
       console.error('Bank statement upload failed:', err);
+      progress.reset();
       showStatementResult(false, 'Upload failed', err.message || String(err));
     }
   }
@@ -4566,6 +4946,10 @@
   function handleStatementStatusChange(data) {
     const status = data.status;
     if (status === 'uploaded') {
+      // Also covers resuming from the Review Queue -- resetStatementFlow
+      // no longer defaults to any step, so this must activate one itself
+      // rather than assuming uploadStatementPdf() already did.
+      stmtActivateStep('stmt-step-progress');
       document.getElementById('stmt-progress-text').textContent = 'Processing statement (this can take a minute)…';
     } else if (status === 'ready_for_review') {
       stmtReviewData = data;
@@ -4584,14 +4968,12 @@
         })),
       };
       renderStatementReviewScreen();
-      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-      document.getElementById('stmt-step-review').classList.add('active');
+      stmtActivateStep('stmt-step-review');
       document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
     } else if (status === 'failed') {
       showStatementResult(false, 'Processing failed', data.error || 'Unknown error');
     } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
-      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-      document.getElementById('stmt-step-progress').classList.add('active');
+      stmtActivateStep('stmt-step-progress');
       document.getElementById('stmt-progress-text').textContent = 'Posting to Tally…';
     } else if (status === 'posted') {
       showStatementResult(true, 'Posted to Tally', data.post_message || 'Vouchers were created in Tally.');
@@ -4602,8 +4984,7 @@
 
   function showStatementResult(success, title, detail) {
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-result').classList.add('active');
+    stmtActivateStep('stmt-step-result');
     document.getElementById('statement-upload-title').textContent = success ? 'Done' : 'Error';
     document.getElementById('stmt-result-body').innerHTML = `
       <div class="map-result ${success ? 'success' : 'error'}">
@@ -4618,8 +4999,7 @@
     if (!confirm('Discard this bank statement? This cannot be undone, and it will need to be re-uploaded from scratch.')) return;
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     const idToDelete = stmtCurrentId;
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-progress').classList.add('active');
+    stmtActivateStep('stmt-step-progress');
     document.getElementById('stmt-progress-text').textContent = 'Discarding…';
     try {
       if (idToDelete) {
@@ -4637,8 +5017,7 @@
       alert('Could not fully discard this statement -- check your connection and try again from the Review Queue.');
     }
     resetStatementFlow();
-    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('stmt-step-capture').classList.add('active');
+    stmtActivateStep('stmt-step-capture');
   }
 
   // ---- Transaction review rendering ----
@@ -4676,6 +5055,38 @@
     }
 
     html += `<div class="map-section-title">Bank: ${escapeHtml(stmtReviewData.bank_ledger || '')} · Contra: ${escapeHtml(stmtReviewData.contra_ledger || '')}</div>`;
+
+    // Opening/closing balance -- the statement's own printed figures,
+    // shown as read-only context (not editable, since they come from
+    // the bank, not from anything reconstructed here). Either can be
+    // null if this particular statement format doesn't print an
+    // explicit opening balance in a form bankcore recognizes.
+    const ob = stmtReviewData.opening_balance;
+    const cb = stmtReviewData.closing_balance;
+    if (ob != null || cb != null) {
+      html += `<div class="summary-strip" style="margin-bottom:14px;">
+        <div class="summary-chip">
+          <div class="label">Opening Balance</div>
+          <div class="value mono">${ob != null ? formatCurrency(ob) : '—'}</div>
+        </div>
+        <div class="summary-chip">
+          <div class="label">Closing Balance</div>
+          <div class="value mono">${cb != null ? formatCurrency(cb) : '—'}</div>
+        </div>
+      </div>`;
+    }
+
+    // Imported date range, if one was set on the upload screen -- makes
+    // it visible at review time (not just buried in history afterward)
+    // that this statement was deliberately narrowed to a subset of
+    // dates, not the whole document.
+    const df = stmtReviewData.date_filter;
+    if (df && (df.from || df.to)) {
+      html += `<p style="font-size:12px; color:var(--ink-soft); margin:-6px 0 14px;">
+        Importing ${df.from ? formatTallyDate(df.from.replace(/-/g,'')) : 'the start'} to
+        ${df.to ? formatTallyDate(df.to.replace(/-/g,'')) : 'the end'} of the statement only.
+      </p>`;
+    }
 
     txns.forEach((t, idx) => {
       if (t.removed) return;
