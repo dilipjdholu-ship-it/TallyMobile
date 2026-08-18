@@ -239,14 +239,32 @@
     padding: 16px 14px 8px;
     box-shadow: var(--shadow);
     margin-bottom: 16px;
+    /* Constrains the CARD to the page width no matter how wide its
+       content wants to be -- confirmed real bug: 16 months of bars each
+       needing enough width for an unwrapped "Apr '25" label forced this
+       card (and visually, the whole page around it) past the screen
+       edge. The scrolling happens INSIDE .month-bars below instead,
+       same as any standard mobile chart with more data points than fit
+       at once -- this card's own width is never the thing overflowing. */
+    max-width: 100%;
+    overflow: hidden;
   }
   .month-bars {
     display: flex; align-items: flex-end; gap: 6px;
     height: 140px;
     margin-bottom: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .month-bar-col {
-    flex: 1; display: flex; flex-direction: column; align-items: center;
+    /* Fixed width, not flex:1 -- with many months of data, letting
+       columns shrink to fit unboundedly (even with min-width:0) makes
+       bars and labels illegibly thin. A fixed comfortable width plus
+       .month-bars' own overflow-x:auto lets the person swipe through
+       months instead, which is the normal mobile-chart pattern for
+       more data points than fit on screen at once. */
+    flex: 0 0 34px;
+    display: flex; flex-direction: column; align-items: center;
     height: 100%; justify-content: flex-end;
   }
   .month-bar {
@@ -2049,7 +2067,7 @@
     // full stock ledger (which would also need Purchase-side item
     // detail we don't currently sync).
     const salesMatches = [];
-    safeArray(Object.values(data.sales_vouchers || {})).forEach(v => {
+    excludeOptionalVouchers(safeArray(Object.values(data.sales_vouchers || {}))).forEach(v => {
       safeArray(v.items).forEach(item => {
         if (item.item_name === itemName) {
           salesMatches.push({
@@ -2279,7 +2297,7 @@
       summaryStrip.innerHTML = '';
       return;
     }
-    const vouchers = safeArray(Object.values(data.sales_vouchers || {}));
+    const vouchers = excludeOptionalVouchers(safeArray(Object.values(data.sales_vouchers || {})));
 
     if (vouchers.length === 0) {
       contentArea.innerHTML = emptyState('No sales data', 'Check back after the next sync.');
@@ -2346,6 +2364,14 @@
 
     contentArea.innerHTML = chartHtml + listHtml;
 
+    // Auto-scroll the chart to show the MOST RECENT months by default --
+    // now that .month-bars scrolls internally instead of squeezing every
+    // month into view at once, the default scroll position (leftmost,
+    // i.e. the oldest month) isn't what's actually relevant "now". The
+    // monthly list below already lists newest-first for the same reason.
+    const monthBarsEl = contentArea.querySelector('.month-bars');
+    if (monthBarsEl) monthBarsEl.scrollLeft = monthBarsEl.scrollWidth;
+
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openMonthDetail(row.dataset.month, monthLabel(row.dataset.month)));
     });
@@ -2387,7 +2413,7 @@
 
   function openMonthDetail(monthKey, monthLabelStr) {
     const data = companyData[currentCompany] || {};
-    const vouchers = safeArray(Object.values(data.sales_vouchers || {}))
+    const vouchers = excludeOptionalVouchers(safeArray(Object.values(data.sales_vouchers || {})))
       .filter(v => v.date && v.date.slice(0, 6) === monthKey)
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
