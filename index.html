@@ -457,7 +457,7 @@
   }
   .summary-chip .label { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
   .summary-chip .value {
-    font-size: 18px; font-weight: 600;
+    font-size: clamp(13px, 4.2vw, 18px); font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .summary-chip.rust .value { color: var(--rust); }
@@ -2554,7 +2554,48 @@
   // Shared by both the on-screen ledger view and the PDF export so
   // they can never show different vouchers for the same party.
   function excludeOptionalVouchers(vouchers) {
-    return vouchers.filter(v => v.is_optional !== 'Yes');
+    // Widened past an exact 'Yes' match -- can't verify live against a
+    // real Tally response what exact casing/format ISOPTIONAL actually
+    // comes back as for this install (Tally's XML export is generally
+    // consistent, but "Yes" vs "yes" vs a stray space costs nothing to
+    // guard against, and a missed Optional voucher here is a real
+    // financial-display bug, not a cosmetic one).
+    return vouchers.filter(v => {
+      const val = (v.is_optional || '').toString().trim().toLowerCase();
+      return val !== 'yes' && val !== '1' && val !== 'true';
+    });
+  }
+
+  // ONE shared implementation for "what's the meaningful counter-ledger
+  // to show for this voucher row" -- used by BOTH the on-screen ledger
+  // list and buildLedgerStatementRows (PDF export + balance-as-of-date
+  // calc). Confirmed real bug from having two separate copies of this
+  // logic: a fix applied to only the on-screen version (excluding tax
+  // ledgers) left the PDF export still showing "CGST"/"SGST" on
+  // Purchase vouchers, since it never got the same fix.
+  //
+  // Also confirmed: excluding ONLY tax ledgers wasn't enough on its
+  // own -- a real Purchase voucher's non-party ledger lines can ALSO
+  // include a Round Off adjustment, which is exactly as meaningless a
+  // "counter-ledger" as CGST/SGST was. Broadened to a general noise
+  // pattern, but more importantly: Purchase/Sales vouchers (inventory-
+  // based) fundamentally don't have ONE single meaningful "other side"
+  // the way Payment/Receipt/Contra do (a single bank/cash ledger) --
+  // they can have several ancillary ledger lines (tax, round off,
+  // discount) and NONE of them represents "who" or "what" the
+  // transaction really was, since that's already implied by being
+  // Purchase/Sales AND already shown separately as "Purchase #13" etc.
+  // So for those two voucher types, always show the voucher type
+  // itself instead of guessing at a line to surface.
+  const NON_PARTY_NOISE_PATTERN = /\b(cgst|sgst|igst|utgst|round\s*off|rounding)\b/i;
+  function getVoucherCounterLedgerName(v, partyName) {
+    const vtype = (v.voucher_type || '').toLowerCase();
+    if (vtype === 'purchase' || vtype === 'sales') {
+      return v.voucher_type || '—';
+    }
+    const lines = safeArray(v.ledger_lines);
+    const otherLine = lines.find(l => l.ledger_name !== partyName && !NON_PARTY_NOISE_PATTERN.test(l.ledger_name || ''));
+    return otherLine ? otherLine.ledger_name : (v.voucher_type || '—');
   }
 
   function voucherInvolvesLedger(v, ledgerName) {
@@ -2692,24 +2733,7 @@
         </div>
         <div class="list-card">${vouchers.map(v => {
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
-          const lines = safeArray(v.ledger_lines);
-          // Tax ledgers (CGST/SGST/IGST/UTGST) are never meaningful as
-          // "the other side" of a transaction -- confirmed real bug on
-          // Pushplila Wires' own ledger: an inventory Purchase voucher
-          // has no separate "Purchase A/c" ledger LINE at all (that's
-          // handled via inventory allocation, not a ledger entry), so
-          // the only non-party lines were CGST and SGST -- .find()
-          // picked whichever came first in Tally's data and showed
-          // "CGST" / "SGST" as the row title on a purchase from a real
-          // supplier, which is meaningless and confusing (worse: it
-          // reads like a totally different, unrelated voucher). Skip
-          // tax lines when looking for a real counter-ledger to name;
-          // Payment/Receipt/Contra vouchers (where the real bank name
-          // IS meaningful) are untouched since "bank"/"cash" ledgers
-          // never match this pattern.
-          const TAX_LEDGER_PATTERN = /\b(cgst|sgst|igst|utgst)\b/i;
-          const otherLine = lines.find(l => l.ledger_name !== partyName && !TAX_LEDGER_PATTERN.test(l.ledger_name || ''));
-          const displayName = otherLine ? otherLine.ledger_name : (v.voucher_type || '—');
+          const displayName = getVoucherCounterLedgerName(v, partyName);
           const vchLabel = `${escapeHtml(v.voucher_type || '')}${v.voucher_number ? ' #' + escapeHtml(v.voucher_number) : ''}`;
           return `
           <div class="row ${isSales ? 'clickable-row' : ''}" ${isSales ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}"` : ''}>
@@ -2760,12 +2784,14 @@
       // synced yet for this voucher (older data before this feature)
       const partyAmt = partyLine ? parseAmt(partyLine.amount) : parseAmt(v.amount);
 
-      const otherLines = lines.filter(l => l.ledger_name !== partyName);
-      const primaryOther = otherLines[0];
       const particularsPrefix = partyAmt < 0 ? 'Cr' : 'Dr';
-      const particulars = primaryOther
-        ? `${particularsPrefix} ${primaryOther.ledger_name}`
-        : (otherLines.length > 1 ? `${particularsPrefix} Sundries` : (v.voucher_type || ''));
+      // Uses the SAME shared logic as the on-screen voucher list now
+      // (getVoucherCounterLedgerName) -- confirmed real bug: this used
+      // to be its own separate, unfixed implementation (otherLines[0]
+      // with no filtering at all), so a fix applied only to the
+      // on-screen list left the PDF export still showing "CGST"/"SGST"
+      // as the particulars on every Purchase voucher.
+      const particulars = `${particularsPrefix} ${getVoucherCounterLedgerName(v, partyName)}`;
 
       const debit = partyAmt < 0 ? Math.abs(partyAmt) : 0;
       const credit = partyAmt > 0 ? partyAmt : 0;
