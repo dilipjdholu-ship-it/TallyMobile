@@ -325,12 +325,19 @@
   /* ===== FAB upload chooser (bottom sheet) ===== */
   .fab-chooser-backdrop {
     display: none;
-    position: fixed; inset: 0; z-index: 40;
+    /* Was z-index 40 -- BELOW .overlay's z-index 50 (see below). Opening
+       this sheet from within the ledger detail overlay (itself an
+       .overlay) rendered it invisibly BEHIND that overlay -- nothing
+       appeared to happen until the overlay was closed via Back, which
+       then revealed the sheet had been open the whole time underneath.
+       Raised above every .overlay so it always shows as a real modal
+       regardless of what screen it's opened from. */
+    position: fixed; inset: 0; z-index: 60;
     background: rgba(16,24,40,0.4);
   }
   .fab-chooser-backdrop.open { display: block; }
   .fab-chooser-sheet {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 41;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 61;
     background: var(--paper-card);
     border-radius: 18px 18px 0 0;
     padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
@@ -389,6 +396,14 @@
   .queue-row-status.st-wait { background: var(--primary-soft); color: var(--primary); }
   .queue-row-status.st-review { background: var(--amber-soft); color: var(--amber); }
   .queue-row-status.st-error { background: var(--rust-soft); color: var(--rust); }
+  .tally-status-banner {
+    background: var(--rust-soft);
+    color: var(--rust);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    padding: 8px 16px;
+  }
   .history-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
   .history-tab {
     flex: 1; padding: 9px; border-radius: 9px;
@@ -479,6 +494,27 @@
     color: var(--ink);
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .overlay-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .export-settings-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--paper-card);
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .summary-strip {
@@ -943,6 +979,10 @@
     </button>
   </header>
 
+  <div id="tally-status-banner" class="tally-status-banner" style="display:none;">
+    Tally is closed on the PC — invoice posting and live lookups are paused until it's reopened.
+  </div>
+
   <main>
     <div class="search-bar" id="search-bar-row">
       <input type="text" id="search-input" placeholder="Search…">
@@ -1203,7 +1243,10 @@
       <div class="overlay-header">
         <button class="overlay-back" id="ledger-detail-back">&larr; Back</button>
         <div class="overlay-title" id="ledger-detail-title"></div>
-        <button class="export-btn" id="ledger-statement-export-btn">Export</button>
+        <div class="overlay-header-actions">
+          <button class="export-settings-btn" id="ledger-export-settings-btn" title="Choose export columns" aria-label="Choose export columns">&#9881;</button>
+          <button class="export-btn" id="ledger-statement-export-btn">Export</button>
+        </div>
       </div>
       <div class="date-range-bar">
         <input type="date" id="ledger-date-from">
@@ -1215,15 +1258,13 @@
     </div>
   </div>
 
-  <!-- Ledger statement export: column picker + View/Download. Date,
-       Particulars, Debit, Credit are always included -- everything else
-       is optional, since not everyone wants Voucher Type/No./Narration
-       cluttering a statement meant to just be glanced at or handed to
-       someone else. -->
+  <!-- Export column settings (gear icon): choose + SAVE preferred columns
+       once, instead of picking them on every export. Date, Particulars,
+       Debit, Credit are always included -- everything else is optional. -->
   <div class="fab-chooser-backdrop" id="ledger-export-backdrop"></div>
-  <div class="fab-chooser-sheet" id="ledger-export-sheet" style="display:none;">
+  <div class="fab-chooser-sheet" id="ledger-export-settings-sheet" style="display:none;">
     <div class="fab-chooser-handle"></div>
-    <div class="fab-chooser-title">Export Ledger Statement</div>
+    <div class="fab-chooser-title">Export Columns</div>
     <div class="export-col-row locked">
       <input type="checkbox" checked disabled>
       <span>Date</span>
@@ -1261,10 +1302,21 @@
       <span>Narration</span>
     </div>
     <div class="export-action-row">
+      <button class="export-action-btn primary" id="ledger-export-save-btn" style="width:100%;">Save</button>
+    </div>
+    <button class="fab-chooser-cancel" id="ledger-export-settings-cancel-btn">Cancel</button>
+  </div>
+
+  <!-- Export action (Export button): just View/Download, using whatever
+       columns were last saved via the settings sheet above. -->
+  <div class="fab-chooser-sheet" id="ledger-export-quick-sheet" style="display:none;">
+    <div class="fab-chooser-handle"></div>
+    <div class="fab-chooser-title">Export Ledger Statement</div>
+    <div class="export-action-row">
       <button class="export-action-btn secondary" id="ledger-export-view-btn">View</button>
       <button class="export-action-btn primary" id="ledger-export-download-btn">Download</button>
     </div>
-    <button class="fab-chooser-cancel" id="ledger-export-cancel-btn">Cancel</button>
+    <button class="fab-chooser-cancel" id="ledger-export-quick-cancel-btn">Cancel</button>
   </div>
 
   <!-- Voucher Detail / Invoice Overlay -->
@@ -1577,6 +1629,39 @@
     attachSectionNav();
     attachSearch();
     attachExportButtons();
+    listenToTallyStatus();
+  }
+
+  // Single top-level node, not per-company -- there's one local Tally
+  // instance behind all three companies, written by tally_sync_gui.py
+  // every sync cycle (both when reachable and when not, so checked_at
+  // always has a fresh timestamp to judge staleness against). Started
+  // once at app init rather than per-company, since switching companies
+  // shouldn't re-subscribe to something that isn't company-scoped.
+  function listenToTallyStatus() {
+    onValue(ref(db, 'sync_status'), snapshot => {
+      const val = snapshot.val() || {};
+      const banner = document.getElementById('tally-status-banner');
+      if (!banner) return;
+      // Treat a status that hasn't been touched in a long while the same
+      // as "closed" -- if the sync app itself isn't running at all, it
+      // never gets a chance to write tally_reachable:false, so a stale
+      // timestamp is the only signal left that something's not right.
+      const checkedAt = val.checked_at ? new Date(val.checked_at) : null;
+      const staleMs = checkedAt ? (Date.now() - checkedAt.getTime()) : Infinity;
+      const isStale = staleMs > 20 * 60 * 1000; // no update in 20+ min
+      if (val.tally_reachable === false) {
+        banner.textContent = 'Tally is closed on the PC — invoice posting and live lookups are paused until it\'s reopened.';
+        banner.style.display = '';
+      } else if (isStale) {
+        banner.textContent = 'Haven\'t heard from the sync app on the PC in a while — make sure it\'s running.';
+        banner.style.display = '';
+      } else {
+        banner.style.display = 'none';
+      }
+    }, error => {
+      console.error('sync_status listener error', error);
+    });
   }
 
   function attachSectionNav() {
@@ -3093,18 +3178,44 @@
     });
   }
 
-  document.getElementById('ledger-statement-export-btn').addEventListener('click', openLedgerExportSheet);
+  const LEDGER_EXPORT_COLUMNS_KEY = 'tallymobile_ledger_export_columns';
+  const LEDGER_EXPORT_COLUMNS_DEFAULT = { vchType: true, vchNo: true, balance: true, narration: false };
 
-  function openLedgerExportSheet() {
+  function loadLedgerExportColumns() {
+    try {
+      const raw = localStorage.getItem(LEDGER_EXPORT_COLUMNS_KEY);
+      if (!raw) return { ...LEDGER_EXPORT_COLUMNS_DEFAULT };
+      return { ...LEDGER_EXPORT_COLUMNS_DEFAULT, ...JSON.parse(raw) };
+    } catch (e) {
+      return { ...LEDGER_EXPORT_COLUMNS_DEFAULT };
+    }
+  }
+
+  function saveLedgerExportColumns(cols) {
+    try {
+      localStorage.setItem(LEDGER_EXPORT_COLUMNS_KEY, JSON.stringify(cols));
+    } catch (e) {
+      console.error('Failed to save export column preferences', e);
+    }
+  }
+
+  // ---- Settings sheet (gear icon): choose + SAVE preferred columns ----
+  document.getElementById('ledger-export-settings-btn').addEventListener('click', openLedgerExportSettingsSheet);
+
+  function openLedgerExportSettingsSheet() {
+    const saved = loadLedgerExportColumns();
+    document.getElementById('ledger-export-col-vchtype').checked = saved.vchType;
+    document.getElementById('ledger-export-col-vchno').checked = saved.vchNo;
+    document.getElementById('ledger-export-col-balance').checked = saved.balance;
+    document.getElementById('ledger-export-col-narration').checked = saved.narration;
     document.getElementById('ledger-export-backdrop').classList.add('open');
-    document.getElementById('ledger-export-sheet').style.display = 'block';
+    document.getElementById('ledger-export-settings-sheet').style.display = 'block';
   }
-  function closeLedgerExportSheet() {
+  function closeLedgerExportSettingsSheet() {
     document.getElementById('ledger-export-backdrop').classList.remove('open');
-    document.getElementById('ledger-export-sheet').style.display = 'none';
+    document.getElementById('ledger-export-settings-sheet').style.display = 'none';
   }
-  document.getElementById('ledger-export-backdrop').addEventListener('click', closeLedgerExportSheet);
-  document.getElementById('ledger-export-cancel-btn').addEventListener('click', closeLedgerExportSheet);
+  document.getElementById('ledger-export-settings-cancel-btn').addEventListener('click', closeLedgerExportSettingsSheet);
 
   function getSelectedLedgerColumns() {
     return {
@@ -3115,13 +3226,38 @@
     };
   }
 
+  document.getElementById('ledger-export-save-btn').addEventListener('click', () => {
+    saveLedgerExportColumns(getSelectedLedgerColumns());
+    closeLedgerExportSettingsSheet();
+  });
+
+  // ---- Quick sheet (Export button): just View/Download, using whatever
+  // was last saved above -- no column picking on every export. ----
+  document.getElementById('ledger-statement-export-btn').addEventListener('click', openLedgerExportQuickSheet);
+
+  function openLedgerExportQuickSheet() {
+    document.getElementById('ledger-export-backdrop').classList.add('open');
+    document.getElementById('ledger-export-quick-sheet').style.display = 'block';
+  }
+  function closeLedgerExportQuickSheet() {
+    document.getElementById('ledger-export-backdrop').classList.remove('open');
+    document.getElementById('ledger-export-quick-sheet').style.display = 'none';
+  }
+  document.getElementById('ledger-export-quick-cancel-btn').addEventListener('click', closeLedgerExportQuickSheet);
+
+  // Shared backdrop between the two sheets -- close whichever is open.
+  document.getElementById('ledger-export-backdrop').addEventListener('click', () => {
+    closeLedgerExportSettingsSheet();
+    closeLedgerExportQuickSheet();
+  });
+
   document.getElementById('ledger-export-view-btn').addEventListener('click', () => {
-    closeLedgerExportSheet();
-    exportLedgerStatementPDF(getSelectedLedgerColumns(), 'view');
+    closeLedgerExportQuickSheet();
+    exportLedgerStatementPDF(loadLedgerExportColumns(), 'view');
   });
   document.getElementById('ledger-export-download-btn').addEventListener('click', () => {
-    closeLedgerExportSheet();
-    exportLedgerStatementPDF(getSelectedLedgerColumns(), 'download');
+    closeLedgerExportQuickSheet();
+    exportLedgerStatementPDF(loadLedgerExportColumns(), 'download');
   });
 
   async function exportLedgerStatementPDF(selectedColumns, mode = 'view') {
@@ -3169,8 +3305,8 @@
     );
     if (rows.length === 0) { alert('No transactions in the selected date range.'); return; }
 
-    const fromDate = formatTallyDate(rows[0].date);
-    const toDate = formatTallyDate(rows[rows.length - 1].date);
+    const fromDate = formatTallyDateShort(rows[0].date);
+    const toDate = formatTallyDateShort(rows[rows.length - 1].date);
     const closingBalance = rows[rows.length - 1].balance;
     const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
     const totalCredit = rows.reduce((s, r) => s + r.credit, 0);
@@ -3225,8 +3361,8 @@
     // absorbs the true remaining width, so the table always exactly
     // fills contentWidth no matter which optional columns were picked.
     const cols = [
-      { key: 'date', label: 'Date', w: 16, align: 'left' },
-      { key: 'particulars', label: 'Particulars', w: 50, align: 'left' },
+      { key: 'date', label: 'Date', w: 18, align: 'left' },
+      { key: 'particulars', label: 'Particulars', w: 48, align: 'left' },
     ];
     if (selectedColumns.vchType) cols.push({ key: 'vchType', label: 'Vch Type', w: 20, align: 'left' });
     if (selectedColumns.vchNo) cols.push({ key: 'vchNo', label: 'Vch No.', w: 16, align: 'left' });
@@ -3234,7 +3370,19 @@
     cols.push({ key: 'debit', label: 'Debit', w: 24, align: 'right' });
     cols.push({ key: 'credit', label: 'Credit', w: 22, align: 'right' });
     if (selectedColumns.balance) cols.push({ key: 'balance', label: 'Balance', w: 0, align: 'right' });
-    cols[cols.length - 1].w = Math.max(20, contentWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0));
+    // The Opening/Closing Balance summary lines always anchor their amount
+    // at the page's right edge (marginX + contentWidth), regardless of
+    // whether the per-row "Balance" column is selected -- same as the
+    // Opening Balance row already does. When Balance IS selected, that
+    // column occupies this same right-edge space, so no conflict. When
+    // it's NOT selected, "Credit" becomes the last column and used to
+    // absorb the *entire* remaining width right up to that same edge --
+    // landing exactly on top of the closing-balance text and corrupting
+    // the footer row. Reserving a fixed strip here keeps that summary
+    // space free in that case, so the two can never collide again.
+    const BALANCE_SUMMARY_W = 22;
+    const usableWidth = selectedColumns.balance ? contentWidth : contentWidth - BALANCE_SUMMARY_W;
+    cols[cols.length - 1].w = Math.max(20, usableWidth - cols.slice(0, -1).reduce((s, c) => s + c.w, 0));
 
     // Truncates text with an ellipsis if it would exceed the column width,
     // instead of letting jsPDF wrap it onto a second line — a wrapped
@@ -3298,7 +3446,7 @@
       let cx2 = marginX;
       const balLabel = `${formatAmountPlain(Math.abs(r.balance))} ${r.balance >= 0 ? 'Dr' : 'Cr'}`;
       const vals = {
-        date: formatTallyDate(r.date),
+        date: formatTallyDateShort(r.date),
         particulars: r.particulars || '',
         vchType: r.voucherType || '',
         vchNo: r.voucherNumber || '',
@@ -4090,6 +4238,23 @@
     return d;
   }
 
+  // Compact "D-Mon-YY" form (e.g. "3-May-25"), matching Tally's own ledger
+  // export. Used specifically in the ledger PDF export table, where the
+  // full DD-MM-YYYY form (10 chars) doesn't fit the date column at this
+  // font size and gets ellipsis-truncated -- ambiguous for a ledger that
+  // spans more than one calendar year. Kept separate from formatTallyDate
+  // so every other screen/export that already relies on DD-MM-YYYY is
+  // untouched.
+  const TALLY_SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function formatTallyDateShort(d) {
+    if (!d) return '';
+    if (!/^\d{8}$/.test(d)) return d;
+    const year = d.slice(0, 4), month = d.slice(4, 6), day = d.slice(6, 8);
+    const dateObj = new Date(`${year}-${month}-${day}`);
+    if (isNaN(dateObj.getTime())) return formatTallyDate(d);
+    return `${dateObj.getDate()}-${TALLY_SHORT_MONTHS[dateObj.getMonth()]}-${String(dateObj.getFullYear()).slice(-2)}`;
+  }
+
   function formatDateTime(iso) {
     try {
       const d = new Date(iso);
@@ -4296,6 +4461,7 @@
 
   function queueStatusMeta(status) {
     if (status === 'uploaded') return { label: 'Processing…', cls: 'st-wait' };
+    if (status === 'waiting_for_tally') return { label: 'Waiting for Tally', cls: 'st-review' };
     if (status === 'ready_for_review') return { label: 'Needs review', cls: 'st-review' };
     if (status === 'confirmed' || status === 'confirmed_pending_post') return { label: 'Posting…', cls: 'st-wait' };
     if (status === 'failed' || status === 'post_failed') return { label: 'Error', cls: 'st-error' };
@@ -4681,6 +4847,11 @@
     const status = data.status;
     if (status === 'uploaded') {
       document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
+    } else if (status === 'waiting_for_tally') {
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('scan-step-progress').classList.add('active');
+      document.getElementById('scan-progress-text').textContent =
+        'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
     } else if (status === 'ready_for_review') {
       mappingData = data;
       mappingState = {
