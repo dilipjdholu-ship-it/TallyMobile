@@ -1314,6 +1314,7 @@
     <div class="fab-chooser-title">Export Ledger Statement</div>
     <div class="export-action-row">
       <button class="export-action-btn secondary" id="ledger-export-view-btn">View</button>
+      <button class="export-action-btn secondary" id="ledger-export-share-btn">Share</button>
       <button class="export-action-btn primary" id="ledger-export-download-btn">Download</button>
     </div>
     <button class="fab-chooser-cancel" id="ledger-export-quick-cancel-btn">Cancel</button>
@@ -1326,6 +1327,7 @@
         <button class="overlay-back" id="voucher-detail-back">&larr; Back</button>
         <div class="overlay-title" id="voucher-detail-title">Invoice</div>
         <button class="export-btn" id="voucher-view-btn" style="padding:0 10px;">View</button>
+        <button class="export-btn" id="voucher-share-btn" style="padding:0 10px; margin-left:6px;">Share</button>
         <button class="export-btn" id="voucher-download-btn" style="padding:0 10px; margin-left:6px;">Download</button>
       </div>
       <div class="overlay-body" id="voucher-detail-body"></div>
@@ -3255,6 +3257,10 @@
     closeLedgerExportQuickSheet();
     exportLedgerStatementPDF(loadLedgerExportColumns(), 'view');
   });
+  document.getElementById('ledger-export-share-btn').addEventListener('click', () => {
+    closeLedgerExportQuickSheet();
+    exportLedgerStatementPDF(loadLedgerExportColumns(), 'share');
+  });
   document.getElementById('ledger-export-download-btn').addEventListener('click', () => {
     closeLedgerExportQuickSheet();
     exportLedgerStatementPDF(loadLedgerExportColumns(), 'download');
@@ -3481,6 +3487,8 @@
     const filename = `${partyName.replace(/[^a-z0-9]/gi, '_')}_statement.pdf`;
     if (mode === 'download') {
       downloadPdf(doc, filename);
+    } else if (mode === 'share') {
+      sharePdf(doc, filename);
     } else {
       viewOrSharePdf(doc, filename);
     }
@@ -3631,6 +3639,7 @@
   });
 
   document.getElementById('voucher-view-btn').addEventListener('click', () => handleVoucherExport('view'));
+  document.getElementById('voucher-share-btn').addEventListener('click', () => handleVoucherExport('share'));
   document.getElementById('voucher-download-btn').addEventListener('click', () => handleVoucherExport('download'));
 
   function handleVoucherExport(mode) {
@@ -3736,7 +3745,9 @@
     // ensureSectionLoaded() only WARMS the cache in the background; it
     // doesn't block until data actually arrives.
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
-      const exportBtn = document.getElementById(mode === 'download' ? 'voucher-download-btn' : 'voucher-view-btn');
+      const exportBtnId = mode === 'download' ? 'voucher-download-btn'
+        : mode === 'share' ? 'voucher-share-btn' : 'voucher-view-btn';
+      const exportBtn = document.getElementById(exportBtnId);
       const originalLabel = exportBtn.textContent;
       exportBtn.textContent = '…';
       exportBtn.disabled = true;
@@ -4089,6 +4100,8 @@
 
     if (mode === 'download') {
       downloadPdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
+    } else if (mode === 'share') {
+      sharePdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
     } else {
       viewOrSharePdf(doc, `invoice_${v.voucher_number || 'export'}.pdf`);
     }
@@ -4186,6 +4199,8 @@
     const filename = `purchase_${v.voucher_number || 'export'}.pdf`;
     if (mode === 'download') {
       downloadPdf(doc, filename);
+    } else if (mode === 'share') {
+      sharePdf(doc, filename);
     } else {
       viewOrSharePdf(doc, filename);
     }
@@ -4338,6 +4353,27 @@
     // Release the blob URL after a delay long enough for the new tab to
     // have loaded it — freeing it immediately can break the viewer.
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // Genuine native share (WhatsApp/email/etc.) via the Web Share API's
+  // file-sharing support (Level 2) -- despite its name, viewOrSharePdf
+  // above never actually did this, it only opened a new tab. Falls back
+  // to the same "open in a new tab" behavior when the browser/OS
+  // doesn't support sharing files (older Android WebViews, most
+  // desktop browsers), so there's always a working path either way.
+  async function sharePdf(doc, filename) {
+    const blob = doc.output('blob');
+    const file = new File([blob], filename, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // person cancelled the share sheet -- not an error
+        console.error('Share failed, falling back to view:', err);
+      }
+    }
+    viewOrSharePdf(doc, filename);
   }
 
   // Always forces a real download, never opens a tab -- this is the
@@ -4899,7 +4935,16 @@
         <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
         <div class="detail">${escapeHtml(detail || '')}</div>
       </div>
+      ${success ? '' : '<button type="button" class="map-discard-btn" id="result-discard-btn">Delete from queue</button>'}
     `;
+    // Was previously a dead end: landing here from the Review Queue on a
+    // failed/post_failed item showed the error with no way to remove it
+    // -- discardInvoice() already existed and already does this
+    // correctly (writes a history record, then removes pending_invoices
+    // + invoice_photos), it just wasn't reachable from this screen.
+    if (!success) {
+      document.getElementById('result-discard-btn').addEventListener('click', discardInvoice);
+    }
   }
 
   // ---- Mapping / picker rendering ----
@@ -5573,9 +5618,56 @@
     if (!file) return;
     stmtCurrentFile = file;
     document.getElementById('stmt-pdf-filename').textContent = file.name;
+    // Clear any dates left over from a previously picked file -- these
+    // get auto-filled below, but shouldn't silently carry over if this
+    // new file's own range can't be detected.
+    document.getElementById('stmt-date-from').value = '';
+    document.getElementById('stmt-date-to').value = '';
     stmtActivateStep('stmt-step-preview');
+    prefillStatementDateRange(file);
   }
   document.getElementById('stmt-pdf-input').addEventListener('change', onStatementFilePicked);
+
+  // Saraswat's own statement header reads e.g. "02-07-2026 to
+  // 15-08-2026" -- reading that directly is far more reliable than
+  // asking the person to retype dates they can already see on the
+  // document they just picked. Auto-fills the two date inputs above but
+  // leaves them fully editable -- this is a starting point ("import
+  // everything" is still the default if left as-is or cleared), not a
+  // forced restriction to only that range.
+  async function prefillStatementDateRange(file) {
+    try {
+      if (!window.pdfjsLib) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+      const buf = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      const page = await pdf.getPage(1);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(it => it.str).join(' ');
+
+      // Matches "DD-MM-YYYY to DD-MM-YYYY" or "DD-MM-YYYY - DD-MM-YYYY"
+      // -- the exact header format seen on real Saraswat statements.
+      const m = pageText.match(/(\d{2})-(\d{2})-(\d{4})\s*(?:to|-|–)\s*(\d{2})-(\d{2})-(\d{4})/);
+      if (!m) {
+        console.error('Could not detect a date range in this statement -- leaving date fields blank.');
+        return;
+      }
+      // Only fill in if the person hasn't already changed the file/typed
+      // something in while this was loading.
+      if (stmtCurrentFile !== file) return;
+      const [, d1, mo1, y1, d2, mo2, y2] = m;
+      document.getElementById('stmt-date-from').value = `${y1}-${mo1}-${d1}`;
+      document.getElementById('stmt-date-to').value = `${y2}-${mo2}-${d2}`;
+    } catch (err) {
+      console.error('Failed to auto-detect statement date range:', err);
+      // Leave fields blank -- person can still type dates manually, and
+      // leaving both blank already means "import everything" per the
+      // existing behavior above.
+    }
+  }
 
   document.getElementById('stmt-retake-btn').addEventListener('click', () => {
     stmtCurrentFile = null;
@@ -5685,7 +5777,11 @@
         <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
         <div class="detail">${escapeHtml(detail || '')}</div>
       </div>
+      ${success ? '' : '<button type="button" class="map-discard-btn" id="stmt-result-discard-btn">Delete from queue</button>'}
     `;
+    if (!success) {
+      document.getElementById('stmt-result-discard-btn').addEventListener('click', discardStatement);
+    }
   }
 
   async function discardStatement() {
