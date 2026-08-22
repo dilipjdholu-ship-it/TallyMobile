@@ -4890,8 +4890,12 @@
         'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
     } else if (status === 'ready_for_review') {
       mappingData = data;
+      const extractedDate = (data.fields || {}).date_yyyymmdd;
       mappingState = {
         party: null,
+        invoiceNo: (data.fields || {}).invoice_no || '',
+        invoiceDate: extractedDate && /^\d{8}$/.test(extractedDate)
+          ? `${extractedDate.slice(0,4)}-${extractedDate.slice(4,6)}-${extractedDate.slice(6,8)}` : '',
         items: (data.item_matches || []).map(item => ({
           confirmed: null,
           gst_rate: null,
@@ -4985,7 +4989,26 @@
     const partyResult = mappingData.party_result || {};
     const itemMatches = mappingData.item_matches || [];
 
+    const fields = mappingData.fields || {};
     let html = '';
+    html += `<div class="map-section">
+      <div class="map-section-title">Invoice Details</div>
+      <div class="map-rate-unit-row">
+        <div>
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Invoice No.</div>
+          <input type="text" id="map-invoice-no-input" value="${escapeHtml(mappingState.invoiceNo ?? '')}"
+            placeholder="e.g. 4135"
+            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+        </div>
+        <div>
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Date</div>
+          <input type="date" id="map-invoice-date-input" value="${escapeHtml(mappingState.invoiceDate ?? '')}"
+            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+        </div>
+      </div>
+      ${(!fields.invoice_no || !fields.date_yyyymmdd) ? '<div style="font-size:12px; color:var(--amber); margin-top:6px;">⚠ Could not read this directly off the invoice -- please check/fill in.</div>' : ''}
+    </div>`;
+
     html += `<div class="map-section">
       <div class="map-section-title">Party</div>
       ${renderPickerHtml('party', -1, partyResult.ocr_party_name, partyResult.remembered_match, partyResult.suggestions)}
@@ -5329,6 +5352,13 @@
       });
     });
 
+    document.getElementById('map-invoice-no-input').addEventListener('input', (e) => {
+      mappingState.invoiceNo = e.target.value;
+    });
+    document.getElementById('map-invoice-date-input').addEventListener('input', (e) => {
+      mappingState.invoiceDate = e.target.value;
+    });
+
     document.querySelectorAll('[data-remove-item]').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.removeItem, 10);
@@ -5492,6 +5522,8 @@
       status: 'confirmed',
       confirmed_party: mappingState.party,
       confirmed_items: confirmedItems,
+      confirmed_invoice_no: (mappingState.invoiceNo || '').trim(),
+      confirmed_date_yyyymmdd: (mappingState.invoiceDate || '').replace(/-/g, ''),
     };
 
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
