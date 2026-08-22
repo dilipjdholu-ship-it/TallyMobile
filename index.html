@@ -4730,6 +4730,22 @@
   // (but never reaching) 95% while the actual Firebase write is in
   // flight -- call .finish() once that write resolves to snap to 100%.
   // prefix is 'scan' (invoice overlay) or 'stmt' (bank statement overlay).
+  // Firebase's set() has no timeout of its own -- confirmed real bug: a
+  // dropped/flaky connection mid-write leaves the promise just hanging,
+  // never resolving AND never rejecting. The upload progress bar's
+  // write-phase animation is designed to climb toward (never reach) 95%
+  // until the write resolves, then snap to 100% -- with the write itself
+  // hanging forever, that shows up exactly as "stuck at 95%, no error,
+  // nothing happens." Wrapping every upload write in this timeout turns
+  // that silent hang into a clear, actionable error instead.
+  const UPLOAD_WRITE_TIMEOUT_MS = 45000;
+  function withTimeout(promise, ms, message) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+    ]);
+  }
+
   function startUploadProgress(prefix) {
     const bar = document.getElementById(`${prefix}-progress-bar`);
     const fill = document.getElementById(`${prefix}-progress-fill`);
@@ -4849,15 +4865,23 @@
       // re-download the whole blob to the phone for no reason. Writing
       // it separately means it's fetched once, by whoever actually needs
       // the bytes (the PC-side OCR/PDF-extraction pipeline).
-      await set(ref(db, `companies/${currentCompany}/invoice_photos/${invoiceId}`), {
-        photo_base64: fileBase64,
-        mime: isPdf ? 'application/pdf' : 'image/jpeg',
-      });
+      await withTimeout(
+        set(ref(db, `companies/${currentCompany}/invoice_photos/${invoiceId}`), {
+          photo_base64: fileBase64,
+          mime: isPdf ? 'application/pdf' : 'image/jpeg',
+        }),
+        UPLOAD_WRITE_TIMEOUT_MS,
+        'Upload is taking too long -- check your connection and try again.'
+      );
 
-      await set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
-        status: 'uploaded',
-        uploaded_at: new Date().toISOString(),
-      });
+      await withTimeout(
+        set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
+          status: 'uploaded',
+          uploaded_at: new Date().toISOString(),
+        }),
+        UPLOAD_WRITE_TIMEOUT_MS,
+        'Upload is taking too long -- check your connection and try again.'
+      );
       progress.finish();
 
       document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
@@ -5805,16 +5829,24 @@
       const fileBase64 = await readPdfAsBase64(stmtCurrentFile, (frac) => progress.readProgress(frac));
 
       progress.startWritePhase();
-      await set(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${stmtId}`), {
-        pdf_base64: fileBase64,
-        mime: 'application/pdf',
-      });
+      await withTimeout(
+        set(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${stmtId}`), {
+          pdf_base64: fileBase64,
+          mime: 'application/pdf',
+        }),
+        UPLOAD_WRITE_TIMEOUT_MS,
+        'Upload is taking too long -- check your connection and try again.'
+      );
 
-      await set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`), {
-        status: 'uploaded',
-        uploaded_at: new Date().toISOString(),
-        date_filter: (dateFrom || dateTo) ? { from: dateFrom, to: dateTo } : null,
-      });
+      await withTimeout(
+        set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`), {
+          status: 'uploaded',
+          uploaded_at: new Date().toISOString(),
+          date_filter: (dateFrom || dateTo) ? { from: dateFrom, to: dateTo } : null,
+        }),
+        UPLOAD_WRITE_TIMEOUT_MS,
+        'Upload is taking too long -- check your connection and try again.'
+      );
       progress.finish();
 
       document.getElementById('stmt-progress-text').textContent = 'Processing statement (this can take a minute)…';
