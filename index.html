@@ -4904,6 +4904,7 @@
           rate: item.rate,
           unit: item.unit,
           amount: item.amount,
+          discount_pct: item.discount_pct,
         })),
       };
       renderMappingScreen();
@@ -4989,6 +4990,13 @@
       <div class="map-section-title">Party</div>
       ${renderPickerHtml('party', -1, partyResult.ocr_party_name, partyResult.remembered_match, partyResult.suggestions)}
     </div>`;
+
+    // Cross-check totals: the invoice's own PRINTED Taxable Value/CGST/
+    // SGST (read directly off the document, not computed) shown next to
+    // what the app currently has from the entered items -- so a person
+    // can visually verify against the physical invoice before posting,
+    // the same way they'd double-check a paper invoice by hand.
+    html += `<div class="map-section" id="map-totals-summary"></div>`;
 
     itemMatches.forEach((item, idx) => {
       const metaWarn = item.needs_manual_check ? ' warn' : '';
@@ -5274,6 +5282,7 @@
         document.querySelectorAll(`[data-gst-row="${idx}"] .map-gst-chip`).forEach(c => c.classList.remove('selected'));
         btn.classList.add('selected');
         updateConfirmButtonState();
+        recalcTotalsSummary();
       });
     });
 
@@ -5286,12 +5295,15 @@
     function recalcAmount(idx) {
       const q = parseFloat(mappingState.items[idx].quantity);
       const r = parseFloat(mappingState.items[idx].rate);
+      const discountPct = parseFloat(mappingState.items[idx].discount_pct);
       if (!isNaN(q) && !isNaN(r)) {
-        const newAmount = (q * r).toFixed(2);
+        const factor = !isNaN(discountPct) ? (1 - discountPct / 100) : 1;
+        const newAmount = (q * r * factor).toFixed(2);
         mappingState.items[idx].amount = newAmount;
         const amountInput = document.querySelector(`[data-amount-idx="${idx}"]`);
         if (amountInput) amountInput.value = newAmount;
       }
+      recalcTotalsSummary();
     }
     document.querySelectorAll('[data-qty-idx]').forEach(input => {
       input.addEventListener('input', () => {
@@ -5308,6 +5320,7 @@
     document.querySelectorAll('[data-amount-idx]').forEach(input => {
       input.addEventListener('input', () => {
         mappingState.items[parseInt(input.dataset.amountIdx, 10)].amount = input.value;
+        recalcTotalsSummary();
       });
     });
     document.querySelectorAll('[data-unit-idx]').forEach(input => {
@@ -5329,12 +5342,75 @@
         mappingState.items.splice(idx, 1);
         renderMappingScreen();
         updateConfirmButtonState();
+        recalcTotalsSummary();
       });
     });
 
     document.getElementById('map-discard-btn').addEventListener('click', discardInvoice);
 
     document.getElementById('map-confirm-btn').addEventListener('click', confirmMapping);
+
+    recalcTotalsSummary();
+  }
+
+  // Cross-check card: what the app currently has (computed live from the
+  // entered quantity/rate/discount/gst-rate per item) next to what the
+  // invoice itself printed (read directly off the document by
+  // extract_invoice_totals -- a separate, independent source, not
+  // derived from these same item lines). Deliberately shows both even
+  // when they don't match -- the point is for the PERSON to notice a
+  // mismatch and go check the paper invoice, not for the app to silently
+  // decide which one is right.
+  function recalcTotalsSummary() {
+    const el = document.getElementById('map-totals-summary');
+    if (!el) return;
+
+    let appTaxable = 0, appCgst = 0, appSgst = 0;
+    let anyGstMissing = false;
+    mappingState.items.forEach(item => {
+      const amt = parseFloat(item.amount);
+      if (!isNaN(amt)) appTaxable += amt;
+      const rate = parseFloat(item.gst_rate);
+      if (!isNaN(amt) && !isNaN(rate)) {
+        appCgst += amt * (rate / 100) / 2;
+        appSgst += amt * (rate / 100) / 2;
+      } else if (!isNaN(amt)) {
+        anyGstMissing = true; // has an amount but no GST rate picked yet
+      }
+    });
+
+    const inv = mappingData.invoice_totals || {};
+    const fmt = n => (n === null || n === undefined || isNaN(n)) ? '—' : `₹${n.toFixed(2)}`;
+    const closeEnough = (a, b) => (a != null && b != null && !isNaN(a) && !isNaN(b) && Math.abs(a - b) < Math.max(1, Math.abs(b) * 0.02));
+
+    const rows = [
+      { label: 'Taxable Value', app: appTaxable, inv: inv.taxable_value },
+      { label: 'CGST', app: anyGstMissing ? null : appCgst, inv: inv.cgst },
+      { label: 'SGST', app: anyGstMissing ? null : appSgst, inv: inv.sgst },
+    ];
+    if (inv.igst != null) {
+      rows.push({ label: 'IGST', app: null, inv: inv.igst });
+    }
+
+    const hasAnyInvoiceTotal = Object.values(inv).some(v => v !== null && v !== undefined);
+
+    el.innerHTML = `
+      <div class="map-section-title">Cross-check totals</div>
+      ${!hasAnyInvoiceTotal ? '<div style="font-size:12.5px; color:var(--ink-soft);">Could not read totals directly off this invoice -- compare against the paper copy manually.</div>' : `
+      <div style="font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; padding:2px 4px;">
+        <span style="flex:1;"></span><span style="width:80px; text-align:right;">App</span><span style="width:80px; text-align:right;">Invoice</span>
+      </div>
+      ${rows.map(r => {
+        const match = r.app != null ? closeEnough(r.app, r.inv) : null;
+        const rowColor = match === false ? 'color:var(--rust); font-weight:700;' : '';
+        return `<div style="font-size:13px; display:flex; justify-content:space-between; padding:4px; ${rowColor}">
+          <span style="flex:1;">${r.label}${match === false ? ' ⚠' : ''}</span>
+          <span style="width:80px; text-align:right;">${fmt(r.app)}</span>
+          <span style="width:80px; text-align:right;">${fmt(r.inv)}</span>
+        </div>`;
+      }).join('')}
+      `}
+    `;
   }
 
   async function selectMappingValue(kind, idx, value, isNew) {
