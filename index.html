@@ -1815,23 +1815,40 @@
   // re-fetches every section that's currently in use for this company,
   // for when the person suspects they're looking at stale data.
   function forceRefreshCurrentCompany() {
-    const state = sectionLoadState[currentCompany] || {};
+    const refreshingCompany = currentCompany;
+    const state = sectionLoadState[refreshingCompany] || {};
     const keysToRefresh = Object.keys(state).filter(k => state[k] === 'loaded' || state[k] === 'cached');
-    keysToRefresh.forEach(pathKey => {
+    document.getElementById('sync-text').textContent = 'Refreshing…';
+
+    const fetches = keysToRefresh.map(pathKey => {
       state[pathKey] = 'loading';
       const path = LAZY_PATHS[pathKey];
-      get(ref(db, `companies/${currentCompany}/${path}`)).then(snapshot => {
+      return get(ref(db, `companies/${refreshingCompany}/${path}`)).then(snapshot => {
         state[pathKey] = 'loaded';
-        companyData[currentCompany][pathKey] = snapshot.val();
-        saveToCache(currentCompany, pathKey, snapshot.val());
-        render();
-        refreshOpenOverlays();
+        companyData[refreshingCompany][pathKey] = snapshot.val();
+        saveToCache(refreshingCompany, pathKey, snapshot.val());
+        if (refreshingCompany === currentCompany) {
+          render();
+          refreshOpenOverlays();
+        }
       }).catch(err => {
         state[pathKey] = 'loaded'; // keep whatever we had
         console.error(`Refresh failed for ${pathKey}:`, err);
       });
     });
-    document.getElementById('sync-text').textContent = 'Refreshing…';
+
+    // Was previously missing entirely -- the label got set to
+    // "Refreshing..." above but nothing ever changed it back once the
+    // fetches actually finished, so it stayed stuck there indefinitely
+    // regardless of how quickly the real data came back. Guarded against
+    // the person having switched to a different company mid-refresh --
+    // that screen's own load flow owns the label at that point, this
+    // shouldn't stomp on it.
+    Promise.allSettled(fetches).then(results => {
+      if (refreshingCompany !== currentCompany) return;
+      const anyFailed = results.some(r => r.status === 'rejected');
+      document.getElementById('sync-text').textContent = anyFailed ? 'Connection error' : 'Live';
+    });
   }
 
   document.getElementById('manual-refresh-btn').addEventListener('click', () => {
@@ -4108,18 +4125,31 @@
     }
   }
 
-  // Purchase vouchers get a deliberately SIMPLER, plainly-labeled summary
-  // PDF -- NOT a copy of the Tax Invoice replica above. That layout
-  // mirrors what Tally itself prints for an invoice WE issued (our
-  // letterhead, "Buyer (Bill to)", a signature block for our company) --
-  // reusing it for a Purchase voucher would misrepresent the document as
-  // if we'd issued it, when it's actually the supplier's invoice we
-  // recorded. This is closer to what the on-screen voucher detail
-  // already shows: items, tax lines, total -- just as a shareable PDF.
   async function exportPurchaseVoucherPDF(mode = 'view') {
     if (!currentVoucherDetail) { alert('No purchase voucher loaded to export.'); return; }
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+
+    // Same reasoning as exportInvoicePDF: HSN is looked up from
+    // stock_items, which is only loaded in the background unless the
+    // person has visited that tab directly.
+    if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
+      const exportBtnId = mode === 'download' ? 'voucher-download-btn'
+        : mode === 'share' ? 'voucher-share-btn' : 'voucher-view-btn';
+      const exportBtn = document.getElementById(exportBtnId);
+      const originalLabel = exportBtn.textContent;
+      exportBtn.textContent = '…';
+      exportBtn.disabled = true;
+      const start = Date.now();
+      while (!(companyData[currentCompany] || {}).stock_items && Date.now() - start < 8000) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+      exportBtn.textContent = originalLabel;
+      exportBtn.disabled = false;
+      if (!(companyData[currentCompany] || {}).stock_items) {
+        console.error('Timed out waiting for stock_items before PDF export -- HSN column may be blank.');
+      }
     }
 
     const { jsPDF } = window.jspdf;
@@ -4127,75 +4157,306 @@
     const v = currentVoucherDetail;
     const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
     const data = companyData[currentCompany] || {};
+    const companyInfo = data.company_info || {};
+    // party_details is only synced for Sundry Debtors (customers), not
+    // Sundry Creditors (suppliers) -- see the sync engine's comment on
+    // party_ref. So this lookup will come back empty for most real
+    // suppliers today; the supplier's NAME (from v.party) still always
+    // shows correctly, just without address/GSTIN/state underneath it
+    // unless creditor details get synced too at some point.
     const supplierLedger = (data.party_details || {})[v.party] || safeArray(Object.values(data.party_details || {})).find(p => p.name === v.party) || {};
+    const stockItems = safeArray(data.stock_items);
+
+    const pageWidth = 210;
+    const marginX = 10;
+    const contentWidth = pageWidth - marginX * 2;
+
+    let y = 10;
+
+    doc.setFontSize(13);
+    doc.setFont(undefined, 'bold');
+    doc.text('Purchase Voucher', pageWidth / 2, y + 5, { align: 'center' });
+    y += 10;
+
+    // ---- Header: Supplier (left) + Voucher No/Date (right) ----
+    // Mirrors exportInvoicePDF's Company+Invoice-No box exactly, except
+    // the left box shows the SUPPLIER (v.party) instead of our own
+    // company -- this is recording THEIR invoice, not issuing one.
+    const headerH = 34;
+    const leftW = contentWidth * 0.62;
+    const rightW = contentWidth - leftW;
+
+    doc.rect(marginX, y, leftW, headerH);
+    doc.rect(marginX + leftW, y, rightW, headerH);
+
+    let ly = y + 5;
+    doc.setFontSize(10.5);
+    doc.setFont(undefined, 'bold');
+    doc.text(String(v.party || '-').toUpperCase(), marginX + 2, ly, { maxWidth: leftW - 4 });
+    ly += 4.5;
+    doc.setFontSize(8.5);
+    doc.setFont(undefined, 'normal');
+    if (supplierLedger.address) {
+      const addrLines = supplierLedger.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
+      doc.text(addrLines.join(', '), marginX + 2, ly, { maxWidth: leftW - 4 });
+      ly += 4 * Math.max(1, Math.ceil(doc.getTextWidth(addrLines.join(', ')) / (leftW - 4)));
+    }
+    if (supplierLedger.gstin) {
+      doc.text(`GSTIN/UIN: ${supplierLedger.gstin}`, marginX + 2, ly);
+      ly += 4;
+    }
+    if (supplierLedger.state) {
+      doc.text(`State Name: ${supplierLedger.state}`, marginX + 2, ly);
+      ly += 4;
+    }
+
+    // Right box: Voucher No / Date
+    const rx = marginX + leftW;
+    doc.setFontSize(8);
+    doc.text('Voucher No.', rx + 2, y + 5);
+    doc.text('Dated', rx + rightW * 0.55, y + 5);
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(9.5);
+    doc.text(String(v.voucher_number || '-'), rx + 2, y + 10);
+    doc.text(formatTallyDate(v.date), rx + rightW * 0.55, y + 10);
+    doc.setFont(undefined, 'normal');
+    doc.line(rx, y + 13, rx + rightW, y + 13);
+    doc.setFontSize(8);
+    doc.text('Mode/Terms of Payment', rx + 2, y + 18);
+    doc.line(rx, y + headerH - 8, rx + rightW, y + headerH - 8);
+    doc.text('Terms of Delivery', rx + 2, y + headerH - 4);
+
+    y += headerH;
+
+    // ---- Buyer box: always Shivam Hardware (or whichever company is
+    // active) -- WE are the buyer on every purchase voucher, by
+    // definition, so this is our own companyInfo rather than a
+    // party_details lookup. ----
+    const buyerH = 26;
+    doc.rect(marginX, y, contentWidth, buyerH);
+    let by = y + 4.5;
+    doc.setFontSize(8);
+    doc.text('Buyer (Bill to)', marginX + 2, by);
+    by += 4.5;
+    doc.setFontSize(9.5);
+    doc.setFont(undefined, 'bold');
+    doc.text(companyLabel.toUpperCase(), marginX + 2, by);
+    doc.setFont(undefined, 'normal');
+    by += 4;
+    doc.setFontSize(8.5);
+    if (companyInfo.address) {
+      const addrLines = companyInfo.address.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
+      doc.text(addrLines.join(', '), marginX + 2, by, { maxWidth: contentWidth - 4 });
+      by += 4;
+    }
+    if (companyInfo.gstin) {
+      doc.text(`GSTIN/UIN: ${companyInfo.gstin}`, marginX + 2, by);
+      by += 4;
+    }
+    if (companyInfo.state) {
+      doc.text(`State Name: ${companyInfo.state}`, marginX + 2, by);
+      by += 4;
+      doc.text(`Place of Supply: ${companyInfo.state}`, marginX + 2, by);
+    }
+
+    y += buyerH;
+
+    // ---- Item table -- identical column set/logic to exportInvoicePDF.
+    // The underlying fields (sales_ledger_name, billed_qty, rate,
+    // discount) are named the same regardless of voucher type -- see
+    // parse_detailed_vouchers in the sync engine, shared by both. ----
     const items = safeArray(v.items);
     const ledgerLines = safeArray(v.ledger_lines);
 
-    const pageWidth = 210;
-    const marginX = 14;
-    const contentWidth = pageWidth - marginX * 2;
-    let y = 16;
+    const cols = [
+      { key: 'sl', label: 'Sl\nNo.', w: 8, align: 'center' },
+      { key: 'desc', label: 'Description of Goods', w: 52, align: 'left' },
+      { key: 'hsn', label: 'HSN/SAC', w: 18, align: 'center' },
+      { key: 'gst', label: 'GST\nRate', w: 12, align: 'center' },
+      { key: 'qty', label: 'Quantity', w: 22, align: 'right' },
+      { key: 'rate', label: 'Rate', w: 20, align: 'right' },
+      { key: 'per', label: 'per', w: 12, align: 'center' },
+      { key: 'disc', label: 'Disc %', w: 12, align: 'center' },
+      { key: 'amount', label: 'Amount', w: contentWidth - (8+52+18+12+22+20+12+12), align: 'right' },
+    ];
 
-    doc.setFontSize(14);
-    doc.setFont(undefined, 'bold');
-    doc.text(`${companyLabel} — Purchase Voucher`, marginX, y);
-    y += 8;
-    doc.setFontSize(9.5);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Purchase #${v.voucher_number || '-'}  ·  ${formatTallyDate(v.date)}`, marginX, y);
-    y += 5;
-    doc.text(`Supplier: ${v.party || '-'}`, marginX, y);
-    y += 5;
-    if (supplierLedger.gstin) {
-      doc.text(`GSTIN: ${supplierLedger.gstin}`, marginX, y);
-      y += 5;
+    const rowH = 6;
+    const headH = 9;
+
+    function drawTableHeader() {
+      let cx = marginX;
+      cols.forEach(c => {
+        pdfCell(doc, cx, y, c.w, headH, c.label, { align: 'center', bold: true, fontSize: 7.5 });
+        cx += c.w;
+      });
+      y += headH;
     }
+
+    drawTableHeader();
+
+    function hsnFor(item) {
+      if (item.hsn_code) return item.hsn_code;
+      const match = stockItems.find(s => s.name === item.item_name);
+      return match && match.hsn_code ? match.hsn_code : '';
+    }
+
+    items.forEach((item, idx) => {
+      if (y + rowH > 280) {
+        doc.addPage();
+        y = 15;
+        drawTableHeader();
+      }
+      const { qty, unit } = parseQtyUnit(item.billed_qty);
+      const { rate, per } = parseRatePer(item.rate);
+      const gstRate = extractGstRate(item.sales_ledger_name);
+      const discount = parseAmt(item.discount);
+
+      let cx = marginX;
+      const rowVals = {
+        sl: String(idx + 1),
+        desc: item.item_name || '-',
+        hsn: hsnFor(item) || '',
+        gst: gstRate ? `${gstRate}%` : '',
+        qty: `${qty} ${unit}`.trim(),
+        rate: rate.trim(),
+        per: per.trim(),
+        disc: discount ? `${discount}%` : '',
+        amount: formatCurrencyPDF(parseAmt(item.amount)),
+      };
+      cols.forEach(c => {
+        pdfCell(doc, cx, y, c.w, rowH, rowVals[c.key], { align: c.align, fontSize: 7.5 });
+        cx += c.w;
+      });
+      y += rowH;
+    });
+
+    const descAndBeforeW = cols.slice(0, cols.length - 1).reduce((s, c) => s + c.w, 0);
+    const amountColX = marginX + descAndBeforeW;
+    const amountColW = cols[cols.length - 1].w;
+
+    let grandTotal = parseAmt(v.amount);
+
+    buildDisplayTaxLines(items, ledgerLines, v.party).forEach(line => {
+      if (y + rowH > 280) { doc.addPage(); y = 15; }
+      doc.rect(marginX, y, descAndBeforeW, rowH);
+      doc.setFont(undefined, 'italic');
+      doc.setFontSize(8);
+      doc.text(line.ledger_name || '-', marginX + descAndBeforeW - 2, y + rowH / 2 + 1, { align: 'right' });
+      doc.setFont(undefined, 'normal');
+      pdfCell(doc, amountColX, y, amountColW, rowH, formatCurrencyPDF(Math.abs(parseAmt(line.amount))), { align: 'right', fontSize: 7.5 });
+      y += rowH;
+    });
+
+    if (y + rowH > 280) { doc.addPage(); y = 15; }
+    pdfCell(doc, marginX, y, descAndBeforeW, rowH, 'Total', { align: 'right', bold: true, fontSize: 8.5 });
+    pdfCell(doc, amountColX, y, amountColW, rowH, formatCurrencyPDF(Math.abs(grandTotal)), { align: 'right', bold: true, fontSize: 8.5 });
+    y += rowH;
+
+    const wordsH = 10;
+    doc.rect(marginX, y, contentWidth, wordsH);
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('Amount Chargeable (in words)', marginX + 2, y + 4);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(8.5);
+    doc.text(amountInWords(grandTotal), marginX + 2, y + 8, { maxWidth: contentWidth - 4 });
+    y += wordsH;
+
+    // ---- HSN-wise tax summary table -- same cross-check value as on
+    // the sales side. ----
+    const hsnGroups = {};
+    items.forEach(item => {
+      const hsn = hsnFor(item) || 'N/A';
+      const gstRate = extractGstRate(item.sales_ledger_name) || 0;
+      const key = `${hsn}|${gstRate}`;
+      if (!hsnGroups[key]) hsnGroups[key] = { hsn, gstRate, taxable: 0 };
+      hsnGroups[key].taxable += Math.abs(parseAmt(item.amount));
+    });
+    const hasIGST = ledgerLines.some(l => (l.ledger_name || '').toUpperCase().includes('IGST'));
+
+    if (y + 10 > 280) { doc.addPage(); y = 15; }
+
+    const hsnCols = hasIGST
+      ? [
+          { key: 'hsn', label: 'HSN/SAC', w: 30 },
+          { key: 'taxable', label: 'Taxable\nValue', w: 32 },
+          { key: 'igstRate', label: 'IGST Rate', w: 26 },
+          { key: 'igstAmt', label: 'IGST Amount', w: 32 },
+          { key: 'total', label: 'Total Tax Amount', w: contentWidth - (30+32+26+32) },
+        ]
+      : [
+          { key: 'hsn', label: 'HSN/SAC', w: 26 },
+          { key: 'taxable', label: 'Taxable\nValue', w: 28 },
+          { key: 'cgstRate', label: 'CGST Rate', w: 20 },
+          { key: 'cgstAmt', label: 'CGST Amount', w: 26 },
+          { key: 'sgstRate', label: 'SGST Rate', w: 20 },
+          { key: 'sgstAmt', label: 'SGST Amount', w: 26 },
+          { key: 'total', label: 'Total Tax Amount', w: contentWidth - (26+28+20+26+20+26) },
+        ];
+
+    let hx = marginX;
+    hsnCols.forEach(c => {
+      pdfCell(doc, hx, y, c.w, 9, c.label, { align: 'center', bold: true, fontSize: 7 });
+      hx += c.w;
+    });
+    y += 9;
+
+    let hsnTotalTaxable = 0, hsnTotalTax = 0;
+    Object.values(hsnGroups).forEach(g => {
+      if (y + rowH > 280) { doc.addPage(); y = 15; }
+      const halfRate = g.gstRate / 2;
+      const cgstAmt = g.taxable * halfRate / 100;
+      const sgstAmt = g.taxable * halfRate / 100;
+      const igstAmt = g.taxable * g.gstRate / 100;
+      const totalTax = hasIGST ? igstAmt : (cgstAmt + sgstAmt);
+      hsnTotalTaxable += g.taxable;
+      hsnTotalTax += totalTax;
+
+      hx = marginX;
+      const rowVals = hasIGST
+        ? { hsn: g.hsn, taxable: formatCurrencyPDF(g.taxable), igstRate: `${g.gstRate}%`, igstAmt: formatCurrencyPDF(igstAmt), total: formatCurrencyPDF(totalTax) }
+        : { hsn: g.hsn, taxable: formatCurrencyPDF(g.taxable), cgstRate: `${halfRate}%`, cgstAmt: formatCurrencyPDF(cgstAmt), sgstRate: `${halfRate}%`, sgstAmt: formatCurrencyPDF(sgstAmt), total: formatCurrencyPDF(totalTax) };
+      hsnCols.forEach(c => {
+        pdfCell(doc, hx, y, c.w, rowH, rowVals[c.key], { align: c.key === 'hsn' ? 'center' : 'right', fontSize: 7.5 });
+        hx += c.w;
+      });
+      y += rowH;
+    });
+
+    hx = marginX;
+    const hsnTotalVals = hasIGST
+      ? { hsn: 'Total', taxable: formatCurrencyPDF(hsnTotalTaxable), igstRate: '', igstAmt: '', total: formatCurrencyPDF(hsnTotalTax) }
+      : { hsn: 'Total', taxable: formatCurrencyPDF(hsnTotalTaxable), cgstRate: '', cgstAmt: '', sgstRate: '', sgstAmt: '', total: formatCurrencyPDF(hsnTotalTax) };
+    hsnCols.forEach(c => {
+      pdfCell(doc, hx, y, c.w, rowH, hsnTotalVals[c.key], { align: c.key === 'hsn' ? 'center' : 'right', bold: true, fontSize: 7.5 });
+      hx += c.w;
+    });
+    y += rowH + 4;
+
+    if (y + 8 > 280) { doc.addPage(); y = 15; }
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('Tax Amount (in words):', marginX, y);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(8.5);
+    doc.text(amountInWords(hsnTotalTax), marginX + 32, y, { maxWidth: contentWidth - 34 });
+    y += 14;
+
+    // Deliberately no Declaration / Bank Details boxes here -- those are
+    // seller-side concerns (declaring accuracy of an invoice WE issued,
+    // giving OUR bank details so a customer can pay US) that don't apply
+    // to a record of something we bought.
     if (v.narration) {
+      doc.setFontSize(8);
       doc.setFont(undefined, 'italic');
       doc.text(v.narration, marginX, y, { maxWidth: contentWidth });
       doc.setFont(undefined, 'normal');
-      y += 6;
+      y += 8;
     }
-    y += 3;
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 6;
 
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'bold');
-    doc.text('Item', marginX, y);
-    doc.text('Qty', marginX + 100, y, { align: 'right' });
-    doc.text('Rate', marginX + 135, y, { align: 'right' });
-    doc.text('Amount', pageWidth - marginX, y, { align: 'right' });
-    doc.setFont(undefined, 'normal');
-    y += 2;
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 6;
-
-    items.forEach(item => {
-      if (y > 275) { doc.addPage(); y = 16; }
-      doc.text(String(item.item_name || '—'), marginX, y, { maxWidth: 95 });
-      doc.text(String((item.billed_qty || '').trim()), marginX + 100, y, { align: 'right' });
-      doc.text(String((item.rate || '').trim()), marginX + 135, y, { align: 'right' });
-      doc.text(formatCurrencyPDF(parseAmt(item.amount)), pageWidth - marginX, y, { align: 'right' });
-      y += 6;
-    });
-
-    y += 2;
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 7;
-
-    doc.setFontSize(9);
-    buildDisplayTaxLines(items, ledgerLines, v.party).forEach(l => {
-      if (y > 280) { doc.addPage(); y = 16; }
-      doc.text(String(l.ledger_name || '—'), marginX, y);
-      doc.text(formatCurrencyPDF(Math.abs(parseAmt(l.amount))), pageWidth - marginX, y, { align: 'right' });
-      y += 6;
-    });
-
-    y += 2;
-    doc.setFont(undefined, 'bold');
-    doc.text('Total', marginX, y);
-    doc.text(formatCurrencyPDF(Math.abs(parseAmt(v.amount))), pageWidth - marginX, y, { align: 'right' });
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'italic');
+    doc.text('This is a Computer Generated Purchase Voucher', pageWidth / 2, y, { align: 'center' });
 
     const filename = `purchase_${v.voucher_number || 'export'}.pdf`;
     if (mode === 'download') {
