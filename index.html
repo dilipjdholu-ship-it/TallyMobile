@@ -53,10 +53,29 @@
 
   button { font-family: inherit; cursor: pointer; }
 
-  /* ===== Login Screen ===== */
-  #login-screen {
+  /* ===== Splash Screen ===== */
+  /* The REAL default state -- visible instantly, pure CSS, before any JS
+     runs. login-screen and app-screen both start hidden now (see below)
+     so neither shows prematurely; onAuthStateChanged picks exactly one
+     of them once it actually knows the answer, eliminating the flash. */
+  #splash-screen {
     min-height: 100dvh;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary-dark);
+    background-image: radial-gradient(circle at 20% 20%, #1976d2 0%, var(--primary-dark) 60%);
+  }
+  #splash-screen .splash-mark {
+    width: 64px; height: 64px; border-radius: 16px;
+    overflow: hidden;
+  }
+  #splash-screen .splash-mark svg { display: block; width: 100%; height: 100%; }
+
+  /* ===== Login Screen ===== */
+  #login-screen {
+    display: none;
+    min-height: 100dvh;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -74,16 +93,12 @@
     text-align: center;
   }
   .login-mark {
-    width: 48px; height: 48px;
+    width: 64px; height: 64px;
     margin: 0 auto 18px;
-    border-radius: 10px;
-    background: var(--primary);
-    display: flex; align-items: center; justify-content: center;
-    color: var(--paper);
-    font-family: 'Inter', sans-serif; font-weight: 800;
-    font-weight: 700;
-    font-size: 22px;
+    border-radius: 16px;
+    overflow: hidden;
   }
+  .login-mark svg { display: block; width: 100%; height: 100%; }
   .login-card h1 { font-size: 22px; margin: 0 0 4px; color: var(--ink); }
   .login-card p { font-size: 13px; color: var(--ink-soft); margin: 0 0 24px; }
   .login-card input {
@@ -732,7 +747,34 @@
     display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 8px;
   }
+  .map-field-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 4px; }
+  .map-field-input {
+    width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1.5px solid var(--border); font-size: 13.5px;
+  }
+  .map-field-input.spaced { margin-bottom: 10px; }
+  .map-field-warn { font-size: 12px; color: var(--amber); margin-top: 6px; }
+  .new-item-card { border: 1.5px solid var(--rust); border-radius: 9px; padding: 12px; margin-top: 6px; }
+  .new-item-card-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
   .map-section-title-row .map-section-title { margin-bottom: 0; }
+  .totals-card.mismatch {
+    border-left: 4px solid var(--rust);
+    background: var(--rust-soft);
+    border-radius: 8px;
+  }
+  .totals-card-hint { font-size: 12.5px; color: var(--ink-soft); }
+  .totals-header-row {
+    font-size: 12px; color: var(--ink-soft);
+    display: flex; justify-content: space-between; padding: 2px 4px;
+  }
+  .totals-header-row span { width: 80px; text-align: right; }
+  .totals-header-row span:first-child { flex: 1; width: auto; text-align: left; }
+  .totals-row {
+    font-size: 13px; display: flex; justify-content: space-between; padding: 4px;
+  }
+  .totals-row span { width: 80px; text-align: right; }
+  .totals-row span:first-child { flex: 1; width: auto; text-align: left; }
+  .totals-row.mismatch { color: var(--rust); font-weight: 700; }
   .map-remove-item-btn {
     padding: 5px 10px;
     border-radius: 7px;
@@ -942,11 +984,26 @@
 <body>
 
 <!-- ===== LOGIN SCREEN ===== -->
+<div id="splash-screen">
+  <div class="splash-mark">
+    <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0" y="0" width="512" height="512" rx="112" fill="#1565c0"/>
+      <path d="M0 112 L0 512 L398 512 Z" fill="#f0a020"/>
+      <path d="M142 250 L228 330 L382 154" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+</div>
+
 <div id="login-screen">
   <div class="login-card">
-    <div class="login-mark">S</div>
+    <div class="login-mark">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="512" height="512" rx="112" fill="#1565c0"/>
+        <path d="M0 112 L0 512 L398 512 Z" fill="#f0a020"/>
+        <path d="M142 250 L228 330 L382 154" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
     <h1>TallyMobile</h1>
-    <p>Shivam Hardware &middot; Satyam Traders &middot; Shivam Traders</p>
     <input type="email" id="email-input" placeholder="Email" autocomplete="username">
     <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
     <button class="primary" id="login-btn">Sign in</button>
@@ -1576,6 +1633,7 @@
   // screen, so behavior is identical whether this is a fresh sign-in or a
   // restored session.
   onAuthStateChanged(auth, (user) => {
+    document.getElementById('splash-screen').style.display = 'none';
     if (user && user.isAnonymous) {
       // Leftover anonymous session from before this app switched to real
       // email/password auth. Disabling the Anonymous provider in the
@@ -1641,6 +1699,17 @@
   // always has a fresh timestamp to judge staleness against). Started
   // once at app init rather than per-company, since switching companies
   // shouldn't re-subscribe to something that isn't company-scoped.
+  let tallyUnreachableSince = null; // Date | null -- tracked client-side, resets on app reload
+
+  function formatRelativeDuration(fromDate) {
+    const mins = Math.floor((Date.now() - fromDate.getTime()) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 min';
+    if (mins < 60) return `${mins} min`;
+    const hrs = Math.floor(mins / 60);
+    return hrs === 1 ? '1 hr' : `${hrs} hr`;
+  }
+
   function listenToTallyStatus() {
     onValue(ref(db, 'sync_status'), snapshot => {
       const val = snapshot.val() || {};
@@ -1654,17 +1723,29 @@
       const staleMs = checkedAt ? (Date.now() - checkedAt.getTime()) : Infinity;
       const isStale = staleMs > 20 * 60 * 1000; // no update in 20+ min
       if (val.tally_reachable === false) {
-        banner.textContent = 'Tally is closed on the PC — invoice posting and live lookups are paused until it\'s reopened.';
+        if (!tallyUnreachableSince) tallyUnreachableSince = new Date();
+        banner.textContent = `Tally is closed on the PC (${formatRelativeDuration(tallyUnreachableSince)}) — invoice posting and live lookups are paused until it's reopened.`;
         banner.style.display = '';
       } else if (isStale) {
         banner.textContent = 'Haven\'t heard from the sync app on the PC in a while — make sure it\'s running.';
         banner.style.display = '';
       } else {
+        tallyUnreachableSince = null;
         banner.style.display = 'none';
       }
     }, error => {
       console.error('sync_status listener error', error);
     });
+
+    // The banner text includes a relative duration -- refresh it on a
+    // timer so it counts up ("2 min" -> "3 min") without waiting for
+    // the next Firebase update, which could be several minutes away.
+    setInterval(() => {
+      const banner = document.getElementById('tally-status-banner');
+      if (banner && tallyUnreachableSince && banner.style.display !== 'none') {
+        banner.textContent = `Tally is closed on the PC (${formatRelativeDuration(tallyUnreachableSince)}) — invoice posting and live lookups are paused until it's reopened.`;
+      }
+    }, 30000);
   }
 
   function attachSectionNav() {
@@ -5281,18 +5362,17 @@
       <div class="map-section-title">Invoice Details</div>
       <div class="map-rate-unit-row">
         <div>
-          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Invoice No.</div>
+          <div class="map-field-label">Invoice No.</div>
           <input type="text" id="map-invoice-no-input" value="${escapeHtml(mappingState.invoiceNo ?? '')}"
-            placeholder="e.g. 4135"
-            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+            placeholder="e.g. 4135" class="map-field-input">
         </div>
         <div>
-          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Date</div>
+          <div class="map-field-label">Date</div>
           <input type="date" id="map-invoice-date-input" value="${escapeHtml(mappingState.invoiceDate ?? '')}"
-            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+            class="map-field-input">
         </div>
       </div>
-      ${(!fields.invoice_no || !fields.date_yyyymmdd) ? '<div style="font-size:12px; color:var(--amber); margin-top:6px;">⚠ Could not read this directly off the invoice -- please check/fill in.</div>' : ''}
+      ${(!fields.invoice_no || !fields.date_yyyymmdd) ? '<div class="map-field-warn">⚠ Could not read this directly off the invoice -- please check/fill in.</div>' : ''}
     </div>`;
 
     html += `<div class="map-section">
@@ -5324,26 +5404,22 @@
         ${renderPickerHtml('item', idx, item.ocr_description, item.remembered_match, item.suggestions)}
         <div class="map-rate-unit-row map-qty-rate-unit-row">
           <div>
-            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Quantity</div>
-            <input type="text" class="map-qty-input" data-qty-idx="${idx}" value="${escapeHtml(st.quantity ?? '')}"
-              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+            <div class="map-field-label">Quantity</div>
+            <input type="text" class="map-qty-input map-field-input" data-qty-idx="${idx}" value="${escapeHtml(st.quantity ?? '')}">
           </div>
           <div>
-            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Rate</div>
-            <input type="text" class="map-rate-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}"
-              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+            <div class="map-field-label">Rate</div>
+            <input type="text" class="map-rate-input map-field-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}">
           </div>
           <div>
-            <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Unit</div>
-            <input type="text" class="map-unit-input" data-unit-idx="${idx}" value="${escapeHtml(st.unit ?? '')}"
-              placeholder="e.g. Nos, Kg"
-              style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px;">
+            <div class="map-field-label">Unit</div>
+            <input type="text" class="map-unit-input map-field-input" data-unit-idx="${idx}" value="${escapeHtml(st.unit ?? '')}"
+              placeholder="e.g. Nos, Kg">
           </div>
         </div>
         <div>
-          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">Amount (auto-fills from Qty × Rate — edit if it should differ, e.g. after a discount)</div>
-          <input type="text" class="map-amount-input" data-amount-idx="${idx}" value="${escapeHtml(st.amount ?? '')}"
-            style="width:100%; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin-bottom:10px;">
+          <div class="map-field-label">Amount (auto-fills from Qty × Rate — edit if it should differ, e.g. after a discount)</div>
+          <input type="text" class="map-amount-input map-field-input spaced" data-amount-idx="${idx}" value="${escapeHtml(st.amount ?? '')}">
         </div>
         <div class="map-gst-row" data-gst-row="${idx}">
           ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip${st.gst_rate === String(r) ? ' selected' : ''}" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
@@ -5465,19 +5541,19 @@
     const ocrHsn = item.hsn_guess || '';
 
     container.innerHTML = `
-      <div style="border:1.5px solid var(--rust); border-radius:9px; padding:12px; margin-top:6px;">
-        <div style="font-weight:700; font-size:13px; margin-bottom:8px;">New item: ${escapeHtml(typedName)}</div>
-        <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">HSN/SAC Code</div>
+      <div class="new-item-card">
+        <div class="new-item-card-title">New item: ${escapeHtml(typedName)}</div>
+        <div class="map-field-label">HSN/SAC Code</div>
         <input type="text" id="new-item-hsn-${idx}" value="${escapeHtml(ocrHsn)}" placeholder="e.g. 40021100"
-          style="width:100%; padding:9px 11px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin-bottom:10px;">
-        <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">
+          class="map-field-input spaced">
+        <div class="map-field-label">
           Unit${ocrUnit ? ` (OCR guessed: ${escapeHtml(ocrUnit)})` : ''}
         </div>
         <div class="map-options" id="new-item-unit-options-${idx}">
           ${realUnits.map(u => `<button type="button" class="map-option unit-chip" data-unit="${escapeHtml(u)}">${escapeHtml(u)}</button>`).join('')}
         </div>
         <input type="text" id="new-item-unit-custom-${idx}" placeholder="Or type a unit not in the list above…"
-          style="width:100%; padding:9px 11px; border-radius:8px; border:1.5px solid var(--border); font-size:13.5px; margin:8px 0 10px;">
+          class="map-field-input" style="margin:8px 0 10px;">
         <button type="button" id="new-item-confirm-${idx}" class="scan-btn" style="margin:0;">Confirm New Item</button>
       </div>
     `;
@@ -5709,22 +5785,22 @@
     }
 
     const hasAnyInvoiceTotal = Object.values(inv).some(v => v !== null && v !== undefined);
+    const rowsWithMatch = rows.map(r => ({ ...r, match: r.app != null ? closeEnough(r.app, r.inv) : null }));
+    const anyMismatch = rowsWithMatch.some(r => r.match === false);
 
+    el.className = 'map-section totals-card' + (anyMismatch ? ' mismatch' : '');
     el.innerHTML = `
       <div class="map-section-title">Cross-check totals</div>
-      ${!hasAnyInvoiceTotal ? '<div style="font-size:12.5px; color:var(--ink-soft);">Could not read totals directly off this invoice -- compare against the paper copy manually.</div>' : `
-      <div style="font-size:12px; color:var(--ink-soft); display:flex; justify-content:space-between; padding:2px 4px;">
-        <span style="flex:1;"></span><span style="width:80px; text-align:right;">App</span><span style="width:80px; text-align:right;">Invoice</span>
+      ${!hasAnyInvoiceTotal ? '<div class="totals-card-hint">Could not read totals directly off this invoice -- compare against the paper copy manually.</div>' : `
+      <div class="totals-header-row">
+        <span></span><span>App</span><span>Invoice</span>
       </div>
-      ${rows.map(r => {
-        const match = r.app != null ? closeEnough(r.app, r.inv) : null;
-        const rowColor = match === false ? 'color:var(--rust); font-weight:700;' : '';
-        return `<div style="font-size:13px; display:flex; justify-content:space-between; padding:4px; ${rowColor}">
-          <span style="flex:1;">${r.label}${match === false ? ' ⚠' : ''}</span>
-          <span style="width:80px; text-align:right;">${fmt(r.app)}</span>
-          <span style="width:80px; text-align:right;">${fmt(r.inv)}</span>
-        </div>`;
-      }).join('')}
+      ${rowsWithMatch.map(r => `
+        <div class="totals-row${r.match === false ? ' mismatch' : ''}">
+          <span>${r.label}${r.match === false ? ' ⚠' : ''}</span>
+          <span>${fmt(r.app)}</span>
+          <span>${fmt(r.inv)}</span>
+        </div>`).join('')}
       `}
     `;
   }
@@ -5802,6 +5878,7 @@
       unit: mappingState.items[idx].unit,
       hsn_guess: item.hsn_guess,
       gst_rate: parseInt(mappingState.items[idx].gst_rate, 10),
+      discount_pct: mappingState.items[idx].discount_pct ?? null,
     }));
 
     const payload = {
