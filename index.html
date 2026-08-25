@@ -1028,6 +1028,7 @@
       <div class="top-row-right">
         <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
         <button class="refresh-btn" id="manual-refresh-btn" title="Refresh data" aria-label="Refresh data">&#8635;</button>
+        <button class="refresh-btn" id="gst-settings-gear-btn" title="GST & Ledger Settings" aria-label="GST & Ledger Settings">&#9881;</button>
         <button class="refresh-btn" id="logout-btn" title="Sign out" aria-label="Sign out">&#9211;</button>
       </div>
     </div>
@@ -1089,6 +1090,21 @@
       <span class="fc-icon">🏦</span><span>Upload Bank Statement</span>
     </button>
     <button class="fab-chooser-cancel" id="fab-chooser-cancel">Cancel</button>
+  </div>
+
+  <!-- Settings chooser -- keeps the header to one gear icon instead of
+       adding a second one per settings category. -->
+  <div class="fab-chooser-backdrop" id="settings-chooser-backdrop"></div>
+  <div class="fab-chooser-sheet" id="settings-chooser-sheet" style="display:none;">
+    <div class="fab-chooser-handle"></div>
+    <div class="fab-chooser-title">Settings</div>
+    <button class="fab-chooser-option" id="settings-choose-gst">
+      <span class="fc-icon">⚙</span><span>GST & Ledger Settings</span>
+    </button>
+    <button class="fab-chooser-option" id="settings-choose-company">
+      <span class="fc-icon">🏢</span><span>Company Details</span>
+    </button>
+    <button class="fab-chooser-cancel" id="settings-chooser-cancel">Cancel</button>
   </div>
 
   <!-- Review Queue Overlay -- lists every not-yet-finished invoice and
@@ -1204,6 +1220,92 @@
           <div id="stmt-result-body"></div>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <!-- GST & Ledger Settings Overlay -- per-company. Stored at
+       companies/{key}/gst_settings, read by the PC sync engine in
+       preference to its hardcoded CONFIG table (same pattern as
+       bank_statement_settings above). Purchase ledgers are used for
+       posting today; Sales ledgers aren't read by anything yet -- saved
+       in preparation for an upcoming in-app sales voucher feature. -->
+  <div id="gst-settings-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="gst-settings-back">&larr; Back</button>
+        <div class="overlay-title">GST & Ledger Settings</div>
+      </div>
+      <div class="overlay-body">
+        <div class="map-section">
+          <p class="totals-card-hint" style="margin-bottom:10px;">Settings apply to <strong id="gst-settings-company-name"></strong>. Switch company from the main screen to edit another company's settings.</p>
+        </div>
+
+        <div class="map-section">
+          <div class="map-section-title">GST Ledgers</div>
+          <div class="map-field-label">CGST Ledger</div>
+          <select class="stmt-ledger-select map-field-input spaced" id="gst-cgst-select"></select>
+          <div class="map-field-label">SGST Ledger</div>
+          <select class="stmt-ledger-select map-field-input" id="gst-sgst-select"></select>
+        </div>
+
+        <div class="map-section">
+          <div class="map-section-title">Purchase Ledgers by Rate</div>
+          <p class="totals-card-hint" style="margin:-4px 0 10px;">Used today when posting a purchase invoice from the app.</p>
+          <div id="gst-purchase-rate-selects"></div>
+        </div>
+
+        <div class="map-section">
+          <div class="map-section-title">Sales Ledgers by Rate</div>
+          <p class="totals-card-hint" style="margin:-4px 0 10px;">Not used yet -- saved in preparation for creating sales vouchers from the app.</p>
+          <div id="gst-sales-rate-selects"></div>
+        </div>
+
+        <div id="gst-settings-error" class="map-field-warn" style="display:none;"></div>
+        <button class="map-confirm-btn" id="gst-settings-save-btn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Company Details Overlay -- letterhead/banking info shown on
+       invoice PDF exports. Same Firebase path (companies/{key}/
+       company_info) already used by exportInvoicePDF/
+       exportPurchaseVoucherPDF -- this just adds a way to edit it from
+       the phone instead of only the desktop GUI's "Company Details" tab. -->
+  <div id="company-details-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="company-details-back">&larr; Back</button>
+        <div class="overlay-title">Company Details</div>
+      </div>
+      <div class="overlay-body">
+        <div class="map-section">
+          <p class="totals-card-hint" style="margin-bottom:10px;">Letterhead details for <strong id="company-details-company-name"></strong> -- shown on invoice PDF exports. Switch company from the main screen to edit another company's details.</p>
+        </div>
+
+        <div class="map-section">
+          <div class="map-field-label">Address</div>
+          <textarea id="cd-address" class="map-field-input spaced" rows="3" placeholder="Full registered address"></textarea>
+          <div class="map-field-label">GSTIN</div>
+          <input type="text" id="cd-gstin" class="map-field-input spaced" placeholder="e.g. 27AQPPP2019P1Z6">
+          <div class="map-field-label">State</div>
+          <input type="text" id="cd-state" class="map-field-input spaced" placeholder="e.g. Maharashtra">
+          <div class="map-field-label">Email</div>
+          <input type="email" id="cd-email" class="map-field-input">
+        </div>
+
+        <div class="map-section">
+          <div class="map-section-title">Bank Details</div>
+          <div class="map-field-label">Bank Name</div>
+          <input type="text" id="cd-bank-name" class="map-field-input spaced">
+          <div class="map-field-label">Bank Account Number</div>
+          <input type="text" id="cd-bank-account" class="map-field-input spaced">
+          <div class="map-field-label">Bank IFSC Code</div>
+          <input type="text" id="cd-bank-ifsc" class="map-field-input">
+        </div>
+
+        <div id="company-details-error" class="map-field-warn" style="display:none;"></div>
+        <button class="map-confirm-btn" id="company-details-save-btn">Save Details</button>
       </div>
     </div>
   </div>
@@ -1586,6 +1688,181 @@
   }
   document.getElementById('logout-btn').addEventListener('click', () => {
     if (confirm('Sign out?')) logOut();
+  });
+
+  // ===== GST & Ledger Settings =====
+  // Stored at companies/{key}/gst_settings, read by the PC sync engine
+  // in preference to its hardcoded CONFIG table -- same pattern as
+  // bank_statement_settings. purchase_by_rate is read at posting time
+  // today; sales_by_rate isn't read by anything yet (prep for an
+  // upcoming sales voucher feature), so both are saved together but
+  // only one currently does anything.
+  const GST_RATES = [0, 5, 12, 18, 28];
+
+  function renderRateSelects(containerId, prefix, existingMap, names) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = GST_RATES.map(r => `
+      <div class="map-field-label">${r}%</div>
+      <select class="stmt-ledger-select map-field-input spaced" id="${prefix}-${r}"></select>
+    `).join('');
+    GST_RATES.forEach(r => {
+      populateLedgerSelect(document.getElementById(`${prefix}-${r}`), names, (existingMap || {})[String(r)]);
+    });
+  }
+
+  function readRateSelects(prefix) {
+    const map = {};
+    GST_RATES.forEach(r => {
+      const val = document.getElementById(`${prefix}-${r}`).value;
+      if (val) map[String(r)] = val;
+    });
+    return map;
+  }
+
+  async function openGstSettingsOverlay() {
+    document.getElementById('gst-settings-error').style.display = 'none';
+    document.getElementById('gst-settings-company-name').textContent =
+      COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    openOverlay('gst-settings-overlay');
+
+    const cgstSelect = document.getElementById('gst-cgst-select');
+    const sgstSelect = document.getElementById('gst-sgst-select');
+    cgstSelect.innerHTML = '<option>Loading ledgers…</option>';
+    sgstSelect.innerHTML = '<option>Loading ledgers…</option>';
+
+    let existing = null;
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/gst_settings`));
+      existing = snap.val();
+    } catch (err) {
+      console.error('Could not load existing GST settings:', err);
+    }
+
+    const names = await fetchLedgerNames();
+    if (names.length === 0) {
+      document.getElementById('gst-settings-error').textContent =
+        'Could not load your ledger list (Tally may not have synced yet). You can still type exact ledger names below once options appear, or try again shortly.';
+      document.getElementById('gst-settings-error').style.display = 'block';
+    }
+    populateLedgerSelect(cgstSelect, names, existing?.cgst_ledger);
+    populateLedgerSelect(sgstSelect, names, existing?.sgst_ledger);
+    renderRateSelects('gst-purchase-rate-selects', 'gst-purchase', existing?.purchase_by_rate, names);
+    renderRateSelects('gst-sales-rate-selects', 'gst-sales', existing?.sales_by_rate, names);
+  }
+
+  document.getElementById('gst-settings-gear-btn').addEventListener('click', () => {
+    document.getElementById('settings-chooser-backdrop').classList.add('open');
+    document.getElementById('settings-chooser-sheet').style.display = 'block';
+  });
+  function closeSettingsChooser() {
+    document.getElementById('settings-chooser-backdrop').classList.remove('open');
+    document.getElementById('settings-chooser-sheet').style.display = 'none';
+  }
+  document.getElementById('settings-chooser-backdrop').addEventListener('click', closeSettingsChooser);
+  document.getElementById('settings-chooser-cancel').addEventListener('click', closeSettingsChooser);
+  document.getElementById('settings-choose-gst').addEventListener('click', () => {
+    closeSettingsChooser();
+    openGstSettingsOverlay();
+  });
+  document.getElementById('settings-choose-company').addEventListener('click', () => {
+    closeSettingsChooser();
+    openCompanyDetailsOverlay();
+  });
+  document.getElementById('gst-settings-back').addEventListener('click', () => goBackFromOverlay());
+
+  document.getElementById('gst-settings-save-btn').addEventListener('click', async () => {
+    const cgst_ledger = document.getElementById('gst-cgst-select').value;
+    const sgst_ledger = document.getElementById('gst-sgst-select').value;
+    if (!cgst_ledger || !sgst_ledger) {
+      document.getElementById('gst-settings-error').textContent = 'CGST and SGST ledgers are required.';
+      document.getElementById('gst-settings-error').style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('gst-settings-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      await set(ref(db, `companies/${currentCompany}/gst_settings`), {
+        cgst_ledger,
+        sgst_ledger,
+        purchase_by_rate: readRateSelects('gst-purchase'),
+        sales_by_rate: readRateSelects('gst-sales'),
+        updated_at: new Date().toISOString(),
+      });
+      document.getElementById('gst-settings-error').style.display = 'none';
+      goBackFromOverlay();
+    } catch (err) {
+      console.error('Failed to save GST settings:', err);
+      document.getElementById('gst-settings-error').textContent = 'Could not save -- check your connection and try again.';
+      document.getElementById('gst-settings-error').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save Settings';
+    }
+  });
+
+  // ===== Company Details =====
+  // Writes to companies/{key}/company_info -- the exact same path the
+  // desktop GUI's own "Company Details" tab already reads/writes, and
+  // the same path exportInvoicePDF/exportPurchaseVoucherPDF already
+  // read for the letterhead block. This is purely an additional way to
+  // edit that same data from the phone -- no new Firebase path, no
+  // Python-side changes needed at all.
+  async function openCompanyDetailsOverlay() {
+    document.getElementById('company-details-error').style.display = 'none';
+    document.getElementById('company-details-company-name').textContent =
+      COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+    openOverlay('company-details-overlay');
+
+    let info = {};
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/company_info`));
+      info = snap.val() || {};
+    } catch (err) {
+      console.error('Could not load company info:', err);
+      document.getElementById('company-details-error').textContent =
+        'Could not load current details -- check your connection.';
+      document.getElementById('company-details-error').style.display = 'block';
+    }
+
+    document.getElementById('cd-address').value = info.address || '';
+    document.getElementById('cd-gstin').value = info.gstin || '';
+    document.getElementById('cd-state').value = info.state || '';
+    document.getElementById('cd-email').value = info.email || '';
+    document.getElementById('cd-bank-name').value = info.bank_name || '';
+    document.getElementById('cd-bank-account').value = info.bank_account || '';
+    document.getElementById('cd-bank-ifsc').value = info.bank_ifsc || '';
+  }
+
+  document.getElementById('company-details-back').addEventListener('click', () => goBackFromOverlay());
+
+  document.getElementById('company-details-save-btn').addEventListener('click', async () => {
+    const info = {
+      address: document.getElementById('cd-address').value.trim(),
+      gstin: document.getElementById('cd-gstin').value.trim(),
+      state: document.getElementById('cd-state').value.trim(),
+      email: document.getElementById('cd-email').value.trim(),
+      bank_name: document.getElementById('cd-bank-name').value.trim(),
+      bank_account: document.getElementById('cd-bank-account').value.trim(),
+      bank_ifsc: document.getElementById('cd-bank-ifsc').value.trim(),
+    };
+
+    const btn = document.getElementById('company-details-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      await set(ref(db, `companies/${currentCompany}/company_info`), info);
+      document.getElementById('company-details-error').style.display = 'none';
+      goBackFromOverlay();
+    } catch (err) {
+      console.error('Failed to save company info:', err);
+      document.getElementById('company-details-error').textContent = 'Could not save -- check your connection and try again.';
+      document.getElementById('company-details-error').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save Details';
+    }
   });
 
   function afterLogin() {
