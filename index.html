@@ -1212,6 +1212,16 @@
           <button type="button" class="map-discard-btn" id="stmt-progress-discard-btn">Discard this statement</button>
         </div>
 
+        <div class="scan-step" id="stmt-step-password">
+          <div class="map-section">
+            <div class="map-section-title">Password Required</div>
+            <p class="totals-card-hint" id="stmt-password-hint" style="margin-bottom:10px;">This PDF is password-protected. Enter the password to continue.</p>
+            <input type="password" id="stmt-password-input" class="map-field-input spaced" placeholder="PDF password" autocomplete="off">
+            <button type="button" class="map-confirm-btn" id="stmt-password-submit-btn">Unlock & Continue</button>
+          </div>
+          <button type="button" class="map-discard-btn" id="stmt-password-discard-btn">Discard this statement</button>
+        </div>
+
         <div class="scan-step" id="stmt-step-review">
           <div id="stmt-review-body"></div>
         </div>
@@ -6193,6 +6203,7 @@
   let stmtUnsub = null;
   let stmtReviewData = null;      // the ready_for_review payload from the PC
   let stmtState = { transactions: [] };
+  let stmtPasswordAttempted = false; // true once a password has been tried at least once for this statement
 
   function resetStatementFlow() {
     stmtCurrentFile = null;
@@ -6200,6 +6211,7 @@
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     stmtReviewData = null;
     stmtState = { transactions: [] };
+    stmtPasswordAttempted = false;
     document.querySelectorAll('#statement-upload-body .scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('statement-upload-title').textContent = 'Upload Bank Statement';
     document.getElementById('stmt-pdf-input').value = '';
@@ -6424,6 +6436,34 @@
 
   document.getElementById('stmt-upload-btn').addEventListener('click', uploadStatementPdf);
   document.getElementById('stmt-progress-discard-btn').addEventListener('click', discardStatement);
+  document.getElementById('stmt-password-discard-btn').addEventListener('click', discardStatement);
+
+  document.getElementById('stmt-password-submit-btn').addEventListener('click', async () => {
+    const pw = document.getElementById('stmt-password-input').value;
+    if (!pw) return;
+    if (!stmtCurrentId) { alert('No statement selected.'); return; }
+
+    const btn = document.getElementById('stmt-password-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+      // Deliberately does NOT change status -- the sync engine's
+      // needs_password poller branch checks specifically for a fresh
+      // pdf_password value on a record still in this status, and
+      // re-attempts parsing on its own next ~5s cycle. No status change
+      // needed here to trigger that.
+      await set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtCurrentId}/pdf_password`), pw);
+      stmtPasswordAttempted = true;
+      stmtActivateStep('stmt-step-progress');
+      document.getElementById('stmt-progress-text').textContent = 'Checking password…';
+    } catch (err) {
+      console.error('Failed to submit PDF password:', err);
+      alert('Could not submit password -- check your connection and try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Unlock & Continue';
+    }
+  });
 
   async function uploadStatementPdf() {
     if (!stmtCurrentFile) return;
@@ -6513,6 +6553,12 @@
       document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
     } else if (status === 'failed') {
       showStatementResult(false, 'Processing failed', data.error || 'Unknown error');
+    } else if (status === 'needs_password') {
+      stmtActivateStep('stmt-step-password');
+      document.getElementById('stmt-password-hint').textContent = stmtPasswordAttempted
+        ? 'Incorrect password -- please try again.'
+        : 'This PDF is password-protected. Enter the password to continue.';
+      document.getElementById('stmt-password-input').value = '';
     } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
       stmtActivateStep('stmt-step-progress');
       document.getElementById('stmt-progress-text').textContent = 'Posting to Tally…';
