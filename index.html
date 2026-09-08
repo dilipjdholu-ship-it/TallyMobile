@@ -1188,14 +1188,6 @@
             <div class="glyph">📄</div>
             <div id="stmt-pdf-filename"></div>
           </div>
-          <div class="map-section">
-            <div class="map-section-title">Import only these dates (optional)</div>
-            <p style="font-size:12.5px; color:var(--ink-soft); margin:-4px 0 10px;">Leave blank to import every transaction in the statement.</p>
-            <div style="display:flex; gap:10px;">
-              <input type="date" id="stmt-date-from" class="stmt-ledger-select" style="flex:1;">
-              <input type="date" id="stmt-date-to" class="stmt-ledger-select" style="flex:1;">
-            </div>
-          </div>
           <button class="scan-btn" id="stmt-upload-btn">Upload &amp; Process</button>
           <button class="scan-btn secondary" id="stmt-retake-btn">Choose a different file</button>
         </div>
@@ -6373,29 +6365,27 @@
     document.getElementById('stmt-pdf-input').click();
   });
 
+  let stmtDetectedRange = null; // {from, to} in YYYY-MM-DD, from the statement's own header -- read pre-upload, applied on the review screen instead
+
   function onStatementFilePicked(e) {
     const file = e.target.files[0];
     if (!file) return;
     stmtCurrentFile = file;
     document.getElementById('stmt-pdf-filename').textContent = file.name;
-    // Clear any dates left over from a previously picked file -- these
-    // get auto-filled below, but shouldn't silently carry over if this
-    // new file's own range can't be detected.
-    document.getElementById('stmt-date-from').value = '';
-    document.getElementById('stmt-date-to').value = '';
+    stmtDetectedRange = null; // this new file's own range hasn't been read yet
     stmtActivateStep('stmt-step-preview');
-    prefillStatementDateRange(file);
+    detectStatementDateRange(file);
   }
   document.getElementById('stmt-pdf-input').addEventListener('change', onStatementFilePicked);
 
   // Saraswat's own statement header reads e.g. "02-07-2026 to
   // 15-08-2026" -- reading that directly is far more reliable than
   // asking the person to retype dates they can already see on the
-  // document they just picked. Auto-fills the two date inputs above but
-  // leaves them fully editable -- this is a starting point ("import
-  // everything" is still the default if left as-is or cleared), not a
-  // forced restriction to only that range.
-  async function prefillStatementDateRange(file) {
+  // document they just picked. Stored for use as a review-screen date
+  // picker default rather than written to an upload-time input --
+  // date selection now happens AFTER the statement is actually read,
+  // not before uploading.
+  async function detectStatementDateRange(file) {
     try {
       if (!window.pdfjsLib) {
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
@@ -6412,20 +6402,18 @@
       // -- the exact header format seen on real Saraswat statements.
       const m = pageText.match(/(\d{2})-(\d{2})-(\d{4})\s*(?:to|-|–)\s*(\d{2})-(\d{2})-(\d{4})/);
       if (!m) {
-        console.error('Could not detect a date range in this statement -- leaving date fields blank.');
+        console.error('Could not detect a date range in this statement.');
         return;
       }
-      // Only fill in if the person hasn't already changed the file/typed
-      // something in while this was loading.
+      // Only keep it if the person hasn't already changed the file
+      // while this was loading.
       if (stmtCurrentFile !== file) return;
       const [, d1, mo1, y1, d2, mo2, y2] = m;
-      document.getElementById('stmt-date-from').value = `${y1}-${mo1}-${d1}`;
-      document.getElementById('stmt-date-to').value = `${y2}-${mo2}-${d2}`;
+      stmtDetectedRange = { from: `${y1}-${mo1}-${d1}`, to: `${y2}-${mo2}-${d2}` };
     } catch (err) {
       console.error('Failed to auto-detect statement date range:', err);
-      // Leave fields blank -- person can still type dates manually, and
-      // leaving both blank already means "import everything" per the
-      // existing behavior above.
+      // stmtDetectedRange stays null -- the review screen's own
+      // suggestion logic falls back to other signals or leaves it blank.
     }
   }
 
@@ -6474,11 +6462,6 @@
     const stmtId = 'stmt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     stmtCurrentId = stmtId;
 
-    // Optional date-range filter -- blank means "import everything",
-    // same as leaving both fields untouched.
-    const dateFrom = document.getElementById('stmt-date-from').value || null;
-    const dateTo = document.getElementById('stmt-date-to').value || null;
-
     try {
       // Reuses the same base64 reader as invoice PDF uploads -- same
       // 5MB cap, same "no resize, PDFs already come in small" reasoning.
@@ -6498,7 +6481,7 @@
         set(ref(db, `companies/${currentCompany}/pending_bank_statements/${stmtId}`), {
           status: 'uploaded',
           uploaded_at: new Date().toISOString(),
-          date_filter: (dateFrom || dateTo) ? { from: dateFrom, to: dateTo } : null,
+          date_filter: null,
         }),
         UPLOAD_WRITE_TIMEOUT_MS,
         'Upload is taking too long -- check your connection and try again.'
@@ -6524,7 +6507,7 @@
     });
   }
 
-  function handleStatementStatusChange(data) {
+  async function handleStatementStatusChange(data) {
     const status = data.status;
     if (status === 'uploaded') {
       // Also covers resuming from the Review Queue -- resetStatementFlow
@@ -6545,10 +6528,24 @@
           // same principle as invoice quantity/rate/unit.
           amount: t.amount,
           voucher_type: t.voucher_type,
-          removed: false,
+          // Split into two reasons a transaction might be hidden,
+          // tracked separately: manuallyRemoved (the ✕ button) is
+          // permanent and should never be undone by adjusting the date
+          // range afterward; dateExcluded is recomputed fresh every
+          // time the date pickers change. A transaction is hidden if
+          // EITHER is true -- see isTxnExcluded().
+          manuallyRemoved: false,
+          dateExcluded: false,
         })),
       };
-      renderStatementReviewScreen();
+      applyStatementDateRange({ from: null, to: stmtDetectedRange?.to || null }); // immediate render, refined below
+      if (!ensureSectionLoaded(currentCompany, 'bank_related_vouchers')) {
+        const start = Date.now();
+        while (!(companyData[currentCompany] || {}).bank_related_vouchers && Date.now() - start < 6000) {
+          await new Promise(r => setTimeout(r, 150));
+        }
+      }
+      applyStatementDateRange(suggestStatementDateRange());
       stmtActivateStep('stmt-step-review');
       document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
     } else if (status === 'failed') {
@@ -6613,14 +6610,87 @@
 
   // ---- Transaction review rendering ----
 
+  let stmtDateRangeFrom = null; // YYYY-MM-DD, current review-screen picker state
+  let stmtDateRangeTo = null;
+
+  // Normalizes either Tally's raw YYYYMMDD or the bank statement's own
+  // DD-MM-YYYY into YYYY-MM-DD, so dates from two different sources
+  // (synced Tally vouchers vs. parsed statement transactions) can
+  // actually be compared against each other.
+  function normalizeToIso(dateStr) {
+    if (!dateStr) return null;
+    const raw = String(dateStr).trim();
+    if (/^\d{8}$/.test(raw)) return `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}`;
+    const parts = raw.replace(/\//g, '-').split('-');
+    if (parts.length === 3 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+    }
+    if (parts.length === 3 && parts[0].length === 4) return raw;
+    return null;
+  }
+
+  function isTxnExcluded(t) {
+    return !!(t.manuallyRemoved || t.dateExcluded);
+  }
+
+  // Suggests a starting date one day after the last Tally entry that
+  // already touches this statement's configured bank ledger -- using
+  // bank_related_vouchers, already synced and sitting in companyData,
+  // no extra fetch needed. The idea: avoid re-importing transactions
+  // already entered in Tally, picking up right where the books
+  // actually left off rather than guessing. Falls back to the
+  // statement's own detected end date for "to" (from
+  // detectStatementDateRange, read client-side before upload).
+  function suggestStatementDateRange() {
+    const bankLedgerName = (stmtReviewData?.bank_ledger || '').trim();
+    let lastTallyDateIso = null;
+    if (bankLedgerName) {
+      const vouchers = safeArray((companyData[currentCompany] || {}).bank_related_vouchers);
+      vouchers.forEach(v => {
+        const touchesThisLedger = safeArray(v.ledger_lines)
+          .some(l => (l.ledger_name || '').trim() === bankLedgerName);
+        if (touchesThisLedger) {
+          const iso = normalizeToIso(v.date);
+          if (iso && (!lastTallyDateIso || iso > lastTallyDateIso)) lastTallyDateIso = iso;
+        }
+      });
+    }
+
+    let suggestedFrom = null;
+    if (lastTallyDateIso) {
+      const d = new Date(lastTallyDateIso + 'T00:00:00');
+      d.setDate(d.getDate() + 1);
+      suggestedFrom = d.toISOString().slice(0, 10);
+    }
+
+    return { from: suggestedFrom, to: stmtDetectedRange?.to || null };
+  }
+
+  // Recomputes which transactions fall outside [from, to] and marks
+  // them dateExcluded -- never touches manuallyRemoved, so adjusting
+  // the range afterward can't accidentally bring back something
+  // deliberately removed by hand.
+  function applyStatementDateRange(range) {
+    stmtDateRangeFrom = range.from || null;
+    stmtDateRangeTo = range.to || null;
+    stmtState.transactions.forEach(t => {
+      const iso = normalizeToIso(t.date);
+      t.dateExcluded = !!(iso && (
+        (stmtDateRangeFrom && iso < stmtDateRangeFrom) ||
+        (stmtDateRangeTo && iso > stmtDateRangeTo)
+      ));
+    });
+    renderStatementReviewScreen();
+  }
+
   function renderStatementReviewScreen() {
     const container = document.getElementById('stmt-review-body');
     const txns = stmtState.transactions;
 
     const stmtDr = stmtReviewData.stmt_dr;
     const stmtCr = stmtReviewData.stmt_cr;
-    const computedDr = txns.filter(t => !t.removed && t.voucher_type === 'Payment').reduce((s, t) => s + parseAmt(t.amount), 0);
-    const computedCr = txns.filter(t => !t.removed && t.voucher_type === 'Receipt').reduce((s, t) => s + parseAmt(t.amount), 0);
+    const computedDr = txns.filter(t => !isTxnExcluded(t) && t.voucher_type === 'Payment').reduce((s, t) => s + parseAmt(t.amount), 0);
+    const computedCr = txns.filter(t => !isTxnExcluded(t) && t.voucher_type === 'Receipt').reduce((s, t) => s + parseAmt(t.amount), 0);
 
     let html = '';
 
@@ -6667,20 +6737,30 @@
       </div>`;
     }
 
-    // Imported date range, if one was set on the upload screen -- makes
-    // it visible at review time (not just buried in history afterward)
-    // that this statement was deliberately narrowed to a subset of
-    // dates, not the whole document.
-    const df = stmtReviewData.date_filter;
-    if (df && (df.from || df.to)) {
-      html += `<p style="font-size:12px; color:var(--ink-soft); margin:-6px 0 14px;">
-        Importing ${df.from ? formatTallyDate(df.from.replace(/-/g,'')) : 'the start'} to
-        ${df.to ? formatTallyDate(df.to.replace(/-/g,'')) : 'the end'} of the statement only.
-      </p>`;
-    }
+    // Date range picker -- deliberately shown HERE, after the statement
+    // has actually been read, not before uploading. Suggested default
+    // (see suggestStatementDateRange) starts the day after this bank
+    // ledger's last entry already in Tally, so re-importing what's
+    // already there isn't the default behavior.
+    const excludedCount = txns.filter(t => t.dateExcluded && !t.manuallyRemoved).length;
+    html += `<div class="map-section">
+      <div class="map-section-title">Import only these dates</div>
+      <p class="totals-card-hint" style="margin:-4px 0 10px;">Suggested from this bank ledger's last entry already in Tally. Adjust or clear to import everything.</p>
+      <div class="map-rate-unit-row">
+        <div>
+          <div class="map-field-label">From</div>
+          <input type="date" id="stmt-review-date-from" class="map-field-input" value="${stmtDateRangeFrom || ''}">
+        </div>
+        <div>
+          <div class="map-field-label">To</div>
+          <input type="date" id="stmt-review-date-to" class="map-field-input" value="${stmtDateRangeTo || ''}">
+        </div>
+      </div>
+      ${excludedCount > 0 ? `<p class="totals-card-hint" style="margin-top:8px;">${excludedCount} transaction${excludedCount === 1 ? '' : 's'} outside this range hidden below.</p>` : ''}
+    </div>`;
 
     txns.forEach((t, idx) => {
-      if (t.removed) return;
+      if (isTxnExcluded(t)) return;
       html += `<div class="txn-row" data-idx="${idx}">
         <div class="txn-row-top">
           <div>
@@ -6699,7 +6779,7 @@
       </div>`;
     });
 
-    const anyLeft = txns.some(t => !t.removed);
+    const anyLeft = txns.some(t => !isTxnExcluded(t));
     html += `<button class="map-confirm-btn" id="stmt-confirm-btn" ${anyLeft ? '' : 'disabled'}>Confirm &amp; Post</button>`;
     html += `<button type="button" class="map-discard-btn" id="stmt-discard-btn">Discard this bank statement</button>`;
 
@@ -6722,9 +6802,15 @@
     container.querySelectorAll('[data-remove-idx]').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.removeIdx, 10);
-        stmtState.transactions[idx].removed = true;
+        stmtState.transactions[idx].manuallyRemoved = true;
         renderStatementReviewScreen();
       });
+    });
+    document.getElementById('stmt-review-date-from').addEventListener('change', (e) => {
+      applyStatementDateRange({ from: e.target.value || null, to: stmtDateRangeTo });
+    });
+    document.getElementById('stmt-review-date-to').addEventListener('change', (e) => {
+      applyStatementDateRange({ from: stmtDateRangeFrom, to: e.target.value || null });
     });
     const confirmBtn = document.getElementById('stmt-confirm-btn');
     if (confirmBtn) confirmBtn.addEventListener('click', confirmStatement);
@@ -6734,7 +6820,7 @@
 
   async function confirmStatement() {
     const confirmedTransactions = stmtState.transactions
-      .filter(t => !t.removed)
+      .filter(t => !isTxnExcluded(t))
       .map(t => ({
         date: t.date,
         narration: t.narration,
