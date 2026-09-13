@@ -729,6 +729,17 @@
   }
   .alloc-status-pending { background: var(--amber-soft); color: var(--amber); }
   .alloc-status-failed { background: var(--rust-soft); color: var(--rust); }
+  .alloc-status-done { background: var(--forest-soft); color: var(--forest); }
+
+  /* Plain inline variant of .date-range-bar -- the original is styled as
+     a sticky full-width strip directly under an overlay-header (see
+     #ledger-detail-overlay). Here it sits as ordinary content further
+     down inside an overlay-body alongside the filter chips, so the card
+     chrome/stickiness would look out of place. */
+  .date-range-bar.inline {
+    position: static; background: transparent; border-bottom: none;
+    padding: 0 0 12px; margin: 0;
+  }
 
   .scan-capture-area {
     text-align: center;
@@ -1210,6 +1221,21 @@
             statement. Pick the real ledger for each one -- everything else about the voucher
             (date, amount, voucher number) stays exactly as posted.
           </p>
+          <div class="filter-chips" id="ledger-alloc-status-chips">
+            <button class="filter-chip active" data-status="pending">Pending</button>
+            <button class="filter-chip" data-status="allocated">Allocated</button>
+          </div>
+          <div class="filter-chips" id="ledger-alloc-type-chips">
+            <button class="filter-chip active" data-vtype="all">All Types</button>
+            <button class="filter-chip" data-vtype="payment">Payment</button>
+            <button class="filter-chip" data-vtype="receipt">Receipt</button>
+          </div>
+          <div class="date-range-bar inline">
+            <input type="date" id="ledger-alloc-date-from">
+            <span class="date-range-sep">to</span>
+            <input type="date" id="ledger-alloc-date-to">
+            <button class="date-range-reset" id="ledger-alloc-date-apply">Apply</button>
+          </div>
           <div id="ledger-alloc-list-body"><div class="loading-state">Loading…</div></div>
         </div>
 
@@ -1221,6 +1247,13 @@
             <div id="ledger-alloc-pick-amount" style="font-weight:600; margin-bottom:12px;"></div>
             <div class="map-field-label">Real Ledger</div>
             <select class="stmt-ledger-select map-field-input spaced" id="ledger-alloc-pick-select"></select>
+            <button type="button" class="map-discard-btn" id="ledger-alloc-new-ledger-toggle" style="margin-top:2px;">+ Create new ledger</button>
+            <div id="ledger-alloc-new-ledger-form" style="display:none; margin-top:12px;">
+              <div class="map-field-label">New Ledger Name</div>
+              <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-name" placeholder="e.g. Poorva Sud" autocomplete="off">
+              <div class="map-field-label">Group (Under)</div>
+              <select class="stmt-ledger-select map-field-input" id="ledger-alloc-new-ledger-group"></select>
+            </div>
           </div>
           <div id="ledger-alloc-pick-error" class="map-field-warn" style="display:none;"></div>
           <button class="map-confirm-btn" id="ledger-alloc-pick-save-btn" disabled>Save to Tally</button>
@@ -3483,6 +3516,57 @@
     });
   }
 
+  // Vouchers this feature has already fixed. There's no separate
+  // history_* node for this (unlike some other queues in this file) --
+  // once a request resolves to 'posted' it just stays in
+  // pending_ledger_reallocations forever, and the voucher itself drops
+  // out of getVouchersNeedingAllocation() once the next resync clears
+  // the contra ledger name from its ledger_lines. So the request record
+  // IS the history here; it already carries everything needed to show a
+  // row (voucher_date/type/number/narration/ledger_lines) without having
+  // to cross-reference bank_related_vouchers at all, which also means
+  // this keeps working even after the voucher ages out of the sync
+  // engine's days_back window.
+  function getAllocatedVouchers(data) {
+    const all = data.pending_ledger_reallocations || {};
+    const byVoucher = {};
+    Object.keys(all).forEach(reqId => {
+      const req = all[reqId];
+      if (!req || req.status !== 'posted' || !req.voucher_id) return;
+      const existing = byVoucher[req.voucher_id];
+      if (!existing || (req.resolved_at || '') > (existing.resolved_at || '')) {
+        byVoucher[req.voucher_id] = { ...req, req_id: reqId };
+      }
+    });
+    return Object.values(byVoucher);
+  }
+
+  // Shared by both the Pending and Allocated lists -- filters on voucher
+  // type and a date range, given a uniform `date` field (pending rows
+  // already have one; allocated rows are request records that call it
+  // voucher_date, normalized by the caller before this runs).
+  function filterAllocVouchers(list, filter) {
+    return list.filter(v => {
+      const vtype = (v.voucher_type || '').toLowerCase();
+      if (filter.voucherType !== 'all' && vtype !== filter.voucherType) return false;
+      const d = v.date || '';
+      if (filter.fromDate && d && d < filter.fromDate) return false;
+      if (filter.toDate && d && d > filter.toDate) return false;
+      return true;
+    });
+  }
+
+  // Default range covers "current month and previous month" -- the
+  // allocation list can otherwise grow to every bank-import voucher
+  // ever synced, most of which nobody needs to look at again.
+  function defaultLedgerAllocDateRange() {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const pad = n => String(n).padStart(2, '0');
+    const toYYYYMMDD = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    return { fromDate: toYYYYMMDD(from), toDate: toYYYYMMDD(now) };
+  }
+
   // Finds any reallocation request already in flight for this exact
   // voucher (by voucher_id) -- 'requested' means posting is in progress,
   // 'post_failed' means it needs a retry, 'posted' means Tally has the
@@ -5262,9 +5346,18 @@
   // shared .scan-step -- see that class's CSS comment for why): a list,
   // and a per-voucher ledger picker.
   let ledgerAllocPickVoucher = null;
+  // null until the overlay is first opened, then persists for the rest
+  // of the session (re-opening keeps whatever the person last filtered
+  // to, rather than snapping back to defaults every time).
+  let ledgerAllocFilter = null;
 
   function openLedgerAllocationOverlay() {
     ledgerAllocPickVoucher = null;
+    if (!ledgerAllocFilter) {
+      ledgerAllocFilter = { status: 'pending', voucherType: 'all', ...defaultLedgerAllocDateRange() };
+      document.getElementById('ledger-alloc-date-from').value = tallyDateToInputFormat(ledgerAllocFilter.fromDate);
+      document.getElementById('ledger-alloc-date-to').value = tallyDateToInputFormat(ledgerAllocFilter.toDate);
+    }
     openOverlay('ledger-allocation-overlay');
     ledgerAllocGoToList();
     renderLedgerAllocList();
@@ -5277,11 +5370,40 @@
     document.getElementById('ledger-alloc-step-list').classList.add('active');
   }
 
+  // Static chips/date bar (not regenerated per render, unlike the Ledgers
+  // screen's filter-chips), so their handlers are bound once here rather
+  // than re-attached every render.
+  document.getElementById('ledger-alloc-status-chips').addEventListener('click', e => {
+    const btn = e.target.closest('.filter-chip');
+    if (!btn) return;
+    ledgerAllocFilter.status = btn.dataset.status;
+    renderLedgerAllocList();
+  });
+  document.getElementById('ledger-alloc-type-chips').addEventListener('click', e => {
+    const btn = e.target.closest('.filter-chip');
+    if (!btn) return;
+    ledgerAllocFilter.voucherType = btn.dataset.vtype;
+    renderLedgerAllocList();
+  });
+  document.getElementById('ledger-alloc-date-apply').addEventListener('click', () => {
+    const fromVal = document.getElementById('ledger-alloc-date-from').value;
+    const toVal = document.getElementById('ledger-alloc-date-to').value;
+    ledgerAllocFilter.fromDate = inputFormatToTallyDate(fromVal) || '';
+    ledgerAllocFilter.toDate = inputFormatToTallyDate(toVal) || '';
+    renderLedgerAllocList();
+  });
+
   function renderLedgerAllocList() {
     const data = companyData[currentCompany] || {};
     const body = document.getElementById('ledger-alloc-list-body');
     const contraName = getContraLedgerName(data);
     document.getElementById('ledger-alloc-contra-name').textContent = contraName;
+    const filter = ledgerAllocFilter || (ledgerAllocFilter = { status: 'pending', voucherType: 'all', ...defaultLedgerAllocDateRange() });
+
+    document.querySelectorAll('#ledger-alloc-status-chips .filter-chip').forEach(c =>
+      c.classList.toggle('active', c.dataset.status === filter.status));
+    document.querySelectorAll('#ledger-alloc-type-chips .filter-chip').forEach(c =>
+      c.classList.toggle('active', c.dataset.vtype === filter.voucherType));
 
     // Uses the ready FLAG, not truthiness of the data itself -- a company
     // with zero bank-related vouchers synced is legitimately empty
@@ -5295,28 +5417,46 @@
       return;
     }
 
-    const vouchers = getVouchersNeedingAllocation(data)
+    const isPendingView = filter.status === 'pending';
+    const rawList = isPendingView
+      ? getVouchersNeedingAllocation(data)
+      // Normalize the request record's voucher_date to .date so
+      // filterAllocVouchers can treat both lists the same way.
+      : getAllocatedVouchers(data).map(r => ({ ...r, date: r.voucher_date }));
+
+    const vouchers = filterAllocVouchers(rawList, filter)
       .slice()
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     if (vouchers.length === 0) {
-      body.innerHTML = '<div class="loading-state">Nothing needs allocation right now — every bank-import voucher has a real ledger.</div>';
+      const overall = isPendingView ? getVouchersNeedingAllocation(data) : getAllocatedVouchers(data);
+      body.innerHTML = overall.length === 0
+        ? `<div class="loading-state">${isPendingView
+            ? 'Nothing needs allocation right now — every bank-import voucher has a real ledger.'
+            : 'Nothing has been allocated yet.'}</div>`
+        : '<div class="loading-state">No vouchers match this filter — try widening the date range or type.</div>';
       return;
     }
 
     body.innerHTML = vouchers.map(v => {
-      const amount = parseAmt(v.amount);
-      const req = findReallocationRequest(data, v.voucher_id);
+      const amount = isPendingView
+        ? parseAmt(v.amount)
+        : Math.abs(parseAmt((safeArray(v.ledger_lines)[0] || {}).amount));
       let statusHtml = '';
-      if (req && req.status === 'requested') {
-        statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posting…</span>';
-      } else if (req && req.status === 'posted') {
-        statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posted — refreshing…</span>';
-      } else if (req && req.status === 'post_failed') {
-        statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
+      if (isPendingView) {
+        const req = findReallocationRequest(data, v.voucher_id);
+        if (req && req.status === 'requested') {
+          statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posting…</span>';
+        } else if (req && req.status === 'posted') {
+          statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posted — refreshing…</span>';
+        } else if (req && req.status === 'post_failed') {
+          statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
+        }
+      } else {
+        statusHtml = `<span class="alloc-voucher-status alloc-status-done">→ ${escapeHtml(v.new_ledger_name || '')}</span>`;
       }
       return `
-        <div class="alloc-voucher-row" data-voucher-id="${escapeHtml(v.voucher_id || '')}">
+        <div class="alloc-voucher-row" data-voucher-id="${escapeHtml(v.voucher_id || '')}" ${isPendingView ? '' : 'style="cursor:default;"'}>
           <div class="alloc-voucher-main">
             <div class="alloc-voucher-narration">${escapeHtml(v.narration || v.voucher_number || '(no narration)')}</div>
             <div class="alloc-voucher-sub">${escapeHtml(formatTallyDate(v.date))} · ${escapeHtml(v.voucher_type || '')} ${escapeHtml(v.voucher_number || '')}</div>
@@ -5325,6 +5465,8 @@
           <div class="alloc-voucher-amount">${formatCurrency(amount)}</div>
         </div>`;
     }).join('');
+
+    if (!isPendingView) return; // Allocated rows are informational only -- nothing to click into.
 
     body.querySelectorAll('.alloc-voucher-row').forEach(row => {
       row.addEventListener('click', () => {
@@ -5344,6 +5486,69 @@
     });
   }
 
+  // Live company groups are already synced to Firebase (used today for
+  // the P&L/Balance Sheet hierarchy) -- read that instead of a fresh
+  // Tally pull, same reasoning as fetchLedgerNames.
+  async function fetchGroupNames() {
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/groups`));
+      const groups = safeArray(snap.val());
+      return groups.map(g => g.name).filter(Boolean).sort();
+    } catch (err) {
+      console.error('Could not load groups for new-ledger picker:', err);
+      return [];
+    }
+  }
+
+  // Whether the "+ Create new ledger" form is currently the active way
+  // of picking a ledger for this voucher, vs. searching the existing list.
+  function ledgerAllocInCreateMode() {
+    return document.getElementById('ledger-alloc-new-ledger-form').style.display !== 'none';
+  }
+
+  function setLedgerAllocCreateMode(on) {
+    document.getElementById('ledger-alloc-new-ledger-form').style.display = on ? 'block' : 'none';
+    document.getElementById('ledger-alloc-pick-select').style.display = on ? 'none' : '';
+    // The select's own search-combobox wrapper (see enhanceLedgerSelect)
+    // sits right after it and needs hiding too, or it stays visible
+    // floating above the create form.
+    const wrap = document.getElementById('ledger-alloc-pick-select').nextElementSibling;
+    if (wrap && wrap.classList.contains('ledger-search-wrap')) wrap.style.display = on ? 'none' : '';
+    document.getElementById('ledger-alloc-new-ledger-toggle').textContent =
+      on ? '← Use an existing ledger instead' : '+ Create new ledger';
+    updateLedgerAllocSaveState();
+  }
+
+  function updateLedgerAllocSaveState() {
+    const saveBtn = document.getElementById('ledger-alloc-pick-save-btn');
+    if (ledgerAllocInCreateMode()) {
+      const name = document.getElementById('ledger-alloc-new-ledger-name').value.trim();
+      const group = document.getElementById('ledger-alloc-new-ledger-group').value;
+      saveBtn.disabled = !(name && group);
+      saveBtn.textContent = 'Create Ledger & Save to Tally';
+    } else {
+      const select = document.getElementById('ledger-alloc-pick-select');
+      saveBtn.disabled = !select.value;
+      saveBtn.textContent = 'Save to Tally';
+    }
+  }
+
+  document.getElementById('ledger-alloc-new-ledger-toggle').addEventListener('click', async () => {
+    const turningOn = !ledgerAllocInCreateMode();
+    if (turningOn) {
+      const groupSelect = document.getElementById('ledger-alloc-new-ledger-group');
+      groupSelect.innerHTML = '<option>Loading groups…</option>';
+      document.getElementById('ledger-alloc-new-ledger-name').value = '';
+      setLedgerAllocCreateMode(true);
+      const groupNames = await fetchGroupNames();
+      populateLedgerSelect(groupSelect, groupNames, null);
+      groupSelect.onchange = updateLedgerAllocSaveState;
+    } else {
+      setLedgerAllocCreateMode(false);
+    }
+  });
+  document.getElementById('ledger-alloc-new-ledger-name').addEventListener('input', updateLedgerAllocSaveState);
+
   async function openLedgerAllocPick(voucher) {
     ledgerAllocPickVoucher = voucher;
     document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
@@ -5354,6 +5559,7 @@
     document.getElementById('ledger-alloc-pick-narration').textContent = voucher.narration || '';
     document.getElementById('ledger-alloc-pick-amount').textContent = formatCurrency(parseAmt(voucher.amount));
     document.getElementById('ledger-alloc-pick-error').style.display = 'none';
+    setLedgerAllocCreateMode(false);
 
     const select = document.getElementById('ledger-alloc-pick-select');
     const saveBtn = document.getElementById('ledger-alloc-pick-save-btn');
@@ -5370,7 +5576,7 @@
     // different voucher against the SAME persistent <select> element
     // each time, and addEventListener would stack a new listener on
     // every open instead of replacing the previous voucher's.
-    select.onchange = () => { saveBtn.disabled = !select.value; };
+    select.onchange = updateLedgerAllocSaveState;
     saveBtn.disabled = !select.value;
   }
 
@@ -5381,20 +5587,25 @@
 
   document.getElementById('ledger-alloc-pick-save-btn').addEventListener('click', async () => {
     const voucher = ledgerAllocPickVoucher;
-    const select = document.getElementById('ledger-alloc-pick-select');
-    const newLedgerName = select.value;
-    if (!voucher || !newLedgerName) return;
+    const creatingNew = ledgerAllocInCreateMode();
+    const newLedgerName = creatingNew
+      ? document.getElementById('ledger-alloc-new-ledger-name').value.trim()
+      : document.getElementById('ledger-alloc-pick-select').value;
+    const newLedgerGroup = creatingNew
+      ? document.getElementById('ledger-alloc-new-ledger-group').value
+      : null;
+    if (!voucher || !newLedgerName || (creatingNew && !newLedgerGroup)) return;
 
     if (!voucher.voucher_id) {
       document.getElementById('ledger-alloc-pick-error').textContent =
-        'This voucher has no REMOTEID on file (likely posted before this feature existed) -- correct it directly in Tally instead.';
+        'This voucher has no voucher_id on file (likely posted before this feature existed) -- correct it directly in Tally instead.';
       document.getElementById('ledger-alloc-pick-error').style.display = 'block';
       return;
     }
 
     const btn = document.getElementById('ledger-alloc-pick-save-btn');
     btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.textContent = creatingNew ? 'Creating ledger…' : 'Saving…';
     document.getElementById('ledger-alloc-pick-error').style.display = 'none';
 
     try {
@@ -5403,7 +5614,7 @@
       // and there's no need for it just to name one new node.
       const reqId = 'realloc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const reqRef = ref(db, `companies/${currentCompany}/pending_ledger_reallocations/${reqId}`);
-      await set(reqRef, {
+      const payload = {
         status: 'requested',
         voucher_id: voucher.voucher_id,
         voucher_date: voucher.date,
@@ -5413,7 +5624,14 @@
         ledger_lines: safeArray(voucher.ledger_lines),
         new_ledger_name: newLedgerName,
         requested_at: new Date().toISOString(),
-      });
+      };
+      // Presence of new_ledger_group is what tells the PC side to create
+      // the ledger first (see build_ledger_create_xml /
+      // handle_ledger_reallocation_request) -- omitted entirely rather
+      // than sent as null/empty when picking an existing ledger, so a
+      // stray falsy value can never be misread as "create this".
+      if (creatingNew) payload.new_ledger_group = newLedgerGroup;
+      await set(reqRef, payload);
       ledgerAllocGoToList();
       renderLedgerAllocList();
     } catch (err) {
@@ -5422,7 +5640,7 @@
         'Could not save -- check your connection and try again.';
       document.getElementById('ledger-alloc-pick-error').style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Save to Tally';
+      btn.textContent = creatingNew ? 'Create Ledger & Save to Tally' : 'Save to Tally';
     }
   });
 
