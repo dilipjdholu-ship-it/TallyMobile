@@ -681,6 +681,33 @@
   .scan-step { display: none; }
   .scan-step.active { display: block; }
 
+  /* Ledger Allocation overlay's own step class -- deliberately NOT
+     .scan-step. Several places in this file toggle .scan-step with an
+     unscoped document.querySelectorAll('.scan-step'), so sharing that
+     class here would let an unrelated screen's step-switch silently
+     hide/show this overlay's steps (or vice versa). */
+  .alloc-step { display: none; }
+  .alloc-step.active { display: block; }
+  .alloc-voucher-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid var(--paper-line);
+    cursor: pointer;
+  }
+  .alloc-voucher-row:last-child { border-bottom: none; }
+  .alloc-voucher-main { flex: 1; min-width: 0; }
+  .alloc-voucher-narration {
+    font-size: 13.5px; color: var(--ink); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .alloc-voucher-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .alloc-voucher-amount { font-weight: 600; margin-left: 12px; white-space: nowrap; }
+  .alloc-voucher-status {
+    font-size: 11.5px; margin-left: 10px; white-space: nowrap;
+    padding: 2px 8px; border-radius: 10px;
+  }
+  .alloc-status-pending { background: var(--amber-soft); color: var(--amber); }
+  .alloc-status-failed { background: var(--rust-soft); color: var(--rust); }
+
   .scan-capture-area {
     text-align: center;
     padding: 30px 16px;
@@ -1141,6 +1168,47 @@
     </div>
   </div>
 
+  <!-- Ledger Allocation Overlay -- Payment/Receipt vouchers created from a
+       bank-statement import still sitting on the contra ledger (usually
+       "Suspense"). Two views inside one overlay: a list, and a per-voucher
+       ledger picker, switched the same way the bank statement upload flow
+       switches between scan-step divs. -->
+  <div id="ledger-allocation-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="ledger-allocation-back">&larr; Back</button>
+        <div class="overlay-title" id="ledger-allocation-title">Ledger Allocation</div>
+      </div>
+      <div class="overlay-body">
+
+        <div class="alloc-step active" id="ledger-alloc-step-list">
+          <p class="totals-card-hint" style="margin-bottom:10px;">
+            These Payment/Receipt vouchers were posted against
+            <strong id="ledger-alloc-contra-name">Suspense</strong> when imported from a bank
+            statement. Pick the real ledger for each one -- everything else about the voucher
+            (date, amount, voucher number) stays exactly as posted.
+          </p>
+          <div id="ledger-alloc-list-body"><div class="loading-state">Loading…</div></div>
+        </div>
+
+        <div class="alloc-step" id="ledger-alloc-step-pick">
+          <div class="map-section">
+            <div class="map-section-title" id="ledger-alloc-pick-vnum"></div>
+            <p class="totals-card-hint" style="margin:-4px 0 10px;" id="ledger-alloc-pick-narration"></p>
+            <div class="map-field-label">Amount</div>
+            <div id="ledger-alloc-pick-amount" style="font-weight:600; margin-bottom:12px;"></div>
+            <div class="map-field-label">Real Ledger</div>
+            <select class="stmt-ledger-select map-field-input spaced" id="ledger-alloc-pick-select"></select>
+          </div>
+          <div id="ledger-alloc-pick-error" class="map-field-warn" style="display:none;"></div>
+          <button class="map-confirm-btn" id="ledger-alloc-pick-save-btn" disabled>Save to Tally</button>
+          <button type="button" class="map-discard-btn" id="ledger-alloc-pick-cancel-btn">Cancel</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Bank Statement Upload / Review Overlay -->
   <div id="statement-upload-overlay" class="overlay">
     <div class="overlay-panel">
@@ -1556,7 +1624,7 @@
   // has no history entry for "overlay open" to go back to. Pushing a
   // history entry when an overlay opens, and closing overlays on
   // popstate, makes back-button behavior match a native app.
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay'];
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'ledger-allocation-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -2113,6 +2181,13 @@
       // stale counts here would be actively misleading (unlike reports).
       cd.pending_invoices = val.pending_invoices;
       cd.pending_bank_statements = val.pending_bank_statements;
+      // Same "comes along for free" reasoning -- bank_statement_settings
+      // is what names the contra ledger (usually "Suspense") the Ledger
+      // Allocation screen watches for, and pending_ledger_reallocations
+      // is its own live queue/status data, same treatment as the two
+      // pending_* lines above (not cached, live status would go stale).
+      cd.bank_statement_settings = val.bank_statement_settings;
+      cd.pending_ledger_reallocations = val.pending_ledger_reallocations;
       saveToCache(currentCompany, 'company_info', val.company_info);
       saveToCache(currentCompany, 'outstanding_receivables', val.outstanding_receivables);
       document.getElementById('sync-text').textContent = 'Live';
@@ -2285,6 +2360,11 @@
     const pendingStatementCount = Object.keys(data.pending_bank_statements || {}).length;
     const pendingTotal = pendingInvoiceCount + pendingStatementCount;
 
+    // Same lazy-load-then-badge treatment as ledgers/stock/daybook above --
+    // bank_related_vouchers is what getVouchersNeedingAllocation reads.
+    const bankVouchersReady = ensureSectionLoaded(currentCompany, 'bank_related_vouchers');
+    const needsAllocationCount = bankVouchersReady ? getVouchersNeedingAllocation(data).length : null;
+
     contentArea.innerHTML = `
       <div class="dash-greeting">Welcome back</div>
       <div class="dash-company-name">${escapeHtml(companyLabel)}</div>
@@ -2327,6 +2407,11 @@
         <button class="dash-tile" data-goto="__history">
           <span class="dt-icon" style="background:var(--primary-soft); color:var(--primary);">🕘</span>
           <span class="dt-label">History</span>
+        </button>
+        <button class="dash-tile" data-goto="__ledger_allocation">
+          <span class="dt-icon" style="background:var(--rust-soft); color:var(--rust);">⇄</span>
+          <span class="dt-label">Ledger Allocation</span>
+          ${needsAllocationCount > 0 ? `<span class="dt-count-badge">${needsAllocationCount}</span>` : ''}
         </button>
       </div>
 
@@ -2373,6 +2458,8 @@
         tile.addEventListener('click', openReviewQueue);
       } else if (goto === '__history') {
         tile.addEventListener('click', openHistoryOverlay);
+      } else if (goto === '__ledger_allocation') {
+        tile.addEventListener('click', openLedgerAllocationOverlay);
       } else {
         tile.addEventListener('click', () => goToSection(goto));
       }
@@ -3347,6 +3434,51 @@
     return safeArray(v.ledger_lines).some(l => l.ledger_name === ledgerName);
   }
 
+  // ================= LEDGER ALLOCATION (Suspense cleanup) =================
+  // Every bank-statement import posts against a fixed contra ledger
+  // (normally "Suspense" -- see the Bank Statement Settings screen) since
+  // the parser has no way to know which real ledger a given IMPS/NEFT/UPI
+  // narration belongs to. This surfaces exactly those Payment/Receipt
+  // vouchers so the real ledger can be picked from the phone instead of
+  // having to open Tally directly -- see tally_firebase_sync_v2.py's
+  // "LEDGER REALLOCATION" section for the PC-side half of this.
+  //
+  // ONE shared implementation, same discipline as getVoucherCounterLedgerName
+  // above (that file's docstring documents a real bug from having two
+  // copies of similar logic drift apart) -- used by both the dashboard
+  // badge count and the list screen itself, so they can never disagree.
+  function getContraLedgerName(data) {
+    return (data.bank_statement_settings || {}).contra_ledger || 'Suspense';
+  }
+
+  function getVouchersNeedingAllocation(data) {
+    const contraLedgerName = getContraLedgerName(data);
+    const vouchers = safeArray(data.bank_related_vouchers);
+    return vouchers.filter(v => {
+      const vtype = (v.voucher_type || '').toLowerCase();
+      if (vtype !== 'payment' && vtype !== 'receipt') return false;
+      return safeArray(v.ledger_lines).some(l => (l.ledger_name || '').trim() === contraLedgerName);
+    });
+  }
+
+  // Finds any reallocation request already in flight for this exact
+  // voucher (by voucher_id) -- 'requested' means posting is in progress,
+  // 'post_failed' means it needs a retry, 'posted' means Tally has the
+  // correction but the voucher won't drop out of the list above until
+  // the next resync picks it up (see request_delayed_sync server-side).
+  // Newest request wins if more than one somehow exists for the same
+  // voucher.
+  function findReallocationRequest(data, voucherId) {
+    const all = data.pending_ledger_reallocations || {};
+    let best = null;
+    Object.keys(all).forEach(reqId => {
+      const req = all[reqId];
+      if (!req || req.voucher_id !== voucherId) return;
+      if (!best || (req.requested_at || '') > (best.requested_at || '')) best = { ...req, req_id: reqId };
+    });
+    return best;
+  }
+
   let currentLedgerDetailParty = null;
 
   // Anchors a party's running balance to the ledger's real current closing
@@ -3378,6 +3510,14 @@
     }
     if (document.getElementById('voucher-detail-overlay').classList.contains('open') && currentVoucherLookup) {
       openVoucherDetail(currentVoucherLookup.date, currentVoucherLookup.voucherNumber, currentVoucherLookup.kind);
+    }
+    // Only refreshes the list step -- if the person is mid-pick on a
+    // specific voucher, a background data change (e.g. another request
+    // resolving) shouldn't yank them back to the list out from under
+    // their in-progress selection.
+    if (document.getElementById('ledger-allocation-overlay').classList.contains('open') &&
+        document.getElementById('ledger-alloc-step-list').classList.contains('active')) {
+      renderLedgerAllocList();
     }
   }
 
@@ -5092,6 +5232,177 @@
   // current step. This is what replaced the FAB's old auto-resume. ----
   let queueUnsubInv = null, queueUnsubStmt = null;
   let queueInvoices = {}, queueStatements = {};
+
+  // ================= LEDGER ALLOCATION OVERLAY =================
+  // See getVouchersNeedingAllocation / findReallocationRequest above and
+  // tally_firebase_sync_v2.py's "LEDGER REALLOCATION" section for the
+  // PC-side half. Two steps inside one overlay (.alloc-step, NOT the
+  // shared .scan-step -- see that class's CSS comment for why): a list,
+  // and a per-voucher ledger picker.
+  let ledgerAllocPickVoucher = null;
+
+  function openLedgerAllocationOverlay() {
+    ledgerAllocPickVoucher = null;
+    openOverlay('ledger-allocation-overlay');
+    ledgerAllocGoToList();
+    renderLedgerAllocList();
+  }
+  document.getElementById('ledger-allocation-back').addEventListener('click', () => goBackFromOverlay());
+
+  function ledgerAllocGoToList() {
+    ledgerAllocPickVoucher = null;
+    document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('ledger-alloc-step-list').classList.add('active');
+  }
+
+  function renderLedgerAllocList() {
+    const data = companyData[currentCompany] || {};
+    const body = document.getElementById('ledger-alloc-list-body');
+    const contraName = getContraLedgerName(data);
+    document.getElementById('ledger-alloc-contra-name').textContent = contraName;
+
+    // Uses the ready FLAG, not truthiness of the data itself -- a company
+    // with zero bank-related vouchers synced is legitimately empty
+    // (Firebase returns null for an empty path), which is falsy exactly
+    // like "not loaded yet" would be, so checking the data directly would
+    // show "Loading…" forever for that company instead of "Nothing needs
+    // allocation".
+    const ready = ensureSectionLoaded(currentCompany, 'bank_related_vouchers');
+    if (!ready) {
+      body.innerHTML = '<div class="loading-state">Loading…</div>';
+      return;
+    }
+
+    const vouchers = getVouchersNeedingAllocation(data)
+      .slice()
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    if (vouchers.length === 0) {
+      body.innerHTML = '<div class="loading-state">Nothing needs allocation right now — every bank-import voucher has a real ledger.</div>';
+      return;
+    }
+
+    body.innerHTML = vouchers.map(v => {
+      const amount = parseAmt(v.amount);
+      const req = findReallocationRequest(data, v.voucher_id);
+      let statusHtml = '';
+      if (req && req.status === 'requested') {
+        statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posting…</span>';
+      } else if (req && req.status === 'posted') {
+        statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posted — refreshing…</span>';
+      } else if (req && req.status === 'post_failed') {
+        statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
+      }
+      return `
+        <div class="alloc-voucher-row" data-voucher-id="${escapeHtml(v.voucher_id || '')}">
+          <div class="alloc-voucher-main">
+            <div class="alloc-voucher-narration">${escapeHtml(v.narration || v.voucher_number || '(no narration)')}</div>
+            <div class="alloc-voucher-sub">${escapeHtml(formatTallyDate(v.date))} · ${escapeHtml(v.voucher_type || '')} ${escapeHtml(v.voucher_number || '')}</div>
+          </div>
+          ${statusHtml}
+          <div class="alloc-voucher-amount">${formatCurrency(amount)}</div>
+        </div>`;
+    }).join('');
+
+    body.querySelectorAll('.alloc-voucher-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const voucherId = row.dataset.voucherId;
+        const voucher = vouchers.find(v => v.voucher_id === voucherId);
+        if (!voucher) return;
+        // A voucher with a request already in flight (posting, posted-
+        // awaiting-resync, or failed) isn't re-openable for a fresh pick
+        // -- a 'requested'/'posted' one would race the PC-side handler,
+        // and 'post_failed' is surfaced with its error right in the list
+        // (title attribute) rather than routing into the picker again,
+        // since the same submit would very likely just fail the same way.
+        const req = findReallocationRequest(data, voucherId);
+        if (req && (req.status === 'requested' || req.status === 'posted')) return;
+        openLedgerAllocPick(voucher);
+      });
+    });
+  }
+
+  async function openLedgerAllocPick(voucher) {
+    ledgerAllocPickVoucher = voucher;
+    document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('ledger-alloc-step-pick').classList.add('active');
+
+    document.getElementById('ledger-alloc-pick-vnum').textContent =
+      `${voucher.voucher_type || ''} ${voucher.voucher_number || ''}`.trim();
+    document.getElementById('ledger-alloc-pick-narration').textContent = voucher.narration || '';
+    document.getElementById('ledger-alloc-pick-amount').textContent = formatCurrency(parseAmt(voucher.amount));
+    document.getElementById('ledger-alloc-pick-error').style.display = 'none';
+
+    const select = document.getElementById('ledger-alloc-pick-select');
+    const saveBtn = document.getElementById('ledger-alloc-pick-save-btn');
+    select.innerHTML = '<option>Loading ledgers…</option>';
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Save to Tally';
+
+    const names = await fetchLedgerNames();
+    // Never offer the contra ledger itself as the "real" ledger to pick --
+    // that would just leave the voucher exactly as broken as it is now.
+    const contraName = getContraLedgerName(companyData[currentCompany] || {});
+    populateLedgerSelect(select, names.filter(n => n !== contraName), null);
+    // .onchange (not addEventListener) -- this picker reopens for a
+    // different voucher against the SAME persistent <select> element
+    // each time, and addEventListener would stack a new listener on
+    // every open instead of replacing the previous voucher's.
+    select.onchange = () => { saveBtn.disabled = !select.value; };
+    saveBtn.disabled = !select.value;
+  }
+
+  document.getElementById('ledger-alloc-pick-cancel-btn').addEventListener('click', () => {
+    ledgerAllocGoToList();
+    renderLedgerAllocList();
+  });
+
+  document.getElementById('ledger-alloc-pick-save-btn').addEventListener('click', async () => {
+    const voucher = ledgerAllocPickVoucher;
+    const select = document.getElementById('ledger-alloc-pick-select');
+    const newLedgerName = select.value;
+    if (!voucher || !newLedgerName) return;
+
+    if (!voucher.voucher_id) {
+      document.getElementById('ledger-alloc-pick-error').textContent =
+        'This voucher has no REMOTEID on file (likely posted before this feature existed) -- correct it directly in Tally instead.';
+      document.getElementById('ledger-alloc-pick-error').style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('ledger-alloc-pick-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    document.getElementById('ledger-alloc-pick-error').style.display = 'none';
+
+    try {
+      // Client-generated id, same scheme as invoiceId/stmtId elsewhere in
+      // this file -- push() isn't imported from the Firebase SDK here,
+      // and there's no need for it just to name one new node.
+      const reqId = 'realloc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const reqRef = ref(db, `companies/${currentCompany}/pending_ledger_reallocations/${reqId}`);
+      await set(reqRef, {
+        status: 'requested',
+        voucher_id: voucher.voucher_id,
+        voucher_date: voucher.date,
+        voucher_type: voucher.voucher_type,
+        voucher_number: voucher.voucher_number,
+        narration: voucher.narration || '',
+        ledger_lines: safeArray(voucher.ledger_lines),
+        new_ledger_name: newLedgerName,
+        requested_at: new Date().toISOString(),
+      });
+      ledgerAllocGoToList();
+      renderLedgerAllocList();
+    } catch (err) {
+      console.error('Could not submit ledger reallocation:', err);
+      document.getElementById('ledger-alloc-pick-error').textContent =
+        'Could not save -- check your connection and try again.';
+      document.getElementById('ledger-alloc-pick-error').style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Save to Tally';
+    }
+  });
 
   function openReviewQueue() {
     openOverlay('review-queue-overlay');
