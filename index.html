@@ -475,6 +475,28 @@
     background: var(--paper-card); color: var(--ink);
     font-size: 14px; font-family: inherit;
   }
+  /* Every ledger <select> gets wrapped with a search-to-filter combobox
+     (see enhanceLedgerSelect) -- a plain <select> on a phone is a long
+     unsearchable scroll wheel, which is exactly what this replaces. */
+  .ledger-search-wrap { position: relative; }
+  .ledger-search-wrap input.stmt-ledger-select { cursor: text; }
+  .ledger-search-dropdown {
+    display: none;
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    max-height: 240px; overflow-y: auto;
+    background: var(--paper-card); border: 1.5px solid var(--border);
+    border-radius: 9px; box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+    z-index: 50;
+  }
+  .ledger-search-dropdown.open { display: block; }
+  .ledger-search-option {
+    padding: 10px 12px; font-size: 13.5px; color: var(--ink);
+    cursor: pointer;
+  }
+  .ledger-search-option:hover,
+  .ledger-search-option.hl { background: var(--paper); }
+  .ledger-search-option.empty { color: var(--ink-soft); cursor: default; }
+  .ledger-search-option.empty:hover { background: none; }
   .upload-progress-bar {
     width: 100%; max-width: 220px; height: 8px;
     background: var(--paper); border-radius: 8px;
@@ -6567,6 +6589,124 @@
       }
       selectEl.value = currentValue;
     }
+    // Every ledger picker gets the same search-to-filter combobox --
+    // see enhanceLedgerSelect below.
+    enhanceLedgerSelect(selectEl);
+  }
+
+  // ===== Searchable ledger select =====
+  // A plain <select> with 100s of ledgers is a long unsearchable scroll
+  // wheel on a phone. This wraps the real <select> with a small text
+  // input + filtered dropdown, but keeps the <select> itself as the one
+  // source of truth (hidden, not removed): every existing call site that
+  // reads .value or listens for 'change' / sets .onchange keeps working
+  // untouched -- this only changes how the person picks a value.
+  let _ledgerSearchDocListenerAttached = false;
+
+  function ledgerSearchOptionLabel(selectEl, value) {
+    if (!value) return '';
+    const opt = Array.from(selectEl.options).find(o => o.value === value);
+    return opt ? opt.textContent : '';
+  }
+
+  function renderLedgerSearchDropdown(selectEl, dropdown, query) {
+    const q = (query || '').trim().toLowerCase();
+    const options = Array.from(selectEl.options).filter(o => o.value !== '');
+    const matches = q ? options.filter(o => o.textContent.toLowerCase().includes(q)) : options;
+    if (matches.length === 0) {
+      dropdown.innerHTML = '<div class="ledger-search-option empty">No matching ledgers</div>';
+      return;
+    }
+    dropdown.innerHTML = matches.map(o =>
+      `<div class="ledger-search-option" data-value="${escapeHtml(o.value)}">${escapeHtml(o.textContent)}</div>`
+    ).join('');
+  }
+
+  function enhanceLedgerSelect(selectEl) {
+    const existingWrap = selectEl.nextElementSibling;
+    const alreadyWrapped = existingWrap && existingWrap.classList &&
+      existingWrap.classList.contains('ledger-search-wrap');
+
+    let input, dropdown;
+    if (alreadyWrapped) {
+      input = existingWrap.querySelector('input');
+      dropdown = existingWrap.querySelector('.ledger-search-dropdown');
+    } else {
+      selectEl.style.display = 'none';
+      const wrap = document.createElement('div');
+      wrap.className = 'ledger-search-wrap';
+
+      input = document.createElement('input');
+      input.type = 'text';
+      // Match the wrapped <select>'s classes so it looks identical
+      // wherever it's used (some pickers add "map-field-input spaced").
+      input.className = selectEl.className;
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('aria-label', selectEl.getAttribute('aria-label') || 'Search ledger');
+      input.placeholder = 'Search ledger…';
+
+      dropdown = document.createElement('div');
+      dropdown.className = 'ledger-search-dropdown';
+
+      wrap.appendChild(input);
+      wrap.appendChild(dropdown);
+      selectEl.insertAdjacentElement('afterend', wrap);
+
+      // mousedown (not click) fires before the input's blur, so the
+      // dropdown is still open and the option still there to read when
+      // the value gets picked.
+      dropdown.addEventListener('mousedown', (e) => {
+        const opt = e.target.closest('.ledger-search-option[data-value]');
+        if (!opt) return;
+        e.preventDefault();
+        const val = opt.getAttribute('data-value');
+        selectEl.value = val;
+        input.value = opt.textContent;
+        dropdown.classList.remove('open');
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      input.addEventListener('focus', () => {
+        document.querySelectorAll('.ledger-search-dropdown.open').forEach(dd => {
+          if (dd !== dropdown) dd.classList.remove('open');
+        });
+        renderLedgerSearchDropdown(selectEl, dropdown, '');
+        dropdown.classList.add('open');
+        input.select();
+      });
+      input.addEventListener('input', () => {
+        renderLedgerSearchDropdown(selectEl, dropdown, input.value);
+        dropdown.classList.add('open');
+      });
+      input.addEventListener('blur', () => {
+        // Whatever was typed but never actually picked shouldn't linger --
+        // snap the visible text back to whatever is really selected.
+        // Delayed so the dropdown's mousedown handler above still fires.
+        setTimeout(() => {
+          input.value = ledgerSearchOptionLabel(selectEl, selectEl.value);
+        }, 150);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { dropdown.classList.remove('open'); input.blur(); }
+      });
+
+      if (!_ledgerSearchDocListenerAttached) {
+        document.addEventListener('click', (e) => {
+          document.querySelectorAll('.ledger-search-wrap').forEach(w => {
+            if (!w.contains(e.target)) {
+              const dd = w.querySelector('.ledger-search-dropdown');
+              if (dd) dd.classList.remove('open');
+            }
+          });
+        });
+        _ledgerSearchDocListenerAttached = true;
+      }
+    }
+
+    // (Re)sync the visible text with whatever populateLedgerSelect just
+    // set on the real <select> -- covers both first render and every
+    // later re-populate (settings reopened, next voucher in the list…).
+    input.value = ledgerSearchOptionLabel(selectEl, selectEl.value);
+    input.disabled = selectEl.disabled;
   }
 
   function updateStmtSettingsSaveState() {
