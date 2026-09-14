@@ -5532,10 +5532,14 @@
 
   function setLedgerAllocCreateMode(on) {
     document.getElementById('ledger-alloc-new-ledger-form').style.display = on ? 'block' : 'none';
-    document.getElementById('ledger-alloc-pick-select').style.display = on ? 'none' : '';
-    // The select's own search-combobox wrapper (see enhanceLedgerSelect)
-    // sits right after it and needs hiding too, or it stays visible
-    // floating above the create form.
+    // The raw <select> is always hidden once enhanceLedgerSelect has
+    // wrapped it (see populateLedgerSelect) -- its search-combobox
+    // wrapper is the only visible control for "pick an existing ledger".
+    // Restoring the select's own display here (an earlier version did
+    // `style.display = on ? 'none' : ''`) undid that hide and showed
+    // BOTH the native dropdown and the search box stacked on top of
+    // each other. Only the wrapper should ever toggle.
+    document.getElementById('ledger-alloc-pick-select').style.display = 'none';
     const wrap = document.getElementById('ledger-alloc-pick-select').nextElementSibling;
     if (wrap && wrap.classList.contains('ledger-search-wrap')) wrap.style.display = on ? 'none' : '';
     document.getElementById('ledger-alloc-new-ledger-toggle').textContent =
