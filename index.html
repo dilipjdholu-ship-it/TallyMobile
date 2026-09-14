@@ -1252,7 +1252,31 @@
               <div class="map-field-label">New Ledger Name</div>
               <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-name" placeholder="e.g. Poorva Sud" autocomplete="off">
               <div class="map-field-label">Group (Under)</div>
-              <select class="stmt-ledger-select map-field-input" id="ledger-alloc-new-ledger-group"></select>
+              <select class="stmt-ledger-select map-field-input spaced" id="ledger-alloc-new-ledger-group"></select>
+              <div class="map-field-label">Maintain balances bill-by-bill</div>
+              <select class="map-field-input spaced" id="ledger-alloc-new-ledger-billwise">
+                <option value="No">No</option>
+                <option value="Yes">Yes</option>
+              </select>
+              <div class="map-field-label">Address</div>
+              <textarea id="ledger-alloc-new-ledger-address" class="map-field-input spaced" rows="2" placeholder="Optional"></textarea>
+              <div class="map-field-label">State</div>
+              <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-state" placeholder="e.g. Maharashtra">
+              <div class="map-field-label">Country</div>
+              <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-country" value="India">
+              <div class="map-field-label">Pincode</div>
+              <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-pincode" placeholder="Optional" inputmode="numeric">
+              <div class="map-field-label">Registration Type</div>
+              <select class="map-field-input spaced" id="ledger-alloc-new-ledger-regtype">
+                <option value="Regular">Regular</option>
+                <option value="Composition">Composition</option>
+                <option value="Consumer">Consumer</option>
+                <option value="Unregistered">Unregistered</option>
+              </select>
+              <div class="map-field-label">GSTIN/UIN</div>
+              <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-gstin" placeholder="Optional">
+              <div class="map-field-label">PAN/IT No.</div>
+              <input type="text" class="map-field-input" id="ledger-alloc-new-ledger-pan" placeholder="Optional">
             </div>
           </div>
           <div id="ledger-alloc-pick-error" class="map-field-warn" style="display:none;"></div>
@@ -5539,6 +5563,17 @@
       const groupSelect = document.getElementById('ledger-alloc-new-ledger-group');
       groupSelect.innerHTML = '<option>Loading groups…</option>';
       document.getElementById('ledger-alloc-new-ledger-name').value = '';
+      // Reset the optional fields to their defaults each time the form
+      // opens -- otherwise a previous voucher's typed address/GSTIN
+      // would silently carry over to the next one.
+      document.getElementById('ledger-alloc-new-ledger-billwise').value = 'No';
+      document.getElementById('ledger-alloc-new-ledger-address').value = '';
+      document.getElementById('ledger-alloc-new-ledger-state').value = '';
+      document.getElementById('ledger-alloc-new-ledger-country').value = 'India';
+      document.getElementById('ledger-alloc-new-ledger-pincode').value = '';
+      document.getElementById('ledger-alloc-new-ledger-regtype').value = 'Regular';
+      document.getElementById('ledger-alloc-new-ledger-gstin').value = '';
+      document.getElementById('ledger-alloc-new-ledger-pan').value = '';
       setLedgerAllocCreateMode(true);
       const groupNames = await fetchGroupNames();
       populateLedgerSelect(groupSelect, groupNames, null);
@@ -5630,7 +5665,29 @@
       // handle_ledger_reallocation_request) -- omitted entirely rather
       // than sent as null/empty when picking an existing ledger, so a
       // stray falsy value can never be misread as "create this".
-      if (creatingNew) payload.new_ledger_group = newLedgerGroup;
+      if (creatingNew) {
+        payload.new_ledger_group = newLedgerGroup;
+        // GST-relevant + address fields for the new ledger -- all
+        // optional, only sent (non-empty) if the person filled them in.
+        // Skipped entirely rather than sent empty, so create_ledger_in_tally
+        // only adds the XML tags for fields that were actually given.
+        const billwise = document.getElementById('ledger-alloc-new-ledger-billwise').value;
+        const address = document.getElementById('ledger-alloc-new-ledger-address').value.trim();
+        const state = document.getElementById('ledger-alloc-new-ledger-state').value.trim();
+        const country = document.getElementById('ledger-alloc-new-ledger-country').value.trim();
+        const pincode = document.getElementById('ledger-alloc-new-ledger-pincode').value.trim();
+        const regtype = document.getElementById('ledger-alloc-new-ledger-regtype').value;
+        const gstin = document.getElementById('ledger-alloc-new-ledger-gstin').value.trim();
+        const pan = document.getElementById('ledger-alloc-new-ledger-pan').value.trim();
+        if (billwise) payload.new_ledger_billwise = billwise;
+        if (address) payload.new_ledger_address = address;
+        if (state) payload.new_ledger_state = state;
+        if (country) payload.new_ledger_country = country;
+        if (pincode) payload.new_ledger_pincode = pincode;
+        if (regtype) payload.new_ledger_regtype = regtype;
+        if (gstin) payload.new_ledger_gstin = gstin;
+        if (pan) payload.new_ledger_pan = pan;
+      }
       await set(reqRef, payload);
       ledgerAllocGoToList();
       renderLedgerAllocList();
