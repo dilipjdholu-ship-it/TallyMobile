@@ -734,6 +734,17 @@
     font-size: 11.5px; color: var(--primary); margin-top: 2px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* Deliberately distinct from .alloc-voucher-suggest -- this is the
+     "we looked and found nothing" state, not a suggestion. Without a
+     visibly different case for it, "no match in this narration's date+
+     amount" and "GPay data hasn't loaded yet" both silently render as
+     nothing, which is exactly the undiagnosable gap that caused the
+     "still no suggestion" report -- the person had no way to tell those
+     two states apart from what's on screen. */
+  .alloc-voucher-suggest-none {
+    font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   /* GPay CSV upload overlay's own step class -- see the .alloc-step
      comment above for why this isn't .scan-step. */
@@ -1281,7 +1292,7 @@
                  (no suggestion, or a single confident one already applied
                  automatically) the rest of the time. -->
             <div class="gpay-suggest-box" id="ledger-alloc-gpay-suggest" style="display:none;">
-              <div class="gpay-suggest-label">GPay statement has more than one match for this date/amount -- pick one, or search manually above:</div>
+              <div class="gpay-suggest-label" id="ledger-alloc-gpay-suggest-label">GPay statement has more than one match for this date/amount -- pick one, or search manually above:</div>
               <div id="ledger-alloc-gpay-suggest-chips"></div>
             </div>
             <button type="button" class="map-discard-btn" id="ledger-alloc-new-ledger-toggle" style="margin-top:2px;">+ Create new ledger</button>
@@ -5586,6 +5597,17 @@
     return index;
   }
 
+  // Earliest/latest "day" (YYYY-MM-DD) across whatever's currently
+  // imported for this company -- shown on the status line so a mismatch
+  // (e.g. a voucher dated outside this range, or a CSV that turned out
+  // to cover fewer days than expected) is visible at a glance instead of
+  // only showing up as an unexplained missing suggestion.
+  function getGpayDateRange(rows) {
+    const days = rows.map(r => (r.datetime || '').slice(0, 10)).filter(Boolean).sort();
+    if (!days.length) return null;
+    return { from: days[0], to: days[days.length - 1] };
+  }
+
   // voucherDateYYYYMMDD is Tally's own date string (e.g. "20260913").
   // Returns null (no match in the imported CSV), { confident: true, name }
   // for an unambiguous single match, or { confident: false, names: [...] }
@@ -5632,7 +5654,7 @@
     gpayCache = { key: loadingFor, index: new Map(), count: null }; // placeholder so this isn't kicked off twice
     fetchGpayTransactions(loadingFor).then(rows => {
       if (currentCompany !== loadingFor) return; // company switched before this landed -- discard
-      gpayCache = { key: loadingFor, index: buildGpayMatchIndex(rows), count: rows.length };
+      gpayCache = { key: loadingFor, index: buildGpayMatchIndex(rows), count: rows.length, range: getGpayDateRange(rows) };
       if (document.getElementById('ledger-allocation-overlay').classList.contains('open')) {
         renderLedgerAllocList();
       }
@@ -5655,7 +5677,11 @@
     } else if (gpayCache.count === 0) {
       el.textContent = '💡 No GPay data imported yet for this company.';
     } else {
-      el.textContent = `💡 GPay data: ${gpayCache.count} transaction${gpayCache.count === 1 ? '' : 's'} imported.`;
+      const range = gpayCache.range
+        ? ` (${formatTallyDateShort(gpayCache.range.from.replace(/-/g, ''))} to ${formatTallyDateShort(gpayCache.range.to.replace(/-/g, ''))})`
+        : '';
+      el.textContent = `💡 GPay data: ${gpayCache.count} transaction${gpayCache.count === 1 ? '' : 's'} imported${range}. ` +
+        `A voucher outside this date range, or with no matching amount that day, will show "No match" instead of a suggestion.`;
     }
   }
 
@@ -5733,10 +5759,14 @@
       // "whenever that fetch happens to land".
       const importedForCompany = currentCompany;
       const freshRows = await fetchGpayTransactions(importedForCompany);
-      gpayCache = { key: importedForCompany, index: buildGpayMatchIndex(freshRows), count: freshRows.length };
+      const range = getGpayDateRange(freshRows);
+      gpayCache = { key: importedForCompany, index: buildGpayMatchIndex(freshRows), count: freshRows.length, range };
+      const rangeMsg = range
+        ? ` covering ${formatTallyDateShort(range.from.replace(/-/g, ''))} to ${formatTallyDateShort(range.to.replace(/-/g, ''))}`
+        : '';
       document.getElementById('gpay-csv-done-msg').textContent =
         `Imported ${gpayCsvParsedRows.length} transaction${gpayCsvParsedRows.length === 1 ? '' : 's'} from this file ` +
-        `(${freshRows.length} total now stored for this company). Matching Suspense vouchers below will now show a suggested name.`;
+        `(${freshRows.length} total now stored for this company${rangeMsg}). Matching Suspense vouchers below will now show a suggested name.`;
       document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
       document.getElementById('gpay-step-done').classList.add('active');
     } catch (err) {
@@ -5864,6 +5894,13 @@
           suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(suggestion.name)}</div>`;
         } else if (suggestion) {
           suggestHtml = `<div class="alloc-voucher-suggest">💡 Possibly: ${escapeHtml(suggestion.names.join(', '))}</div>`;
+        } else {
+          // No candidate at all for this exact (date, amount) in whatever
+          // is currently imported -- surfaced explicitly rather than left
+          // blank, so this reads as "checked, nothing found" instead of
+          // being indistinguishable from "GPay data not loaded yet" (see
+          // the CSS comment on .alloc-voucher-suggest-none).
+          suggestHtml = '<div class="alloc-voucher-suggest-none">No match in imported GPay data for this date/amount</div>';
         }
       }
       return `
@@ -6014,6 +6051,7 @@
     // explicit tap); an ambiguous one is offered as pick chips instead of
     // guessed at.
     const suggestBox = document.getElementById('ledger-alloc-gpay-suggest');
+    const suggestLabel = document.getElementById('ledger-alloc-gpay-suggest-label');
     const suggestChips = document.getElementById('ledger-alloc-gpay-suggest-chips');
     suggestBox.style.display = 'none';
     suggestChips.innerHTML = '';
@@ -6023,12 +6061,26 @@
       if (suggestion && suggestion.confident) {
         await applyGpaySuggestedName(suggestion.name, filteredNames, select);
       } else if (suggestion) {
+        suggestLabel.textContent = 'GPay statement has more than one match for this date/amount -- pick one, or search manually above:';
         suggestChips.innerHTML = suggestion.names.map(n =>
           `<span class="gpay-suggest-chip" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join('');
         suggestBox.style.display = 'block';
         suggestChips.querySelectorAll('.gpay-suggest-chip').forEach(chip => {
           chip.addEventListener('click', () => applyGpaySuggestedName(chip.dataset.name, filteredNames, select));
         });
+      } else if (gpayIndex) {
+        // Narration matches GPay's pattern and the CSV data IS loaded, but
+        // nothing in it shares this exact date+amount -- tell the person
+        // that plainly instead of leaving this box invisible, which is
+        // indistinguishable from "not a GPay transaction" or "data still
+        // loading". This is the concrete thing to check when a specific
+        // voucher unexpectedly has no suggestion: re-open the imported
+        // CSV and confirm a row exists for this date and amount.
+        suggestLabel.textContent =
+          `No transaction in the imported GPay data matches ${formatTallyDate(voucher.date)} for ` +
+          `${formatCurrency(Math.abs(parseAmt(voucher.amount)))}. Re-check the CSV was imported and covers this date, or search manually above.`;
+        suggestChips.innerHTML = '';
+        suggestBox.style.display = 'block';
       }
     }
   }
