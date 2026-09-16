@@ -730,6 +730,26 @@
   .alloc-status-pending { background: var(--amber-soft); color: var(--amber); }
   .alloc-status-failed { background: var(--rust-soft); color: var(--rust); }
   .alloc-status-done { background: var(--forest-soft); color: var(--forest); }
+  .alloc-voucher-suggest {
+    font-size: 11.5px; color: var(--primary); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* GPay CSV upload overlay's own step class -- see the .alloc-step
+     comment above for why this isn't .scan-step. */
+  .gpay-step { display: none; }
+  .gpay-step.active { display: block; }
+  .gpay-suggest-box {
+    background: var(--amber-soft); border-radius: 10px; padding: 10px 12px;
+    margin: 10px 0; font-size: 12.5px; color: var(--ink);
+  }
+  .gpay-suggest-box .gpay-suggest-label { color: var(--ink-soft); margin-bottom: 6px; }
+  .gpay-suggest-chip {
+    display: inline-block; background: white; border: 1px solid var(--paper-line);
+    border-radius: 14px; padding: 4px 10px; margin: 0 6px 6px 0;
+    font-size: 12.5px; cursor: pointer;
+  }
+  .gpay-suggest-chip:active { background: var(--amber-soft); }
 
   /* Plain inline variant of .date-range-bar -- the original is styled as
      a sticky full-width strip directly under an overlay-header (see
@@ -1221,6 +1241,7 @@
             statement. Pick the real ledger for each one -- everything else about the voucher
             (date, amount, voucher number) stays exactly as posted.
           </p>
+          <button type="button" class="map-discard-btn" id="ledger-alloc-gpay-import-btn" style="margin:0 0 12px;">📄 Import GPay CSV for name suggestions</button>
           <div class="filter-chips" id="ledger-alloc-status-chips">
             <button class="filter-chip active" data-status="pending">Pending</button>
             <button class="filter-chip" data-status="allocated">Allocated</button>
@@ -1247,6 +1268,16 @@
             <div id="ledger-alloc-pick-amount" style="font-weight:600; margin-bottom:12px;"></div>
             <div class="map-field-label">Real Ledger</div>
             <select class="stmt-ledger-select map-field-input spaced" id="ledger-alloc-pick-select"></select>
+            <!-- Filled in by applyGpaySuggestion() when the uploaded GPay CSV
+                 has more than one transaction matching this voucher's exact
+                 date+amount -- deliberately NOT auto-picked in that case (see
+                 findGpaySuggestion), just offered as one-tap options. Hidden
+                 (no suggestion, or a single confident one already applied
+                 automatically) the rest of the time. -->
+            <div class="gpay-suggest-box" id="ledger-alloc-gpay-suggest" style="display:none;">
+              <div class="gpay-suggest-label">GPay statement has more than one match for this date/amount -- pick one, or search manually above:</div>
+              <div id="ledger-alloc-gpay-suggest-chips"></div>
+            </div>
             <button type="button" class="map-discard-btn" id="ledger-alloc-new-ledger-toggle" style="margin-top:2px;">+ Create new ledger</button>
             <div id="ledger-alloc-new-ledger-form" style="display:none; margin-top:12px;">
               <div class="map-field-label">New Ledger Name</div>
@@ -1282,6 +1313,55 @@
           <div id="ledger-alloc-pick-error" class="map-field-warn" style="display:none;"></div>
           <button class="map-confirm-btn" id="ledger-alloc-pick-save-btn" disabled>Save to Tally</button>
           <button type="button" class="map-discard-btn" id="ledger-alloc-pick-cancel-btn">Cancel</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- GPay CSV Import Overlay -- opens ON TOP of Ledger Allocation (see
+       OVERLAY_IDS ordering comment). Pure client-side: parses the CSV in
+       the browser and writes the rows straight to
+       companies/{key}/gpay_transactions -- no Tally XML involved at all,
+       this only feeds name SUGGESTIONS into the existing (already-proven)
+       ledger reallocation flow. The person still reviews and taps Save on
+       every voucher exactly as before. -->
+  <div id="gpay-upload-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="gpay-upload-back">&larr; Back</button>
+        <div class="overlay-title">Import GPay Statement</div>
+      </div>
+      <div class="overlay-body">
+
+        <div class="gpay-step active" id="gpay-step-capture">
+          <div class="scan-capture-area">
+            <div class="glyph">📱</div>
+            <p>Upload the transaction CSV you download from GPay for Business (columns: Payer/Receiver,
+              Creation time, Amount). It's only used to suggest party names for Suspense vouchers below --
+              nothing is posted to Tally from this screen.</p>
+            <input type="file" accept=".csv,text/csv" id="gpay-csv-input" style="display:none;">
+            <button class="scan-btn" id="gpay-csv-choose-btn">Choose CSV File</button>
+          </div>
+        </div>
+
+        <div class="gpay-step" id="gpay-step-preview">
+          <div class="scan-capture-area">
+            <div class="glyph">📄</div>
+            <div id="gpay-csv-filename" style="font-weight:600;"></div>
+            <p id="gpay-csv-summary" style="margin-top:8px;"></p>
+          </div>
+          <div id="gpay-csv-error" class="map-field-warn" style="display:none;"></div>
+          <button class="scan-btn" id="gpay-csv-import-btn">Import &amp; Match</button>
+          <button class="scan-btn secondary" id="gpay-csv-retake-btn">Choose a different file</button>
+        </div>
+
+        <div class="gpay-step" id="gpay-step-done">
+          <div class="scan-capture-area">
+            <div class="glyph">✅</div>
+            <p id="gpay-csv-done-msg"></p>
+          </div>
+          <button class="scan-btn" id="gpay-csv-done-btn">Back to Ledger Allocation</button>
         </div>
 
       </div>
@@ -1664,7 +1744,7 @@
   });
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-  import { getDatabase, ref, onValue, get, set, remove } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
+  import { getDatabase, ref, onValue, get, set, update, remove } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
   import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 
   const firebaseConfig = {
@@ -1703,7 +1783,13 @@
   // has no history entry for "overlay open" to go back to. Pushing a
   // history entry when an overlay opens, and closing overlays on
   // popstate, makes back-button behavior match a native app.
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'ledger-allocation-overlay'];
+  // 'gpay-upload-overlay' is listed BEFORE 'ledger-allocation-overlay' on
+  // purpose -- it opens ON TOP of the allocation overlay (see the "Import
+  // GPay CSV" button in ledger-alloc-step-list), and closeTopOverlay below
+  // closes whichever id it reaches FIRST in this array, so a nested
+  // overlay must always be listed earlier than the overlay it can stack on
+  // (same convention as voucher-detail-overlay vs ledger-detail-overlay).
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'gpay-upload-overlay', 'ledger-allocation-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -5388,6 +5474,252 @@
   }
   document.getElementById('ledger-allocation-back').addEventListener('click', () => goBackFromOverlay());
 
+  // ===== GPay CSV name-suggestion matching =====
+  // Background: GPay-routed UPI collections land in the bank statement as
+  // an opaque IMPS narration (e.g. "IMPS:625618018221:918020110872063:
+  // GOOGLEINDIADIGIT") -- no payer name at all. GPay for Business's own
+  // CSV export DOES have the real name, but has no shared reference number
+  // with the bank narration (confirmed against DJ's real Sept 2026 export
+  // and bank statement -- the export's columns are just Payer/Receiver,
+  // Creation time, Amount, Processing fee, Net amount, Status, Update
+  // time, Notes). So matching is by exact date + amount, which checked out
+  // against 151 of DJ's real transactions across 15 days: every day's
+  // transactions matched exactly by date+amount except the most recent
+  // (expected -- Tally hadn't synced that day's later transactions yet).
+  // Within a day, ~8% of transactions share an exact duplicate amount with
+  // another transaction that same day (two people paying the same round
+  // number) -- those are NOT guessed at (see findGpaySuggestion) even
+  // though a same-day chronological-order heuristic resolves most of them
+  // correctly, because it was ALSO found to occasionally mis-order two
+  // transactions posted seconds apart (confirmed: two real transactions
+  // where GPay's creation-time order and Tally's voucher-number order
+  // disagreed). Given this project's history with confident-looking-but-
+  // wrong assumptions in Tally integration, an unresolvable date+amount
+  // tie is surfaced to the person as a short pick-list instead.
+
+  function parseGpayCsvLine(line) {
+    const out = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+        } else cur += ch;
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        out.push(cur); cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  // Only "Settled" rows are kept -- a failed/pending GPay transaction
+  // never actually landed in the bank account, so it can't match a real
+  // Suspense voucher and would just be noise in the candidate pool.
+  function parseGpayCsv(text) {
+    const lines = text.replace(/^﻿/, '').split(/\r\n|\r|\n/).filter(l => l.trim().length > 0);
+    if (lines.length < 2) throw new Error('That file has no data rows.');
+    const headers = parseGpayCsvLine(lines[0]).map(h => h.trim());
+    const col = name => headers.indexOf(name);
+    const idx = { name: col('Payer/Receiver'), time: col('Creation time'), amount: col('Amount'), status: col('Status') };
+    if (idx.name === -1 || idx.time === -1 || idx.amount === -1) {
+      throw new Error('This doesn\'t look like a GPay transaction CSV -- expected columns "Payer/Receiver", "Creation time" and "Amount".');
+    }
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseGpayCsvLine(lines[i]);
+      const status = idx.status >= 0 ? (cols[idx.status] || '').trim() : 'Settled';
+      if (status && status.toLowerCase() !== 'settled') continue;
+      const name = (cols[idx.name] || '').trim();
+      const datetime = (cols[idx.time] || '').trim();
+      const amount = parseFloat(cols[idx.amount]);
+      if (!name || !datetime || !isFinite(amount)) continue;
+      rows.push({ name, datetime, amount });
+    }
+    return rows;
+  }
+
+  async function fetchGpayTransactions(companyKey) {
+    try {
+      const snap = await get(ref(db, `companies/${companyKey}/gpay_transactions`));
+      return Object.values(snap.val() || {});
+    } catch (err) {
+      console.error('Could not load GPay transactions:', err);
+      return [];
+    }
+  }
+
+  // Deterministic id per (datetime, amount) so re-importing a fresh GPay
+  // export -- which is always "everything so far", not just new rows --
+  // overwrites the same records instead of piling up duplicates every time.
+  async function importGpayTransactions(companyKey, rows) {
+    const updates = {};
+    rows.forEach(r => {
+      const id = 'gpay_' + r.datetime.replace(/[^0-9]/g, '') + '_' + Math.round(r.amount * 100);
+      updates[id] = { name: r.name, datetime: r.datetime, amount: r.amount };
+    });
+    await update(ref(db, `companies/${companyKey}/gpay_transactions`), updates);
+  }
+
+  // Groups GPay rows by (day, amount-in-paise) -- see the block comment
+  // above for why this pair is the only reliable shared key.
+  function buildGpayMatchIndex(rows) {
+    const index = new Map();
+    rows.forEach(r => {
+      const day = (r.datetime || '').slice(0, 10);
+      if (!day || !isFinite(r.amount)) return;
+      const key = day + '|' + Math.round(r.amount * 100);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(r);
+    });
+    return index;
+  }
+
+  // voucherDateYYYYMMDD is Tally's own date string (e.g. "20260913").
+  // Returns null (no match in the imported CSV), { confident: true, name }
+  // for an unambiguous single match, or { confident: false, names: [...] }
+  // when 2+ GPay transactions share this exact date+amount -- deliberately
+  // not narrowed further (see the block comment above).
+  function findGpaySuggestion(index, voucherDateYYYYMMDD, amount) {
+    if (!index || !voucherDateYYYYMMDD || voucherDateYYYYMMDD.length !== 8 || !isFinite(amount)) return null;
+    const day = voucherDateYYYYMMDD.slice(0, 4) + '-' + voucherDateYYYYMMDD.slice(4, 6) + '-' + voucherDateYYYYMMDD.slice(6, 8);
+    const key = day + '|' + Math.round(Math.abs(amount) * 100);
+    const candidates = index.get(key);
+    if (!candidates || candidates.length === 0) return null;
+    const uniqueNames = [...new Set(candidates.map(c => c.name))];
+    if (uniqueNames.length === 1) return { confident: true, name: uniqueNames[0] };
+    return { confident: false, names: uniqueNames };
+  }
+
+  // Scopes every suggestion to the one narration pattern this feature was
+  // actually built and tested against (see the AskUserQuestion decision
+  // logged in this feature's commit/session) -- other UPI apps' bank
+  // narrations look different and this hasn't been checked against them.
+  function isGpayNarration(narration) {
+    return !!(narration && narration.toUpperCase().includes('GOOGLEINDIADIGIT'));
+  }
+
+  // gpayCache holds the (already-grouped) match index for ONE company at a
+  // time -- rebuilt whenever the selected company changes or a fresh CSV
+  // is imported. getGpayIndexIfReady() returns null while the background
+  // fetch is in flight (or hasn't started yet); callers treat that exactly
+  // like "no suggestions available yet" rather than blocking on it.
+  let gpayCache = null; // { key: companyKey, index: Map }
+
+  function getGpayIndexIfReady() {
+    return (gpayCache && gpayCache.key === currentCompany) ? gpayCache.index : null;
+  }
+
+  function loadGpayIndexInBackground() {
+    if (gpayCache && gpayCache.key === currentCompany) return; // loaded, or already loading
+    const loadingFor = currentCompany;
+    gpayCache = { key: loadingFor, index: new Map() }; // placeholder so this isn't kicked off twice
+    fetchGpayTransactions(loadingFor).then(rows => {
+      if (currentCompany !== loadingFor) return; // company switched before this landed -- discard
+      gpayCache = { key: loadingFor, index: buildGpayMatchIndex(rows) };
+      if (document.getElementById('ledger-allocation-overlay').classList.contains('open')) {
+        renderLedgerAllocList();
+      }
+    }).catch(err => {
+      console.error('GPay index load failed:', err);
+      gpayCache = null; // allow a retry on the next render
+    });
+  }
+
+  // ===== GPay CSV upload overlay =====
+  let gpayCsvParsedRows = null; // pending rows from the currently-chosen file, awaiting Import tap
+
+  document.getElementById('ledger-alloc-gpay-import-btn').addEventListener('click', () => {
+    document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('gpay-step-capture').classList.add('active');
+    gpayCsvParsedRows = null;
+    document.getElementById('gpay-csv-input').value = '';
+    openOverlay('gpay-upload-overlay');
+  });
+  document.getElementById('gpay-upload-back').addEventListener('click', () => goBackFromOverlay());
+
+  document.getElementById('gpay-csv-choose-btn').addEventListener('click', () => {
+    document.getElementById('gpay-csv-input').click();
+  });
+
+  document.getElementById('gpay-csv-input').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const errBox = document.getElementById('gpay-csv-error');
+      errBox.style.display = 'none';
+      try {
+        gpayCsvParsedRows = parseGpayCsv(String(reader.result));
+        if (gpayCsvParsedRows.length === 0) {
+          throw new Error('No settled transactions found in this file.');
+        }
+        const dates = gpayCsvParsedRows.map(r => r.datetime.slice(0, 10)).sort();
+        document.getElementById('gpay-csv-filename').textContent = file.name;
+        document.getElementById('gpay-csv-summary').textContent =
+          `${gpayCsvParsedRows.length} settled transaction${gpayCsvParsedRows.length === 1 ? '' : 's'} found, ` +
+          `${dates[0]} to ${dates[dates.length - 1]}.`;
+        document.getElementById('gpay-csv-import-btn').disabled = false;
+      } catch (err) {
+        gpayCsvParsedRows = null;
+        document.getElementById('gpay-csv-filename').textContent = file.name;
+        document.getElementById('gpay-csv-summary').textContent = '';
+        errBox.textContent = err.message || 'Could not read that file.';
+        errBox.style.display = 'block';
+        document.getElementById('gpay-csv-import-btn').disabled = true;
+      }
+      document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('gpay-step-preview').classList.add('active');
+    };
+    reader.onerror = () => {
+      document.getElementById('gpay-csv-error').textContent = 'Could not read that file.';
+      document.getElementById('gpay-csv-error').style.display = 'block';
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('gpay-csv-retake-btn').addEventListener('click', () => {
+    document.getElementById('gpay-csv-input').value = '';
+    gpayCsvParsedRows = null;
+    document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('gpay-step-capture').classList.add('active');
+  });
+
+  document.getElementById('gpay-csv-import-btn').addEventListener('click', async () => {
+    if (!gpayCsvParsedRows || !gpayCsvParsedRows.length) return;
+    const btn = document.getElementById('gpay-csv-import-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+    try {
+      await importGpayTransactions(currentCompany, gpayCsvParsedRows);
+      // Force the next renderLedgerAllocList to pick up the fresh data
+      // rather than the (now stale) cached index.
+      gpayCache = null;
+      document.getElementById('gpay-csv-done-msg').textContent =
+        `Imported ${gpayCsvParsedRows.length} transaction${gpayCsvParsedRows.length === 1 ? '' : 's'}. ` +
+        `Matching Suspense vouchers below will now show a suggested name.`;
+      document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('gpay-step-done').classList.add('active');
+    } catch (err) {
+      console.error('GPay CSV import failed:', err);
+      document.getElementById('gpay-csv-error').textContent = 'Could not save -- check your connection and try again.';
+      document.getElementById('gpay-csv-error').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Import & Match';
+    }
+  });
+
+  document.getElementById('gpay-csv-done-btn').addEventListener('click', () => {
+    goBackFromOverlay();
+    renderLedgerAllocList();
+  });
+
   function ledgerAllocGoToList() {
     ledgerAllocPickVoucher = null;
     document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
@@ -5441,6 +5773,13 @@
       return;
     }
 
+    // Kicks off a background fetch the first time this company's GPay CSV
+    // data is needed, then re-renders once it lands -- see
+    // loadGpayIndexInBackground's comment. A no-op on every call after
+    // the first (already loaded, or nothing was ever imported).
+    loadGpayIndexInBackground();
+    const gpayIndex = getGpayIndexIfReady();
+
     const isPendingView = filter.status === 'pending';
     const rawList = isPendingView
       ? getVouchersNeedingAllocation(data)
@@ -5479,11 +5818,25 @@
       } else {
         statusHtml = `<span class="alloc-voucher-status alloc-status-done">→ ${escapeHtml(v.new_ledger_name || '')}</span>`;
       }
+      // GPay name suggestion, list-view preview only -- see
+      // findGpaySuggestion for the matching rule and why an ambiguous
+      // (2+ candidate) match is shown as "Possibly" rather than a name.
+      // Scoped to GOOGLEINDIADIGIT narrations only (see isGpayNarration).
+      let suggestHtml = '';
+      if (isPendingView && gpayIndex && isGpayNarration(v.narration)) {
+        const suggestion = findGpaySuggestion(gpayIndex, v.date, amount);
+        if (suggestion && suggestion.confident) {
+          suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(suggestion.name)}</div>`;
+        } else if (suggestion) {
+          suggestHtml = `<div class="alloc-voucher-suggest">💡 Possibly: ${escapeHtml(suggestion.names.join(', '))}</div>`;
+        }
+      }
       return `
         <div class="alloc-voucher-row" data-voucher-id="${escapeHtml(v.voucher_id || '')}" ${isPendingView ? '' : 'style="cursor:default;"'}>
           <div class="alloc-voucher-main">
             <div class="alloc-voucher-narration">${escapeHtml(v.narration || v.voucher_number || '(no narration)')}</div>
             <div class="alloc-voucher-sub">${escapeHtml(formatTallyDate(v.date))} · ${escapeHtml(v.voucher_type || '')} ${escapeHtml(v.voucher_number || '')}</div>
+            ${suggestHtml}
           </div>
           ${statusHtml}
           <div class="alloc-voucher-amount">${formatCurrency(amount)}</div>
@@ -5610,13 +5963,75 @@
     // Never offer the contra ledger itself as the "real" ledger to pick --
     // that would just leave the voucher exactly as broken as it is now.
     const contraName = getContraLedgerName(companyData[currentCompany] || {});
-    populateLedgerSelect(select, names.filter(n => n !== contraName), null);
+    const filteredNames = names.filter(n => n !== contraName);
+    populateLedgerSelect(select, filteredNames, null);
     // .onchange (not addEventListener) -- this picker reopens for a
     // different voucher against the SAME persistent <select> element
     // each time, and addEventListener would stack a new listener on
     // every open instead of replacing the previous voucher's.
     select.onchange = updateLedgerAllocSaveState;
     saveBtn.disabled = !select.value;
+
+    // GPay name suggestion -- see findGpaySuggestion for the matching
+    // rule and isGpayNarration for why this only fires on GPay's specific
+    // narration pattern. A confident single match is applied right away
+    // (still just pre-filling the form -- Save to Tally is a separate,
+    // explicit tap); an ambiguous one is offered as pick chips instead of
+    // guessed at.
+    const suggestBox = document.getElementById('ledger-alloc-gpay-suggest');
+    const suggestChips = document.getElementById('ledger-alloc-gpay-suggest-chips');
+    suggestBox.style.display = 'none';
+    suggestChips.innerHTML = '';
+    if (isGpayNarration(voucher.narration)) {
+      const gpayIndex = getGpayIndexIfReady();
+      const suggestion = gpayIndex ? findGpaySuggestion(gpayIndex, voucher.date, parseAmt(voucher.amount)) : null;
+      if (suggestion && suggestion.confident) {
+        await applyGpaySuggestedName(suggestion.name, filteredNames, select);
+      } else if (suggestion) {
+        suggestChips.innerHTML = suggestion.names.map(n =>
+          `<span class="gpay-suggest-chip" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join('');
+        suggestBox.style.display = 'block';
+        suggestChips.querySelectorAll('.gpay-suggest-chip').forEach(chip => {
+          chip.addEventListener('click', () => applyGpaySuggestedName(chip.dataset.name, filteredNames, select));
+        });
+      }
+    }
+  }
+
+  // Applies a GPay-suggested name to the picker: selects it in the
+  // existing-ledger dropdown if a ledger by that name (case-insensitive)
+  // already exists, otherwise switches straight to "create new ledger"
+  // with the name prefilled. Either way this only fills in the form --
+  // Save to Tally remains a separate, explicit tap.
+  async function applyGpaySuggestedName(name, existingNames, select) {
+    const match = existingNames.find(n => n.trim().toLowerCase() === name.trim().toLowerCase());
+    if (match) {
+      setLedgerAllocCreateMode(false);
+      populateLedgerSelect(select, existingNames, match);
+      updateLedgerAllocSaveState();
+      return;
+    }
+    const groupSelect = document.getElementById('ledger-alloc-new-ledger-group');
+    groupSelect.innerHTML = '<option>Loading groups…</option>';
+    document.getElementById('ledger-alloc-new-ledger-name').value = name;
+    document.getElementById('ledger-alloc-new-ledger-billwise').value = 'No';
+    document.getElementById('ledger-alloc-new-ledger-address').value = '';
+    document.getElementById('ledger-alloc-new-ledger-state').value = '';
+    document.getElementById('ledger-alloc-new-ledger-country').value = 'India';
+    document.getElementById('ledger-alloc-new-ledger-pincode').value = '';
+    document.getElementById('ledger-alloc-new-ledger-regtype').value = 'Regular';
+    document.getElementById('ledger-alloc-new-ledger-gstin').value = '';
+    document.getElementById('ledger-alloc-new-ledger-pan').value = '';
+    setLedgerAllocCreateMode(true);
+    const groupNames = await fetchGroupNames();
+    // Every name suggested here is a GPay collection -- money coming IN
+    // from a customer -- so default the group to "Sundry Debtors" when it
+    // exists, same convention Tally itself uses for a new customer.
+    // Still fully overridable; this is a default, not a decision.
+    const defaultGroup = groupNames.find(g => g.trim().toLowerCase() === 'sundry debtors') || null;
+    populateLedgerSelect(groupSelect, groupNames, defaultGroup);
+    groupSelect.onchange = updateLedgerAllocSaveState;
+    updateLedgerAllocSaveState();
   }
 
   document.getElementById('ledger-alloc-pick-cancel-btn').addEventListener('click', () => {
