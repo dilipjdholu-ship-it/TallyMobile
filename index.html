@@ -761,6 +761,18 @@
     font-size: 12.5px; cursor: pointer;
   }
   .gpay-suggest-chip:active { background: var(--amber-soft); }
+  /* One row per voucher in the bulk auto-post confirmation panel -- see
+     ledger-alloc-bulk-confirm-list. */
+  .bulk-match-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.06);
+    font-size: 12.5px;
+  }
+  .bulk-match-row:last-child { border-bottom: none; }
+  .bulk-match-row input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
+  .bulk-match-row .bulk-match-main { flex: 1; min-width: 0; }
+  .bulk-match-row .bulk-match-narration { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bulk-match-row .bulk-match-arrow { font-weight: 600; }
 
   /* Plain inline variant of .date-range-bar -- the original is styled as
      a sticky full-width strip directly under an overlay-header (see
@@ -1259,6 +1271,23 @@
                showing" is immediately diagnosable (nothing imported yet? load
                still in flight? load failed?) without needing devtools. -->
           <div class="alloc-voucher-suggest" id="ledger-alloc-gpay-status" style="margin-bottom:10px;"></div>
+          <!-- Bulk auto-post: shown only when the currently-filtered Pending
+               list has vouchers whose GPay suggestion is a CONFIDENT match
+               AND that name already exists as a real Tally ledger -- never
+               ambiguous suggestions, never "create new ledger" cases, both
+               stay one-at-a-time through the picker. Populated by
+               renderLedgerAllocList() into ledgerAllocBulkMatches. -->
+          <button type="button" class="map-discard-btn" id="ledger-alloc-bulk-post-btn" style="display:none; margin:0 0 6px;"></button>
+          <div id="ledger-alloc-bulk-confirm" class="gpay-suggest-box" style="display:none; margin:0 0 10px;">
+            <div class="gpay-suggest-label">These have a GPay name that exactly matches an existing Tally ledger -- uncheck any you don't want to post now:</div>
+            <div id="ledger-alloc-bulk-confirm-list"></div>
+            <div id="ledger-alloc-bulk-confirm-progress" style="display:none; font-size:12.5px; color:var(--ink-soft); margin:8px 0 0;"></div>
+            <div id="ledger-alloc-bulk-confirm-error" class="map-field-warn" style="display:none; margin-top:8px;"></div>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+              <button type="button" class="map-discard-btn" id="ledger-alloc-bulk-confirm-cancel" style="flex:1;">Cancel</button>
+              <button type="button" class="map-confirm-btn" id="ledger-alloc-bulk-confirm-post" style="flex:1;">Post to Tally</button>
+            </div>
+          </div>
           <div class="filter-chips" id="ledger-alloc-status-chips">
             <button class="filter-chip active" data-status="pending">Pending</button>
             <button class="filter-chip" data-status="allocated">Allocated</button>
@@ -5495,6 +5524,13 @@
   // of the session (re-opening keeps whatever the person last filtered
   // to, rather than snapping back to defaults every time).
   let ledgerAllocFilter = null;
+  // Recomputed on every renderLedgerAllocList() pending-view render --
+  // vouchers in the CURRENTLY-FILTERED pending list whose GPay suggestion
+  // is a CONFIDENT match to an EXISTING Tally ledger (never an ambiguous
+  // suggestion, never a "create new ledger" case -- both stay one-at-a-
+  // time through the picker, only an exact existing-ledger match is safe
+  // to fire off in bulk). See computeLedgerAllocBulkMatches.
+  let ledgerAllocBulkMatches = [];
 
   function openLedgerAllocationOverlay() {
     ledgerAllocPickVoucher = null;
@@ -6008,6 +6044,13 @@
       .slice()
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
+    // Bulk auto-post candidates -- see ledgerAllocBulkMatches' declaration
+    // for the (deliberately narrow) matching rule. Scoped to the list
+    // exactly as currently filtered/sorted, so "Post N to Tally" never
+    // touches a voucher the person can't see on screen right now.
+    ledgerAllocBulkMatches = isPendingView ? computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName) : [];
+    renderLedgerAllocBulkButton();
+
     if (vouchers.length === 0) {
       const emptyMessage = isPendingView
         ? 'Nothing needs allocation right now — every bank-import voucher has a real ledger.'
@@ -6100,6 +6143,170 @@
       });
     });
   }
+
+  // ===== Bulk auto-post: exact GPay-to-existing-ledger matches =====
+  // Deliberately narrow: only a CONFIDENT GPay suggestion (see
+  // findGpaySuggestion) whose name exactly matches (case-insensitive) an
+  // ALREADY-EXISTING Tally ledger qualifies. An ambiguous "Possibly: A, B"
+  // suggestion and a no-match-so-create-new-ledger case both still go
+  // through the one-at-a-time picker -- bulk-creating ledgers unattended
+  // is a materially different (riskier) action than bulk-picking among
+  // ledgers that already exist, and this project has been burned before
+  // by automating something that looked safe but wasn't verified first.
+  function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName) {
+    if (!gpayIndex) return [];
+    // Same source the picker's "existing ledger" search uses (see
+    // openLedgerAllocPick/fetchLedgerNames) -- read from the already-
+    // synced cache instead of a fresh fetch so this can run synchronously
+    // on every render without hammering Firebase.
+    ensureSectionLoaded(currentCompany, 'ledgers');
+    const ledgers = safeArray((companyData[currentCompany] || {}).ledgers);
+    const byLowerName = new Map();
+    ledgers.forEach(l => {
+      const name = (l.name || '').trim();
+      if (name && name !== contraName) byLowerName.set(name.toLowerCase(), name);
+    });
+    if (byLowerName.size === 0) return [];
+
+    const matches = [];
+    vouchers.forEach(v => {
+      if (!v.voucher_id || !isGpayNarration(v.narration)) return;
+      const suggestion = findGpaySuggestion(gpayIndex, v.date, parseAmt(v.amount));
+      if (!suggestion || !suggestion.confident) return;
+      const existingName = byLowerName.get(suggestion.name.trim().toLowerCase());
+      if (!existingName) return;
+      matches.push({ voucher: v, ledgerName: existingName });
+    });
+    return matches;
+  }
+
+  function renderLedgerAllocBulkButton() {
+    const btn = document.getElementById('ledger-alloc-bulk-post-btn');
+    const n = ledgerAllocBulkMatches.length;
+    if (n === 0) {
+      btn.style.display = 'none';
+      // Data changed out from under an open confirm panel (filter
+      // switched, a request resolved, GPay data reloaded, …) -- close it
+      // rather than leave it showing rows that may no longer apply.
+      closeLedgerAllocBulkConfirm();
+      return;
+    }
+    btn.style.display = '';
+    btn.textContent = `⚡ Post ${n} exact GPay match${n === 1 ? '' : 'es'} to Tally`;
+  }
+
+  function closeLedgerAllocBulkConfirm() {
+    document.getElementById('ledger-alloc-bulk-confirm').style.display = 'none';
+    document.getElementById('ledger-alloc-bulk-confirm-error').style.display = 'none';
+    document.getElementById('ledger-alloc-bulk-confirm-progress').style.display = 'none';
+  }
+
+  // Rebuilds the checklist from the CURRENT ledgerAllocBulkMatches (all
+  // checked by default) and shows the panel. Used both for the initial
+  // "⚡ Post N…" tap and, after a partial failure, to re-open showing only
+  // what's still actually outstanding -- ledgerAllocBulkMatches is
+  // recomputed fresh after every render, so a voucher that posted
+  // successfully has already dropped out of it by then (it now has an
+  // in-flight request, which excludes it from Pending).
+  function openLedgerAllocBulkConfirm() {
+    const list = document.getElementById('ledger-alloc-bulk-confirm-list');
+    list.innerHTML = ledgerAllocBulkMatches.map((m, i) => `
+      <label class="bulk-match-row">
+        <input type="checkbox" checked data-idx="${i}">
+        <div class="bulk-match-main">
+          <div class="bulk-match-narration">${escapeHtml(formatTallyDate(m.voucher.date))} · ${escapeHtml(formatCurrency(parseAmt(m.voucher.amount)))} -- ${escapeHtml(m.voucher.narration || '')}</div>
+          <div><span class="bulk-match-arrow">→</span> ${escapeHtml(m.ledgerName)}</div>
+        </div>
+      </label>`).join('');
+    document.getElementById('ledger-alloc-bulk-confirm').style.display = 'block';
+  }
+
+  document.getElementById('ledger-alloc-bulk-post-btn').addEventListener('click', () => {
+    document.getElementById('ledger-alloc-bulk-confirm-error').style.display = 'none';
+    document.getElementById('ledger-alloc-bulk-confirm-progress').style.display = 'none';
+    openLedgerAllocBulkConfirm();
+  });
+
+  document.getElementById('ledger-alloc-bulk-confirm-cancel').addEventListener('click', () => {
+    closeLedgerAllocBulkConfirm();
+  });
+
+  document.getElementById('ledger-alloc-bulk-confirm-post').addEventListener('click', async () => {
+    const checked = Array.from(document.querySelectorAll('#ledger-alloc-bulk-confirm-list input[type="checkbox"]:checked'))
+      .map(cb => ledgerAllocBulkMatches[parseInt(cb.dataset.idx, 10)])
+      .filter(Boolean);
+    if (checked.length === 0) return;
+
+    const postBtn = document.getElementById('ledger-alloc-bulk-confirm-post');
+    const cancelBtn = document.getElementById('ledger-alloc-bulk-confirm-cancel');
+    const progress = document.getElementById('ledger-alloc-bulk-confirm-progress');
+    const errorBox = document.getElementById('ledger-alloc-bulk-confirm-error');
+    postBtn.disabled = true;
+    cancelBtn.disabled = true;
+    errorBox.style.display = 'none';
+    progress.style.display = 'block';
+
+    // Sequential, not Promise.all -- keeps a simple, honest running count
+    // on screen, and means one failure can't be confused with another
+    // (each request/response pair is fully resolved before the next one
+    // starts).
+    const failures = [];
+    for (let i = 0; i < checked.length; i++) {
+      const { voucher, ledgerName } = checked[i];
+      progress.textContent = `Posting ${i + 1} of ${checked.length}…`;
+      try {
+        const reqId = 'realloc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const reqRef = ref(db, `companies/${currentCompany}/pending_ledger_reallocations/${reqId}`);
+        // No new_ledger_group -- this is always an EXISTING ledger (that's
+        // the whole point of the exact-match filter above), so the PC
+        // side must never treat this as a create-ledger request.
+        await set(reqRef, {
+          status: 'requested',
+          voucher_id: voucher.voucher_id,
+          voucher_date: voucher.date,
+          voucher_type: voucher.voucher_type,
+          voucher_number: voucher.voucher_number,
+          narration: voucher.narration || '',
+          ledger_lines: safeArray(voucher.ledger_lines),
+          new_ledger_name: ledgerName,
+          requested_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Bulk reallocation failed for', voucher.voucher_id, err);
+        failures.push({ voucher, err });
+      }
+    }
+
+    postBtn.disabled = false;
+    cancelBtn.disabled = false;
+    progress.style.display = 'none';
+
+    // Recomputes ledgerAllocBulkMatches fresh -- anything that succeeded
+    // now has an in-flight request and has already dropped out of
+    // Pending (see computeLedgerAllocBulkMatches), so what's left in
+    // ledgerAllocBulkMatches after this is exactly what's still
+    // outstanding, no manual bookkeeping needed.
+    renderLedgerAllocList();
+
+    if (failures.length === 0) {
+      closeLedgerAllocBulkConfirm();
+    } else {
+      document.getElementById('ledger-alloc-bulk-confirm').style.display = 'block';
+      if (ledgerAllocBulkMatches.length > 0) {
+        openLedgerAllocBulkConfirm();
+      } else {
+        // Rare: everything that failed also stopped qualifying as a bulk
+        // match in the meantime (e.g. the ledger no longer exists) --
+        // nothing left to usefully re-list, just clear the stale checklist
+        // so it doesn't look like those rows still need posting.
+        document.getElementById('ledger-alloc-bulk-confirm-list').innerHTML = '';
+      }
+      errorBox.textContent = `Posted ${checked.length - failures.length} of ${checked.length} -- ` +
+        `${failures.length} failed (check your connection and try again): ` +
+        failures.map(f => f.voucher.voucher_number || f.voucher.voucher_id).join(', ');
+      errorBox.style.display = 'block';
+    }
+  });
 
   // Live company groups are already synced to Firebase (used today for
   // the P&L/Balance Sheet hierarchy) -- read that instead of a fresh
