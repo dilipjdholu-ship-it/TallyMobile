@@ -5583,12 +5583,49 @@
     await update(ref(db, `companies/${companyKey}/gpay_transactions`), updates);
   }
 
+  // Normalizes a GPay "Creation time" value to a YYYY-MM-DD day string.
+  // The one real export this feature was built and tested against uses
+  // ISO "YYYY-MM-DD HH:MM:SS" (confirmed against STS_Sep15.csv), but a
+  // plain slice(0,10) silently produces garbage -- not an empty/falsy
+  // result, an actual wrong-but-valid-looking string -- for any OTHER
+  // layout (e.g. a locale-formatted "15 Sept 2026, 10:21:20 pm" export,
+  // which some GPay for Business accounts use depending on region/app
+  // version). That's exactly the kind of mismatch that fails EVERY row's
+  // match key at once rather than a few -- matching what showed up live
+  // (every single voucher reporting "no match", not just one) -- so this
+  // no longer trusts one fixed layout.
+  function gpayDayToISO(datetime) {
+    if (!datetime) return '';
+    const s = String(datetime).trim();
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    // DD/MM/YYYY, as GPay's own web export for Indian accounts uses --
+    // only tried once the ISO pattern above doesn't match.
+    const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (slashMatch) {
+      const day = slashMatch[1].padStart(2, '0');
+      const month = slashMatch[2].padStart(2, '0');
+      return `${slashMatch[3]}-${month}-${day}`;
+    }
+    // Last resort: the browser's own date parser (handles things like
+    // "Sep 15, 2026, 10:21:20 PM"). Uses LOCAL date parts, not UTC --
+    // this is a local wall-clock timestamp from the export, not a UTC one.
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return '';
+  }
+
   // Groups GPay rows by (day, amount-in-paise) -- see the block comment
   // above for why this pair is the only reliable shared key.
   function buildGpayMatchIndex(rows) {
     const index = new Map();
     rows.forEach(r => {
-      const day = (r.datetime || '').slice(0, 10);
+      const day = gpayDayToISO(r.datetime);
       if (!day || !isFinite(r.amount)) return;
       const key = day + '|' + Math.round(r.amount * 100);
       if (!index.has(key)) index.set(key, []);
@@ -5603,7 +5640,7 @@
   // to cover fewer days than expected) is visible at a glance instead of
   // only showing up as an unexplained missing suggestion.
   function getGpayDateRange(rows) {
-    const days = rows.map(r => (r.datetime || '').slice(0, 10)).filter(Boolean).sort();
+    const days = rows.map(r => gpayDayToISO(r.datetime)).filter(Boolean).sort();
     if (!days.length) return null;
     return { from: days[0], to: days[days.length - 1] };
   }
@@ -5677,8 +5714,12 @@
     } else if (gpayCache.count === 0) {
       el.textContent = '💡 No GPay data imported yet for this company.';
     } else {
+      // gpayCache.range is already normalized to YYYY-MM-DD by
+      // gpayDayToISO -- shown plainly (not reformatted further) so this
+      // is exactly the day-half of the match key used in buildGpayMatchIndex,
+      // not a display-only reformat that could itself introduce a mismatch.
       const range = gpayCache.range
-        ? ` (${formatTallyDateShort(gpayCache.range.from.replace(/-/g, ''))} to ${formatTallyDateShort(gpayCache.range.to.replace(/-/g, ''))})`
+        ? ` (${escapeHtml(gpayCache.range.from)} to ${escapeHtml(gpayCache.range.to)})`
         : '';
       el.textContent = `💡 GPay data: ${gpayCache.count} transaction${gpayCache.count === 1 ? '' : 's'} imported${range}. ` +
         `A voucher outside this date range, or with no matching amount that day, will show "No match" instead of a suggestion.`;
@@ -5761,9 +5802,9 @@
       const freshRows = await fetchGpayTransactions(importedForCompany);
       const range = getGpayDateRange(freshRows);
       gpayCache = { key: importedForCompany, index: buildGpayMatchIndex(freshRows), count: freshRows.length, range };
-      const rangeMsg = range
-        ? ` covering ${formatTallyDateShort(range.from.replace(/-/g, ''))} to ${formatTallyDateShort(range.to.replace(/-/g, ''))}`
-        : '';
+      // Already-normalized YYYY-MM-DD (see gpayDayToISO) -- see the
+      // comment in renderGpayStatusLine on why this isn't reformatted again.
+      const rangeMsg = range ? ` covering ${range.from} to ${range.to}` : '';
       document.getElementById('gpay-csv-done-msg').textContent =
         `Imported ${gpayCsvParsedRows.length} transaction${gpayCsvParsedRows.length === 1 ? '' : 's'} from this file ` +
         `(${freshRows.length} total now stored for this company${rangeMsg}). Matching Suspense vouchers below will now show a suggested name.`;
