@@ -5583,29 +5583,60 @@
     await update(ref(db, `companies/${companyKey}/gpay_transactions`), updates);
   }
 
+  // A non-ISO GPay date ("N/N/YYYY" or "N-N-YYYY") is genuinely ambiguous
+  // in isolation -- DD-then-MM and MM-then-DD read the same whenever both
+  // parts are <=12 -- AND the delimiter itself varies by export. Two real
+  // exports have now been confirmed by hand:
+  //   - a slash export ("09/12/2026"), confirmed MM/DD/YYYY: a live bug
+  //     report showed every voucher except the one dated the 9th (09/09,
+  //     the one date a swap doesn't change) failing to match, and the
+  //     computed range came back as "2026-01-09 to 2026-12-09" -- exactly
+  //     Sep-01/Sep-12 with day/month flipped.
+  //   - a dash export ("15-09-2026 12:22"), confirmed DD-MM-YYYY directly
+  //     by the person re-uploading the real Sep 15 file and stating the
+  //     format explicitly.
+  // Rather than hardcode either as THE format (that's exactly the mistake
+  // that caused both bugs above -- this feature has now been wrong about
+  // the fixed format twice), this detects the real order per batch from
+  // the data itself: any row where one part exceeds 12 can't be a month,
+  // so it must be the day. Only when no row in the batch disambiguates
+  // (e.g. every date falls on the 1st-12th) does it fall back to a
+  // default -- and even that default is picked per-delimiter from the
+  // two confirmed cases above, not a single blanket guess.
+  function extractAmbiguousDateParts(s) {
+    const m = s.match(/^(\d{1,2})([\/-])(\d{1,2})\2(\d{4})/);
+    if (!m) return null;
+    return { aNum: parseInt(m[1], 10), bNum: parseInt(m[3], 10), aStr: m[1].padStart(2, '0'), bStr: m[3].padStart(2, '0'), year: m[4], delimiter: m[2] };
+  }
+
+  function detectGpayDateOrder(rows) {
+    let delimiter = null;
+    for (const r of rows) {
+      const parts = extractAmbiguousDateParts(String(r.datetime || '').trim());
+      if (!parts) continue; // ISO or unparseable -- doesn't inform order
+      if (!delimiter) delimiter = parts.delimiter;
+      if (parts.aNum > 12) return 'DMY'; // first part can't be a month -> it's the day
+      if (parts.bNum > 12) return 'MDY'; // second part can't be a month -> it's the day
+    }
+    // No disambiguating row in this batch -- fall back per delimiter,
+    // using the two real exports confirmed above rather than one guess.
+    return delimiter === '-' ? 'DMY' : 'MDY';
+  }
+
   // Normalizes a GPay "Creation time" value to a YYYY-MM-DD day string.
-  // The one real export this feature was built and tested against uses
-  // ISO "YYYY-MM-DD HH:MM:SS" (confirmed against STS_Sep15.csv), but a
-  // plain slice(0,10) silently produces garbage -- not an empty/falsy
-  // result, an actual wrong-but-valid-looking string -- for any OTHER
-  // layout (e.g. a locale-formatted "15 Sept 2026, 10:21:20 pm" export,
-  // which some GPay for Business accounts use depending on region/app
-  // version). That's exactly the kind of mismatch that fails EVERY row's
-  // match key at once rather than a few -- matching what showed up live
-  // (every single voucher reporting "no match", not just one) -- so this
-  // no longer trusts one fixed layout.
-  function gpayDayToISO(datetime) {
+  // dateOrder ('DMY' or 'MDY') resolves the ambiguous-delimiter case --
+  // see detectGpayDateOrder, which figures this out once per imported
+  // batch from the data itself.
+  function gpayDayToISO(datetime, dateOrder) {
     if (!datetime) return '';
     const s = String(datetime).trim();
     const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-    // DD/MM/YYYY, as GPay's own web export for Indian accounts uses --
-    // only tried once the ISO pattern above doesn't match.
-    const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (slashMatch) {
-      const day = slashMatch[1].padStart(2, '0');
-      const month = slashMatch[2].padStart(2, '0');
-      return `${slashMatch[3]}-${month}-${day}`;
+    const parts = extractAmbiguousDateParts(s);
+    if (parts) {
+      const day = dateOrder === 'DMY' ? parts.aStr : parts.bStr;
+      const month = dateOrder === 'DMY' ? parts.bStr : parts.aStr;
+      return `${parts.year}-${month}-${day}`;
     }
     // Last resort: the browser's own date parser (handles things like
     // "Sep 15, 2026, 10:21:20 PM"). Uses LOCAL date parts, not UTC --
@@ -5621,11 +5652,14 @@
   }
 
   // Groups GPay rows by (day, amount-in-paise) -- see the block comment
-  // above for why this pair is the only reliable shared key.
+  // above for why this pair is the only reliable shared key. Detects the
+  // date order once for the whole batch (not per row) -- a single CSV
+  // export is always one consistent format.
   function buildGpayMatchIndex(rows) {
+    const dateOrder = detectGpayDateOrder(rows);
     const index = new Map();
     rows.forEach(r => {
-      const day = gpayDayToISO(r.datetime);
+      const day = gpayDayToISO(r.datetime, dateOrder);
       if (!day || !isFinite(r.amount)) return;
       const key = day + '|' + Math.round(r.amount * 100);
       if (!index.has(key)) index.set(key, []);
@@ -5640,7 +5674,8 @@
   // to cover fewer days than expected) is visible at a glance instead of
   // only showing up as an unexplained missing suggestion.
   function getGpayDateRange(rows) {
-    const days = rows.map(r => gpayDayToISO(r.datetime)).filter(Boolean).sort();
+    const dateOrder = detectGpayDateOrder(rows);
+    const days = rows.map(r => gpayDayToISO(r.datetime, dateOrder)).filter(Boolean).sort();
     if (!days.length) return null;
     return { from: days[0], to: days[days.length - 1] };
   }
