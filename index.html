@@ -1241,7 +1241,13 @@
             statement. Pick the real ledger for each one -- everything else about the voucher
             (date, amount, voucher number) stays exactly as posted.
           </p>
-          <button type="button" class="map-discard-btn" id="ledger-alloc-gpay-import-btn" style="margin:0 0 12px;">📄 Import GPay CSV for name suggestions</button>
+          <button type="button" class="map-discard-btn" id="ledger-alloc-gpay-import-btn" style="margin:0 0 6px;">📄 Import GPay CSV for name suggestions</button>
+          <!-- Ground-truth status of what's actually stored for this company
+               right now -- filled in by renderLedgerAllocList() from
+               getGpayIndexIfReady()/gpayCache. Exists so "no suggestions
+               showing" is immediately diagnosable (nothing imported yet? load
+               still in flight? load failed?) without needing devtools. -->
+          <div class="alloc-voucher-suggest" id="ledger-alloc-gpay-status" style="margin-bottom:10px;"></div>
           <div class="filter-chips" id="ledger-alloc-status-chips">
             <button class="filter-chip active" data-status="pending">Pending</button>
             <button class="filter-chip" data-status="allocated">Allocated</button>
@@ -1347,7 +1353,7 @@
 
         <div class="gpay-step" id="gpay-step-preview">
           <div class="scan-capture-area">
-            <div class="glyph">📄</div>
+            <div class="glyph">✓</div>
             <div id="gpay-csv-filename" style="font-weight:600;"></div>
             <p id="gpay-csv-summary" style="margin-top:8px;"></p>
           </div>
@@ -5609,7 +5615,12 @@
   // is imported. getGpayIndexIfReady() returns null while the background
   // fetch is in flight (or hasn't started yet); callers treat that exactly
   // like "no suggestions available yet" rather than blocking on it.
-  let gpayCache = null; // { key: companyKey, index: Map }
+  // count is null while the background fetch is still in flight (the
+  // placeholder set below), and a real number once it lands -- see
+  // renderGpayStatusLine, which uses this to show the person GROUND TRUTH
+  // about what's actually stored, rather than leaving "no suggestions
+  // showing" as an invisible, undiagnosable state.
+  let gpayCache = null; // { key: companyKey, index: Map, count: number|null }
 
   function getGpayIndexIfReady() {
     return (gpayCache && gpayCache.key === currentCompany) ? gpayCache.index : null;
@@ -5618,10 +5629,10 @@
   function loadGpayIndexInBackground() {
     if (gpayCache && gpayCache.key === currentCompany) return; // loaded, or already loading
     const loadingFor = currentCompany;
-    gpayCache = { key: loadingFor, index: new Map() }; // placeholder so this isn't kicked off twice
+    gpayCache = { key: loadingFor, index: new Map(), count: null }; // placeholder so this isn't kicked off twice
     fetchGpayTransactions(loadingFor).then(rows => {
       if (currentCompany !== loadingFor) return; // company switched before this landed -- discard
-      gpayCache = { key: loadingFor, index: buildGpayMatchIndex(rows) };
+      gpayCache = { key: loadingFor, index: buildGpayMatchIndex(rows), count: rows.length };
       if (document.getElementById('ledger-allocation-overlay').classList.contains('open')) {
         renderLedgerAllocList();
       }
@@ -5629,6 +5640,23 @@
       console.error('GPay index load failed:', err);
       gpayCache = null; // allow a retry on the next render
     });
+  }
+
+  // Shows exactly what's stored for this company right now -- see the
+  // comment on gpayCache. This turns "why aren't suggestions showing" into
+  // something answerable at a glance (nothing imported yet / still
+  // loading / N transactions imported) instead of a silent no-op.
+  function renderGpayStatusLine() {
+    const el = document.getElementById('ledger-alloc-gpay-status');
+    if (!gpayCache || gpayCache.key !== currentCompany) {
+      el.textContent = '';
+    } else if (gpayCache.count === null) {
+      el.textContent = '💡 Loading GPay data…';
+    } else if (gpayCache.count === 0) {
+      el.textContent = '💡 No GPay data imported yet for this company.';
+    } else {
+      el.textContent = `💡 GPay data: ${gpayCache.count} transaction${gpayCache.count === 1 ? '' : 's'} imported.`;
+    }
   }
 
   // ===== GPay CSV upload overlay =====
@@ -5660,14 +5688,14 @@
           throw new Error('No settled transactions found in this file.');
         }
         const dates = gpayCsvParsedRows.map(r => r.datetime.slice(0, 10)).sort();
-        document.getElementById('gpay-csv-filename').textContent = file.name;
+        document.getElementById('gpay-csv-filename').textContent = 'Selected: ' + file.name;
         document.getElementById('gpay-csv-summary').textContent =
           `${gpayCsvParsedRows.length} settled transaction${gpayCsvParsedRows.length === 1 ? '' : 's'} found, ` +
           `${dates[0]} to ${dates[dates.length - 1]}.`;
         document.getElementById('gpay-csv-import-btn').disabled = false;
       } catch (err) {
         gpayCsvParsedRows = null;
-        document.getElementById('gpay-csv-filename').textContent = file.name;
+        document.getElementById('gpay-csv-filename').textContent = 'Selected: ' + file.name;
         document.getElementById('gpay-csv-summary').textContent = '';
         errBox.textContent = err.message || 'Could not read that file.';
         errBox.style.display = 'block';
@@ -5697,12 +5725,18 @@
     btn.textContent = 'Importing…';
     try {
       await importGpayTransactions(currentCompany, gpayCsvParsedRows);
-      // Force the next renderLedgerAllocList to pick up the fresh data
-      // rather than the (now stale) cached index.
-      gpayCache = null;
+      // Rebuild the in-memory index right now from a fresh read-back,
+      // rather than just invalidating the cache and leaving it to a later
+      // background fetch (see loadGpayIndexInBackground) to win a race
+      // against the person tapping straight back into the list -- this
+      // guarantees suggestions are ready the instant they return, not
+      // "whenever that fetch happens to land".
+      const importedForCompany = currentCompany;
+      const freshRows = await fetchGpayTransactions(importedForCompany);
+      gpayCache = { key: importedForCompany, index: buildGpayMatchIndex(freshRows), count: freshRows.length };
       document.getElementById('gpay-csv-done-msg').textContent =
-        `Imported ${gpayCsvParsedRows.length} transaction${gpayCsvParsedRows.length === 1 ? '' : 's'}. ` +
-        `Matching Suspense vouchers below will now show a suggested name.`;
+        `Imported ${gpayCsvParsedRows.length} transaction${gpayCsvParsedRows.length === 1 ? '' : 's'} from this file ` +
+        `(${freshRows.length} total now stored for this company). Matching Suspense vouchers below will now show a suggested name.`;
       document.querySelectorAll('.gpay-step').forEach(s => s.classList.remove('active'));
       document.getElementById('gpay-step-done').classList.add('active');
     } catch (err) {
@@ -5779,6 +5813,7 @@
     // the first (already loaded, or nothing was ever imported).
     loadGpayIndexInBackground();
     const gpayIndex = getGpayIndexIfReady();
+    renderGpayStatusLine();
 
     const isPendingView = filter.status === 'pending';
     const rawList = isPendingView
