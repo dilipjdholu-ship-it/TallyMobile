@@ -1262,6 +1262,7 @@
           <div class="filter-chips" id="ledger-alloc-status-chips">
             <button class="filter-chip active" data-status="pending">Pending</button>
             <button class="filter-chip" data-status="allocated">Allocated</button>
+            <button class="filter-chip" data-status="posting">Posting</button>
           </div>
           <div class="filter-chips" id="ledger-alloc-type-chips">
             <button class="filter-chip active" data-vtype="all">All Types</button>
@@ -1824,6 +1825,23 @@
   }
 
   window.addEventListener('popstate', () => {
+    // The Ledger Allocation overlay has its own internal list <-> pick
+    // "step" (see pushLedgerAllocPickState / returnToLedgerAllocList
+    // near renderLedgerAllocList). That step never used to have its own
+    // history entry, so backing out of the ledger-selection/creation
+    // screen -- phone back button, or the overlay's own "← Back" header
+    // button, both of which end up here -- fell straight through to
+    // closeTopOverlay() and closed the WHOLE feature instead of just
+    // returning to the list (real report: "press back ... goes to home
+    // directly"). Checked first, before the generic overlay-closing
+    // logic below, and only acts when it's actually relevant.
+    const allocOverlay = document.getElementById('ledger-allocation-overlay');
+    const onLedgerAllocPickStep = allocOverlay && allocOverlay.classList.contains('open') &&
+      document.getElementById('ledger-alloc-step-pick').classList.contains('active');
+    if (onLedgerAllocPickStep && !(history.state && history.state.allocPick)) {
+      returnToLedgerAllocList();
+      return;
+    }
     closeTopOverlay();
   });
 
@@ -5866,6 +5884,46 @@
     document.getElementById('ledger-alloc-step-list').classList.add('active');
   }
 
+  // ===== Ledger Allocation: list <-> pick step history + scroll =====
+  // Saved the moment a voucher's picker is opened (see openLedgerAllocPick),
+  // and restored on the way back -- otherwise saving one ledger on a long
+  // list jumps back to the very top, and the person has to re-scroll past
+  // everything already handled to find the next one (real report: "no
+  // need to scroll and search for next entry").
+  let ledgerAllocListScrollTop = 0;
+
+  // Gives the list<->pick step its own back-button stop, separate from
+  // the overlay's own open/close entry -- see the popstate handler's
+  // comment above for why this exists.
+  function pushLedgerAllocPickState() {
+    history.pushState({ overlay: 'ledger-allocation-overlay', allocPick: true }, '', '');
+  }
+
+  function returnToLedgerAllocList() {
+    ledgerAllocGoToList();
+    renderLedgerAllocList();
+    // rAF, not synchronous: the freshly-rendered rows haven't been laid
+    // out yet on this exact tick, so setting scrollTop immediately can be
+    // a no-op if the saved position is beyond what's painted so far.
+    requestAnimationFrame(() => {
+      document.getElementById('ledger-allocation-overlay').scrollTop = ledgerAllocListScrollTop;
+    });
+  }
+
+  // Used by every in-app way of leaving the pick screen (Cancel, a
+  // successful Save, the overlay's own "← Back" header button) so they
+  // all go through the same history.back() the phone's hardware back
+  // button uses -- keeps the pushed pick-step entry (see
+  // pushLedgerAllocPickState) from ever being left dangling, which would
+  // otherwise make the NEXT back-press do nothing visible.
+  function goBackFromLedgerAllocPick() {
+    if (history.state && history.state.allocPick) {
+      history.back(); // popstate handler above calls returnToLedgerAllocList()
+    } else {
+      returnToLedgerAllocList();
+    }
+  }
+
   // Static chips/date bar (not regenerated per render, unlike the Ledgers
   // screen's filter-chips), so their handlers are bound once here rather
   // than re-attached every render.
@@ -5922,39 +5980,69 @@
     renderGpayStatusLine();
 
     const isPendingView = filter.status === 'pending';
-    const rawList = isPendingView
-      ? getVouchersNeedingAllocation(data)
+    const isPostingView = filter.status === 'posting';
+    // Pending and Posting both read from the same raw source (vouchers
+    // still posted against the contra ledger -- Tally hasn't been
+    // resynced since the request went out, so a 'requested'/'posted'
+    // voucher is STILL in this list) and only differ in which ones they
+    // keep: Pending is what still needs a person's attention, Posting is
+    // what's already been picked and is just waiting on Tally/resync,
+    // and used to sit inline inside Pending with a badge -- lingering
+    // there instead of moving out of the way once handled (see the
+    // person's own report). Allocated is unrelated: it comes from the
+    // request records themselves, independent of resync state.
+    let rawList;
+    if (isPendingView || isPostingView) {
+      rawList = getVouchersNeedingAllocation(data).filter(v => {
+        const req = findReallocationRequest(data, v.voucher_id);
+        const inFlight = !!(req && (req.status === 'requested' || req.status === 'posted'));
+        return isPostingView ? inFlight : !inFlight;
+      });
+    } else {
       // Normalize the request record's voucher_date to .date so
       // filterAllocVouchers can treat both lists the same way.
-      : getAllocatedVouchers(data).map(r => ({ ...r, date: r.voucher_date }));
+      rawList = getAllocatedVouchers(data).map(r => ({ ...r, date: r.voucher_date }));
+    }
 
     const vouchers = filterAllocVouchers(rawList, filter)
       .slice()
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
     if (vouchers.length === 0) {
-      const overall = isPendingView ? getVouchersNeedingAllocation(data) : getAllocatedVouchers(data);
-      body.innerHTML = overall.length === 0
-        ? `<div class="loading-state">${isPendingView
-            ? 'Nothing needs allocation right now — every bank-import voucher has a real ledger.'
-            : 'Nothing has been allocated yet.'}</div>`
+      const emptyMessage = isPendingView
+        ? 'Nothing needs allocation right now — every bank-import voucher has a real ledger.'
+        : isPostingView
+          ? 'Nothing is currently posting -- vouchers show up here right after you save a ledger, until the next Tally sync catches up.'
+          : 'Nothing has been allocated yet.';
+      // "No matches for THIS filter" vs "genuinely nothing in this
+      // category at all" -- reruns the same source list without the
+      // date/type filter to tell those apart.
+      const overallCount = rawList.length;
+      body.innerHTML = overallCount === 0
+        ? `<div class="loading-state">${emptyMessage}</div>`
         : '<div class="loading-state">No vouchers match this filter — try widening the date range or type.</div>';
       return;
     }
 
     body.innerHTML = vouchers.map(v => {
-      const amount = isPendingView
+      // Posting shares Pending's raw voucher shape (v.amount directly);
+      // only Allocated's request-record shape needs the ledger_lines
+      // fallback.
+      const amount = (isPendingView || isPostingView)
         ? parseAmt(v.amount)
         : Math.abs(parseAmt((safeArray(v.ledger_lines)[0] || {}).amount));
       let statusHtml = '';
       if (isPendingView) {
         const req = findReallocationRequest(data, v.voucher_id);
+        if (req && req.status === 'post_failed') {
+          statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
+        }
+      } else if (isPostingView) {
+        const req = findReallocationRequest(data, v.voucher_id);
         if (req && req.status === 'requested') {
           statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posting…</span>';
         } else if (req && req.status === 'posted') {
           statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posted — refreshing…</span>';
-        } else if (req && req.status === 'post_failed') {
-          statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
         }
       } else {
         statusHtml = `<span class="alloc-voucher-status alloc-status-done">→ ${escapeHtml(v.new_ledger_name || '')}</span>`;
@@ -5963,6 +6051,8 @@
       // findGpaySuggestion for the matching rule and why an ambiguous
       // (2+ candidate) match is shown as "Possibly" rather than a name.
       // Scoped to GOOGLEINDIADIGIT narrations only (see isGpayNarration).
+      // Pending only -- a Posting voucher already has a ledger picked,
+      // a fresh suggestion for it would just be noise.
       let suggestHtml = '';
       if (isPendingView && gpayIndex && isGpayNarration(v.narration)) {
         const suggestion = findGpaySuggestion(gpayIndex, v.date, amount);
@@ -5991,7 +6081,7 @@
         </div>`;
     }).join('');
 
-    if (!isPendingView) return; // Allocated rows are informational only -- nothing to click into.
+    if (!isPendingView) return; // Allocated and Posting rows are informational only -- nothing to click into.
 
     body.querySelectorAll('.alloc-voucher-row').forEach(row => {
       row.addEventListener('click', () => {
@@ -6084,12 +6174,47 @@
       populateLedgerSelect(groupSelect, groupNames, null);
       groupSelect.onchange = updateLedgerAllocSaveState;
     } else {
+      // Carry whatever name is currently in the "create new ledger" form
+      // over to the existing-ledger search box when backing out of create
+      // mode -- most commonly this is a GPay-suggested name that didn't
+      // match any existing ledger (see applyGpaySuggestedName), but it's
+      // just as useful for a name typed by hand. Either way, tapping
+      // "Use an existing ledger instead" is normally to double-check a
+      // near-duplicate doesn't already exist under a slightly different
+      // spelling -- silently dropping the name defeats that.
+      const typedName = document.getElementById('ledger-alloc-new-ledger-name').value.trim();
       setLedgerAllocCreateMode(false);
+      if (typedName) prefillLedgerSearchBox(typedName);
     }
   });
   document.getElementById('ledger-alloc-new-ledger-name').addEventListener('input', updateLedgerAllocSaveState);
 
+  // Sets the visible text (and filtered dropdown) of the existing-ledger
+  // search combobox to `name`, WITHOUT forcing a selection -- there's
+  // usually no exact-match option to select (that's exactly why the
+  // create-new form was reached), this is just a starting point for the
+  // person to see close matches or confirm none exist. See
+  // enhanceLedgerSelect for how the wrap/input/dropdown are structured.
+  function prefillLedgerSearchBox(name) {
+    const select = document.getElementById('ledger-alloc-pick-select');
+    const wrap = select.nextElementSibling;
+    if (!wrap || !wrap.classList.contains('ledger-search-wrap')) return;
+    const input = wrap.querySelector('input');
+    const dropdown = wrap.querySelector('.ledger-search-dropdown');
+    if (!input) return;
+    input.value = name;
+    if (dropdown) {
+      renderLedgerSearchDropdown(select, dropdown, name);
+      dropdown.classList.add('open');
+    }
+  }
+
   async function openLedgerAllocPick(voucher) {
+    // Save where the list was scrolled to, and give this step its own
+    // back-button stop -- see the two functions' comments near
+    // ledgerAllocGoToList for why both matter here.
+    ledgerAllocListScrollTop = document.getElementById('ledger-allocation-overlay').scrollTop;
+    pushLedgerAllocPickState();
     ledgerAllocPickVoucher = voucher;
     document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
     document.getElementById('ledger-alloc-step-pick').classList.add('active');
@@ -6198,8 +6323,7 @@
   }
 
   document.getElementById('ledger-alloc-pick-cancel-btn').addEventListener('click', () => {
-    ledgerAllocGoToList();
-    renderLedgerAllocList();
+    goBackFromLedgerAllocPick();
   });
 
   document.getElementById('ledger-alloc-pick-save-btn').addEventListener('click', async () => {
@@ -6271,8 +6395,7 @@
         if (pan) payload.new_ledger_pan = pan;
       }
       await set(reqRef, payload);
-      ledgerAllocGoToList();
-      renderLedgerAllocList();
+      goBackFromLedgerAllocPick();
     } catch (err) {
       console.error('Could not submit ledger reallocation:', err);
       document.getElementById('ledger-alloc-pick-error').textContent =
