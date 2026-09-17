@@ -458,6 +458,12 @@
     font-family: 'IBM Plex Mono', monospace;
   }
   .txn-remove-btn { background: none; border: none; color: var(--ink-soft); font-size: 18px; padding: 0 4px; }
+  .txn-row-dup { border-color: var(--rust); }
+  .txn-dup-badge {
+    display: inline-block; background: var(--rust-soft); color: var(--rust);
+    font-size: 10.5px; font-weight: 700; padding: 2px 7px;
+    border-radius: 6px; margin-bottom: 4px;
+  }
   .txn-mismatch-banner {
     background: var(--rust-soft); border: 1px solid var(--rust);
     border-radius: 10px; padding: 12px; margin-bottom: 16px;
@@ -6192,7 +6198,13 @@
       return;
     }
     btn.style.display = '';
-    btn.textContent = `⚡ Post ${n} exact GPay match${n === 1 ? '' : 'es'} to Tally`;
+    // "Review" not "Post" -- tapping this only opens the checklist (see
+    // openLedgerAllocBulkConfirm), nothing is posted until the person
+    // taps "Post to Tally" inside it. The earlier wording ("Post N…")
+    // made it sound like one tap here would immediately write to Tally,
+    // which isn't what happens -- this is just as much a "see the list"
+    // button as a "post" button.
+    btn.textContent = `⚡ ${n} exact GPay match${n === 1 ? '' : 'es'} found — Review & Post`;
   }
 
   function closeLedgerAllocBulkConfirm() {
@@ -8174,6 +8186,14 @@
           // EITHER is true -- see isTxnExcluded().
           manuallyRemoved: false,
           dateExcluded: false,
+          // Set by the PC side (gather_known_bank_transaction_signatures +
+          // flag_possible_duplicates in tally_firebase_sync_v2.py) when
+          // this transaction's date+amount+type matches something already
+          // posted or already sitting in another pending review for the
+          // same bank ledger -- e.g. importing an overlapping date range
+          // in a later statement. Flag only, never auto-removed -- shown
+          // below so DJ can use the same ✕ button to drop it himself.
+          possible_duplicate: !!t.possible_duplicate,
         })),
       };
       applyStatementDateRange({ from: null, to: stmtDetectedRange?.to || null }); // immediate render, refined below
@@ -8353,6 +8373,20 @@
       }
     }
 
+    // Possible-duplicate summary -- same banner treatment as the totals
+    // mismatch check above, since both are "check before you confirm"
+    // warnings. Counts only what's actually still visible (not already
+    // excluded by date range or manual removal).
+    const dupCount = txns.filter(t => !isTxnExcluded(t) && t.possible_duplicate).length;
+    if (dupCount > 0) {
+      html += `<div class="txn-mismatch-banner">
+        <strong>⚠ ${dupCount} possible duplicate${dupCount === 1 ? '' : 's'} found.</strong><br>
+        ${dupCount === 1 ? 'This matches' : 'These match'} a transaction already posted, or already sitting in
+        another pending review, for this bank ledger -- likely an overlapping date range between statements.
+        Marked below · check before confirming.
+      </div>`;
+    }
+
     html += `<div class="map-section-title">Bank: ${escapeHtml(stmtReviewData.bank_ledger || '')} · Contra: ${escapeHtml(stmtReviewData.contra_ledger || '')}</div>`;
 
     // Opening/closing balance -- the statement's own printed figures,
@@ -8399,9 +8433,10 @@
 
     txns.forEach((t, idx) => {
       if (isTxnExcluded(t)) return;
-      html += `<div class="txn-row" data-idx="${idx}">
+      html += `<div class="txn-row ${t.possible_duplicate ? 'txn-row-dup' : ''}" data-idx="${idx}">
         <div class="txn-row-top">
           <div>
+            ${t.possible_duplicate ? '<div class="txn-dup-badge">⚠ Possible duplicate</div>' : ''}
             <div class="txn-narration">${escapeHtml(t.narration || '')}</div>
             <div class="txn-date">${escapeHtml(t.date || '')}${t.instrument ? ' · Chq: ' + escapeHtml(t.instrument) : ''}</div>
           </div>
