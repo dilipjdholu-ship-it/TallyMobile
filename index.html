@@ -1506,6 +1506,37 @@
     </div>
   </div>
 
+  <!-- Bank Voucher (Gmail alert) Review Overlay -- one Saraswat Bank
+       transaction alert email = one pending Receipt/Payment voucher,
+       queued by the separate gmail_bank_alert_sync.py poller (not by
+       anything in this app) at pending_bank_vouchers/{gmail_message_id}.
+       Reuses the .scan-step / .map-* CSS already proven by the bank
+       statement overlay above, but always exactly one voucher per
+       record, so there's no upload step, per-transaction list, or date
+       range picker here -- just review, edit, and Confirm/Discard. -->
+  <div id="bank-voucher-review-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div class="overlay-header">
+        <button class="overlay-back" id="bank-voucher-review-back">&larr; Back</button>
+        <div class="overlay-title" id="bank-voucher-review-title">Review Bank Transaction</div>
+      </div>
+      <div class="overlay-body" id="bank-voucher-review-body">
+        <div class="scan-step" id="voucher-step-review">
+          <div id="voucher-review-body"></div>
+        </div>
+        <div class="scan-step" id="voucher-step-progress">
+          <div class="scan-progress">
+            <div class="spinner"></div>
+            <div id="voucher-progress-text">Posting to Tally…</div>
+          </div>
+        </div>
+        <div class="scan-step" id="voucher-step-result">
+          <div id="voucher-result-body"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- GST & Ledger Settings Overlay -- per-company. Stored at
        companies/{key}/gst_settings, read by the PC sync engine in
        preference to its hardcoded CONFIG table (same pattern as
@@ -1842,7 +1873,7 @@
   // closes whichever id it reaches FIRST in this array, so a nested
   // overlay must always be listed earlier than the overlay it can stack on
   // (same convention as voucher-detail-overlay vs ledger-detail-overlay).
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'gpay-upload-overlay', 'ledger-allocation-overlay'];
+  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'gpay-upload-overlay', 'ledger-allocation-overlay', 'bank-voucher-review-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -2416,6 +2447,11 @@
       // stale counts here would be actively misleading (unlike reports).
       cd.pending_invoices = val.pending_invoices;
       cd.pending_bank_statements = val.pending_bank_statements;
+      // Same "comes along for free" reasoning -- queued by
+      // gmail_bank_alert_sync.py (a separate PC-side poller, not this
+      // app), reviewed here, posted by tally_firebase_sync_v2.py's
+      // handle_confirmed_bank_voucher once confirmed.
+      cd.pending_bank_vouchers = val.pending_bank_vouchers;
       // Same "comes along for free" reasoning -- bank_statement_settings
       // is what names the contra ledger (usually "Suspense") the Ledger
       // Allocation screen watches for, and pending_ledger_reallocations
@@ -2593,7 +2629,14 @@
     // review, or errored.
     const pendingInvoiceCount = Object.keys(data.pending_invoices || {}).length;
     const pendingStatementCount = Object.keys(data.pending_bank_statements || {}).length;
-    const pendingTotal = pendingInvoiceCount + pendingStatementCount;
+    // Only count records actually waiting on a person -- a Gmail alert
+    // sits at 'pending_review' until reviewed; once confirmed it's
+    // mid-post (still shown, so a stuck post_failed remains visible) --
+    // matches the Review Queue's own filtering (renderReviewQueue below
+    // hides only 'posted' items, same idea, applied here for the badge).
+    const pendingVoucherCount = Object.keys(data.pending_bank_vouchers || {})
+      .filter(k => (data.pending_bank_vouchers[k] || {}).status !== 'posted').length;
+    const pendingTotal = pendingInvoiceCount + pendingStatementCount + pendingVoucherCount;
 
     // Same lazy-load-then-badge treatment as ledgers/stock/daybook above --
     // bank_related_vouchers is what getVouchersNeedingAllocation reads.
@@ -5516,8 +5559,8 @@
   // ---- Review Queue: lists every not-yet-finished invoice + bank
   // statement, live, and resumes whichever one is tapped at its
   // current step. This is what replaced the FAB's old auto-resume. ----
-  let queueUnsubInv = null, queueUnsubStmt = null;
-  let queueInvoices = {}, queueStatements = {};
+  let queueUnsubInv = null, queueUnsubStmt = null, queueUnsubVoucher = null;
+  let queueInvoices = {}, queueStatements = {}, queueVouchers = {};
 
   // ================= LEDGER ALLOCATION OVERLAY =================
   // See getVouchersNeedingAllocation / findReallocationRequest above and
@@ -6630,6 +6673,7 @@
     renderReviewQueueLoading();
     if (queueUnsubInv) queueUnsubInv();
     if (queueUnsubStmt) queueUnsubStmt();
+    if (queueUnsubVoucher) queueUnsubVoucher();
     queueUnsubInv = onValue(ref(db, `companies/${currentCompany}/pending_invoices`), snap => {
       queueInvoices = snap.val() || {};
       renderReviewQueue();
@@ -6638,10 +6682,15 @@
       queueStatements = snap.val() || {};
       renderReviewQueue();
     });
+    queueUnsubVoucher = onValue(ref(db, `companies/${currentCompany}/pending_bank_vouchers`), snap => {
+      queueVouchers = snap.val() || {};
+      renderReviewQueue();
+    });
   }
   document.getElementById('review-queue-back').addEventListener('click', () => {
     if (queueUnsubInv) { queueUnsubInv(); queueUnsubInv = null; }
     if (queueUnsubStmt) { queueUnsubStmt(); queueUnsubStmt = null; }
+    if (queueUnsubVoucher) { queueUnsubVoucher(); queueUnsubVoucher = null; }
     goBackFromOverlay();
   });
 
@@ -6652,7 +6701,7 @@
   function queueStatusMeta(status) {
     if (status === 'uploaded') return { label: 'Processing…', cls: 'st-wait' };
     if (status === 'waiting_for_tally') return { label: 'Waiting for Tally', cls: 'st-review' };
-    if (status === 'ready_for_review') return { label: 'Needs review', cls: 'st-review' };
+    if (status === 'ready_for_review' || status === 'pending_review') return { label: 'Needs review', cls: 'st-review' };
     if (status === 'confirmed' || status === 'confirmed_pending_post') return { label: 'Posting…', cls: 'st-wait' };
     if (status === 'failed' || status === 'post_failed') return { label: 'Error', cls: 'st-error' };
     return { label: status || 'Pending', cls: 'st-wait' };
@@ -6675,8 +6724,14 @@
     const stmtItems = Object.entries(queueStatements)
       .filter(([, d]) => d.status !== 'posted')
       .map(([id, d]) => ({ id, d, kind: 'statement' }));
-    const all = [...invItems, ...stmtItems].sort((a, b) =>
-      (b.d.uploaded_at || '').localeCompare(a.d.uploaded_at || ''));
+    const voucherItems = Object.entries(queueVouchers)
+      .filter(([, d]) => d.status !== 'posted')
+      .map(([id, d]) => ({ id, d, kind: 'voucher' }));
+    const all = [...invItems, ...stmtItems, ...voucherItems].sort((a, b) =>
+      // Vouchers use detected_at (when the Gmail alert was found) since
+      // they have no uploaded_at -- both are ISO strings, so this still
+      // sorts everything newest-first on one shared timeline.
+      ((b.d.uploaded_at || b.d.detected_at) || '').localeCompare((a.d.uploaded_at || a.d.detected_at) || ''));
 
     const body = document.getElementById('review-queue-body');
     if (all.length === 0) {
@@ -6691,11 +6746,13 @@
     let html = '<div class="list-card">';
     all.forEach(({ id, d, kind }) => {
       const meta = queueStatusMeta(d.status);
-      const icon = kind === 'invoice' ? '🧾' : '🏦';
+      const icon = kind === 'invoice' ? '🧾' : (kind === 'voucher' ? '📧' : '🏦');
       const title = kind === 'invoice'
         ? (d.party_ocr || d.fields?.party_name || 'Invoice')
+        : kind === 'voucher'
+        ? `${d.voucher_type || 'Bank'} · ${formatCurrency(parseAmt(d.amount))}`
         : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
-      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at) : '';
+      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at) : (d.detected_at ? formatDateTime(d.detected_at) : '');
       html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
         <div>
           <div class="name">${icon} ${escapeHtml(title)}</div>
@@ -6713,6 +6770,7 @@
         const kind = row.dataset.kind;
         if (queueUnsubInv) { queueUnsubInv(); queueUnsubInv = null; }
         if (queueUnsubStmt) { queueUnsubStmt(); queueUnsubStmt = null; }
+        if (queueUnsubVoucher) { queueUnsubVoucher(); queueUnsubVoucher = null; }
         goBackFromOverlay(); // close the queue overlay
         if (kind === 'invoice') {
           resetScanFlow();
@@ -6720,6 +6778,12 @@
           openOverlay('invoice-upload-overlay');
           handleInvoiceStatusChange(queueInvoices[id]);
           listenForInvoiceUpdates(id);
+        } else if (kind === 'voucher') {
+          resetVoucherFlow();
+          voucherCurrentId = id;
+          openOverlay('bank-voucher-review-overlay');
+          handleVoucherStatusChange(queueVouchers[id]);
+          listenForVoucherUpdates(id);
         } else {
           resetStatementFlow();
           stmtCurrentId = id;
@@ -8517,6 +8581,239 @@
     } catch (err) {
       console.error('Failed to save confirmation:', err);
       showStatementResult(false, 'Could not save your confirmation', err.message || String(err));
+    }
+  }
+
+  // ================= BANK VOUCHER (Gmail alert) REVIEW =================
+  // Flow: gmail_bank_alert_sync.py (a separate PC-side poller) detects a
+  // Saraswat Bank alert email, parses it, and writes one
+  // pending_bank_vouchers/{gmail_message_id} record with status
+  // "pending_review" -- nothing in this app creates these records, they
+  // only ever show up already-queued, same as how a bank statement's
+  // transactions arrive already-parsed for review. Reviewing here means
+  // correcting the Receipt/Payment call, amount, or either ledger (the
+  // contra side defaults to "Suspense", same convention as bank
+  // statement imports) before Confirm hands it to
+  // tally_firebase_sync_v2.py's handle_confirmed_bank_voucher to post.
+
+  let voucherCurrentId = null;
+  let voucherUnsub = null;
+  let voucherReviewData = null; // the live pending_review record from the PC-side poller
+  let voucherEdit = null;       // editable copy shown on screen; null until first seeded from voucherReviewData
+
+  function resetVoucherFlow() {
+    voucherCurrentId = null;
+    if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
+    voucherReviewData = null;
+    voucherEdit = null;
+    document.querySelectorAll('#bank-voucher-review-body .scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('bank-voucher-review-title').textContent = 'Review Bank Transaction';
+  }
+
+  document.getElementById('bank-voucher-review-back').addEventListener('click', () => {
+    if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
+    goBackFromOverlay();
+  });
+
+  function voucherActivateStep(stepId) {
+    document.querySelectorAll('#bank-voucher-review-body .scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById(stepId).classList.add('active');
+  }
+
+  function listenForVoucherUpdates(id) {
+    const nodeRef = ref(db, `companies/${currentCompany}/pending_bank_vouchers/${id}`);
+    voucherUnsub = onValue(nodeRef, (snap) => {
+      const data = snap.val();
+      if (!data) return;
+      handleVoucherStatusChange(data);
+    });
+  }
+
+  function handleVoucherStatusChange(data) {
+    const status = data.status;
+    if (status === 'pending_review') {
+      voucherReviewData = data;
+      if (!voucherEdit) {
+        // Seed the editable copy only the first time this record is
+        // seen -- a live update arriving while DJ is mid-edit (nothing
+        // else writes here while status stays pending_review, but same
+        // defensive pattern as the bank statement screen) must not
+        // clobber what he's already typed.
+        voucherEdit = {
+          voucher_type: data.voucher_type,
+          amount: data.amount,
+          dr_ledger: data.dr_ledger,
+          cr_ledger: data.cr_ledger,
+          narration: data.narration || '',
+        };
+      }
+      renderVoucherReviewScreen();
+      voucherActivateStep('voucher-step-review');
+      document.getElementById('bank-voucher-review-title').textContent = 'Review Bank Transaction';
+    } else if (status === 'confirmed') {
+      voucherActivateStep('voucher-step-progress');
+      document.getElementById('voucher-progress-text').textContent = 'Posting to Tally…';
+    } else if (status === 'posted') {
+      showVoucherResult(true, 'Posted to Tally', data.post_message || 'Voucher was created in Tally.');
+    } else if (status === 'post_failed') {
+      showVoucherResult(false, 'Posting failed', data.error || 'Unknown error');
+    }
+  }
+
+  function showVoucherResult(success, title, detail) {
+    if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
+    voucherActivateStep('voucher-step-result');
+    document.getElementById('bank-voucher-review-title').textContent = success ? 'Done' : 'Error';
+    document.getElementById('voucher-result-body').innerHTML = `
+      <div class="map-result ${success ? 'success' : 'error'}">
+        <div class="glyph">${success ? '✓' : '✕'}</div>
+        <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
+        <div class="detail">${escapeHtml(detail || '')}</div>
+      </div>
+      ${success ? '' : '<button type="button" class="map-discard-btn" id="voucher-result-discard-btn">Delete from queue</button>'}
+    `;
+    if (!success) {
+      document.getElementById('voucher-result-discard-btn').addEventListener('click', discardVoucher);
+    }
+  }
+
+  async function discardVoucher() {
+    if (!confirm('Discard this bank transaction? It will NOT be posted to Tally, and this cannot be undone.')) return;
+    if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
+    const idToDelete = voucherCurrentId;
+    voucherActivateStep('voucher-step-progress');
+    document.getElementById('voucher-progress-text').textContent = 'Discarding…';
+    try {
+      if (idToDelete) {
+        const snap = await get(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${idToDelete}`));
+        const finalData = snap.val();
+        if (finalData) {
+          await set(ref(db, `companies/${currentCompany}/history_bank_vouchers/${idToDelete}`),
+            Object.assign({}, finalData, { outcome: 'discarded', finalized_at: new Date().toISOString() }));
+        }
+        await remove(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${idToDelete}`));
+      }
+    } catch (err) {
+      console.error('Failed to discard bank voucher:', err);
+      alert('Could not fully discard this transaction -- check your connection and try again from the Review Queue.');
+    }
+    resetVoucherFlow();
+    goBackFromOverlay();
+  }
+
+  // Formats a YYYYMMDD string (what parse_bank_alert_email produces) as
+  // DD-MM-YYYY for display -- matches the bank's own date format, which
+  // is what DJ sees in the original alert email.
+  function formatVoucherDate(yyyymmdd) {
+    const s = String(yyyymmdd || '');
+    if (!/^\d{8}$/.test(s)) return s;
+    return `${s.slice(6, 8)}-${s.slice(4, 6)}-${s.slice(0, 4)}`;
+  }
+
+  function renderVoucherReviewScreen() {
+    const container = document.getElementById('voucher-review-body');
+    const d = voucherReviewData;
+    const e = voucherEdit;
+    const isReceipt = e.voucher_type === 'Receipt';
+    const bankLedgerVal = isReceipt ? e.dr_ledger : e.cr_ledger;
+    const contraVal = isReceipt ? e.cr_ledger : e.dr_ledger;
+
+    let html = '';
+    html += `<div class="map-section-title">From bank alert email · Account ${escapeHtml(d.account_no || '')}</div>`;
+    html += `<div class="summary-strip" style="margin-bottom:14px;">
+      <div class="summary-chip">
+        <div class="label">Date</div>
+        <div class="value mono">${escapeHtml(formatVoucherDate(d.date))}</div>
+      </div>
+    </div>`;
+
+    html += `<div class="map-section">
+      <div class="map-section-title">Type</div>
+      <div class="txn-type-toggle">
+        <button class="txn-type-btn receipt ${isReceipt ? 'active receipt' : ''}" id="voucher-type-receipt">Receipt</button>
+        <button class="txn-type-btn payment ${!isReceipt ? 'active payment' : ''}" id="voucher-type-payment">Payment</button>
+      </div>
+    </div>`;
+
+    html += `<div class="map-section">
+      <div class="map-field-label">Amount</div>
+      <input type="number" step="0.01" inputmode="decimal" id="voucher-amount-input" class="map-field-input" value="${escapeHtml(e.amount)}">
+    </div>`;
+
+    html += `<div class="map-section">
+      <div class="map-field-label">Bank Ledger</div>
+      <input type="text" id="voucher-bank-ledger-input" class="map-field-input" value="${escapeHtml(bankLedgerVal || '')}">
+    </div>`;
+
+    html += `<div class="map-section">
+      <div class="map-field-label">Other Ledger (contra)</div>
+      <input type="text" id="voucher-contra-ledger-input" class="map-field-input" value="${escapeHtml(contraVal || '')}">
+      <p class="totals-card-hint" style="margin-top:6px;">Usually "Suspense" -- correct it here to the real party/expense ledger if you already know it, or leave it as Suspense and reallocate later from Ledger Allocation.</p>
+    </div>`;
+
+    html += `<div class="map-section">
+      <div class="map-field-label">Narration</div>
+      <input type="text" id="voucher-narration-input" class="map-field-input" value="${escapeHtml(e.narration || '')}">
+    </div>`;
+
+    html += `<button class="map-confirm-btn" id="voucher-confirm-btn">Confirm &amp; Post</button>`;
+    html += `<button type="button" class="map-discard-btn" id="voucher-discard-btn">Discard this transaction</button>`;
+
+    container.innerHTML = html;
+
+    document.getElementById('voucher-type-receipt').addEventListener('click', () => {
+      // Swap which side (dr/cr) the bank ledger and contra ledger sit
+      // on to match Receipt's convention, keeping both ledger VALUES as
+      // typed rather than resetting them.
+      if (!isReceipt) {
+        e.voucher_type = 'Receipt';
+        e.dr_ledger = bankLedgerVal;
+        e.cr_ledger = contraVal;
+        renderVoucherReviewScreen();
+      }
+    });
+    document.getElementById('voucher-type-payment').addEventListener('click', () => {
+      if (isReceipt) {
+        e.voucher_type = 'Payment';
+        e.dr_ledger = contraVal;
+        e.cr_ledger = bankLedgerVal;
+        renderVoucherReviewScreen();
+      }
+    });
+    document.getElementById('voucher-amount-input').addEventListener('input', (ev) => { e.amount = ev.target.value; });
+    document.getElementById('voucher-bank-ledger-input').addEventListener('input', (ev) => {
+      if (e.voucher_type === 'Receipt') e.dr_ledger = ev.target.value; else e.cr_ledger = ev.target.value;
+    });
+    document.getElementById('voucher-contra-ledger-input').addEventListener('input', (ev) => {
+      if (e.voucher_type === 'Receipt') e.cr_ledger = ev.target.value; else e.dr_ledger = ev.target.value;
+    });
+    document.getElementById('voucher-narration-input').addEventListener('input', (ev) => { e.narration = ev.target.value; });
+    document.getElementById('voucher-confirm-btn').addEventListener('click', confirmVoucher);
+    document.getElementById('voucher-discard-btn').addEventListener('click', discardVoucher);
+  }
+
+  async function confirmVoucher() {
+    const e = voucherEdit;
+    if (!e.dr_ledger || !e.cr_ledger || !e.amount) {
+      alert('Please fill in the amount and both ledgers before confirming.');
+      return;
+    }
+    const payload = {
+      status: 'confirmed',
+      voucher_type: e.voucher_type,
+      amount: e.amount,
+      dr_ledger: e.dr_ledger,
+      cr_ledger: e.cr_ledger,
+      narration: e.narration,
+    };
+    voucherActivateStep('voucher-step-progress');
+    document.getElementById('voucher-progress-text').textContent = 'Posting to Tally…';
+    try {
+      await set(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${voucherCurrentId}`),
+        Object.assign({}, voucherReviewData, payload));
+    } catch (err) {
+      console.error('Failed to save confirmation:', err);
+      showVoucherResult(false, 'Could not save your confirmation', err.message || String(err));
     }
   }
 </script>
