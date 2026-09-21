@@ -8877,7 +8877,7 @@
 
     html += `<div class="map-section">
       <div class="map-field-label">Other Ledger (contra)</div>
-      <input type="text" id="voucher-contra-ledger-input" class="map-field-input" value="${escapeHtml(contraVal || '')}">
+      <select id="voucher-contra-ledger-select" class="map-field-input"><option>Loading ledgers…</option></select>
       <p class="totals-card-hint" style="margin-top:6px;">Usually "Suspense" -- correct it here to the real party/expense ledger if you already know it, or leave it as Suspense and reallocate later from Ledger Allocation.</p>
     </div>`;
 
@@ -8914,8 +8914,27 @@
     document.getElementById('voucher-bank-ledger-input').addEventListener('input', (ev) => {
       if (e.voucher_type === 'Receipt') e.dr_ledger = ev.target.value; else e.cr_ledger = ev.target.value;
     });
-    document.getElementById('voucher-contra-ledger-input').addEventListener('input', (ev) => {
-      if (e.voucher_type === 'Receipt') e.cr_ledger = ev.target.value; else e.dr_ledger = ev.target.value;
+    // Same searchable ledger picker used in the Ledger Allocation screen
+    // (populateLedgerSelect + enhanceLedgerSelect, see fetchLedgerNames'
+    // definitions near the "Ledger Allocation" section) -- a plain text
+    // field made it too easy to typo a ledger name that Tally would then
+    // reject at posting time, or create an unintended duplicate ledger.
+    // The <select> stays the source of truth; the visible search box is
+    // just how it's populated (see enhanceLedgerSelect).
+    const contraSelect = document.getElementById('voucher-contra-ledger-select');
+    fetchLedgerNames().then(names => {
+      // Guard against a stale fetch resolving after the person has
+      // already toggled Receipt/Payment (which fully re-renders this
+      // screen and creates a fresh <select>) or navigated away.
+      if (!document.body.contains(contraSelect)) return;
+      populateLedgerSelect(contraSelect, names, contraVal || '');
+      // .onchange (not addEventListener) -- same reasoning as the Ledger
+      // Allocation picker's select: this element gets recreated on every
+      // render, but being defensive costs nothing here.
+      contraSelect.onchange = () => {
+        const val = contraSelect.value;
+        if (e.voucher_type === 'Receipt') e.cr_ledger = val; else e.dr_ledger = val;
+      };
     });
     document.getElementById('voucher-narration-input').addEventListener('input', (ev) => { e.narration = ev.target.value; });
     document.getElementById('voucher-confirm-btn').addEventListener('click', confirmVoucher);
