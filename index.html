@@ -253,9 +253,26 @@
     padding: 14px 16px;
     box-shadow: var(--shadow);
     border: 1px solid var(--border);
+    /* FIX (Sept 2026): grid items default to min-width:auto, meaning a
+       card was never allowed to shrink below the width of its own
+       content -- a big enough currency value (e.g. Stock Value with no
+       spaces to naturally break on) forced this card, the whole grid
+       row, and the page itself wider than the screen. That's what was
+       actually behind the "page drags sideways on iPhone" bug: the
+       overflow-x:hidden fix on the page stopped it from scrolling, but
+       without this, the same overflow just became invisible clipping
+       instead (the tail end of a long number silently cut off). This is
+       the real fix -- letting the card shrink to fit its column -- the
+       overflow-wrap below is what lets the value wrap onto a second
+       line instead of spilling once the card genuinely can't fit it on
+       one line. */
+    min-width: 0;
   }
   .dash-stat-card .ds-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 6px; }
-  .dash-stat-card .ds-value { font-size: 19px; font-weight: 800; font-family: 'IBM Plex Mono', monospace; }
+  .dash-stat-card .ds-value {
+    font-size: 19px; font-weight: 800; font-family: 'IBM Plex Mono', monospace;
+    overflow-wrap: break-word; /* a long unbroken number wraps instead of overflowing once it no longer fits */
+  }
   .dash-stat-card.primary { background: var(--primary); }
   .dash-stat-card.primary .ds-label { color: #cfe1f7; }
   .dash-stat-card.primary .ds-value { color: white; }
