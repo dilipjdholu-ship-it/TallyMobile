@@ -1937,9 +1937,20 @@
   let currentUnsubscribe = null;
 
   // Heavy sections (ledgers, daybook, stock_items, sales_vouchers,
-  // party_details) are loaded lazily, one-time, per section — not as part
-  // of the initial page load. This is what makes the app open fast: only
-  // company_info + outstanding_receivables (small) load immediately.
+  // party_details, ...) each live on their OWN Firebase node, sibling to
+  // (not nested under) the small always-live fields that
+  // listenToCurrentCompany()'s permanent onValue() listener watches --
+  // see the schema-split note in tally_firebase_sync_v2.py's
+  // sync_company() for why that separation matters (it used to all be
+  // bundled onto companies/{key}, so every fresh connect pulled the
+  // whole multi-thousand-record payload down just for the live listener
+  // to ignore it). Each of these is loaded lazily, one-time per section,
+  // via ensureSectionLoaded() below -- this is what makes the app open
+  // fast: only company_info + outstanding_receivables (small) load
+  // immediately, and each heavy section is fetched (and cached) only
+  // once it's actually needed. See preloadAllSections() for the
+  // background warm-up that fetches these right after open instead of
+  // waiting for the person to tap in.
   const LAZY_PATHS = {
     ledgers: 'ledgers',
     groups: 'groups',
@@ -2230,13 +2241,42 @@
     });
   }
 
-  function showApp() {
+  async function showApp() {
     document.getElementById('company-select-screen').style.display = 'none';
     document.getElementById('app-screen').style.display = 'block';
     document.getElementById('company-switcher-name').textContent =
       COMPANIES.find(c => c.key === currentCompany)?.label || '';
     initApp();
+    // Warm the synchronous in-memory cache layer from IndexedDB BEFORE
+    // subscribing/preloading, so loadFromCache() calls made by those two
+    // (and by anything the person taps into right away) see real cached
+    // data instead of racing an empty cache. This await is short --
+    // IndexedDB reads are single-digit to low tens of ms even for a few
+    // MB, nowhere near the multi-second network waits this whole change
+    // exists to remove -- see warmCacheFromIndexedDB()'s own comment.
+    await warmCacheFromIndexedDB(currentCompany);
     listenToCurrentCompany(); // always (re)subscribe — handles company switching too
+    // Warm up every heavy section in the background right away, instead
+    // of waiting for the person to tap into each one -- see
+    // preloadAllSections() below for why this is safe to fire without
+    // awaiting or blocking anything on this screen.
+    preloadAllSections(currentCompany);
+  }
+
+  // Kicks off ensureSectionLoaded() for every LAZY_PATHS section at once,
+  // right after the app opens or the company is switched -- by the time
+  // the person actually opens Ledgers/Daybook/Stock/etc., the data is
+  // either already sitting in companyData (this preload already finished,
+  // possibly from cache instantly) or already mid-flight, in which case
+  // ensureSectionLoaded's own de-dupe (state[pathKey] === 'loading')
+  // means opening the section doesn't start a second redundant fetch, it
+  // just renders once this one arrives. Deliberately fire-and-forget --
+  // ensureSectionLoaded's fetches are async and update companyData/render()
+  // on their own as they land, so nothing here needs to be awaited, and a
+  // slow or failed section (e.g. Tally hasn't synced stock_items yet)
+  // never blocks the app from opening or any other section from working.
+  function preloadAllSections(companyKey) {
+    ensureSectionLoaded(companyKey, ...Object.keys(LAZY_PATHS));
   }
 
   // Firebase Auth persists the signed-in session itself (survives reload
@@ -2383,32 +2423,130 @@
 
   // ---- Local caching (instant reopen, background refresh) ----
   // Firebase reads take a moment even on a good connection — caching
-  // each section in localStorage means reopening the app shows the last
-  // known data INSTANTLY, while a fresh copy loads quietly in the
-  // background and swaps in once it arrives. Wrapped in try/catch since
-  // localStorage has a real (small) size limit and heavy sections could
-  // exceed it — caching is a nice-to-have, never something that should
-  // break the app if it fails.
+  // each section means reopening the app shows the last known data
+  // INSTANTLY, while a fresh copy loads quietly in the background and
+  // swaps in once it arrives.
+  //
+  // PERFORMANCE FIX (Sept 2026): this used to write straight to
+  // localStorage, which has a small (~5-10MB, browser-dependent)
+  // per-origin quota — fine for a couple of sections, but once every
+  // heavy section (ledgers, daybook, stock, sales/purchase voucher
+  // detail, bank vouchers, P&L, balance sheet) across all 3 companies is
+  // being cached for the "ready instantly" goal, that quota is a real
+  // risk. saveToCache's old try/catch swallowed quota errors silently,
+  // so the biggest sections could already have been failing to cache
+  // without any visible sign — defeating the "instant reopen" promise
+  // for exactly the sections that most needed it.
+  //
+  // Now backed by IndexedDB, which is disk-backed with a far larger
+  // quota. IndexedDB's own API is inherently async, but every EXISTING
+  // call site of loadFromCache() in this file (ensureSectionLoaded,
+  // listenToCurrentCompany, forceRefreshCurrentCompany, and the
+  // review-flow wait loops) expects a plain synchronous return value —
+  // rewriting all of those to be async just for this would be a much
+  // larger, riskier change than the caching layer itself needs. Instead:
+  // reads stay synchronous by going through _cacheMem, a plain in-memory
+  // Map that's warmed from IndexedDB once, right when the app opens (see
+  // warmCacheFromIndexedDB(), awaited from showApp() before anything
+  // else touches the cache). Writes update _cacheMem immediately (so an
+  // immediate synchronous re-read in the same tick already sees it) and
+  // persist to IndexedDB in the background, fire-and-forget — same
+  // "best-effort, never breaks the app if it fails" philosophy the old
+  // localStorage version had.
+  const IDB_NAME = 'tallymobile_cache';
+  const IDB_STORE = 'sections';
+  let _idbDb = null; // the opened IDBDatabase, opened once and reused
+  const _cacheMem = new Map(); // cacheKey -> {data, ts} — the synchronous read layer
+
+  function openIdb() {
+    if (_idbDb) return Promise.resolve(_idbDb);
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) { reject(new Error('IndexedDB not available')); return; }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(IDB_STORE)) {
+          req.result.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => { _idbDb = req.result; resolve(_idbDb); };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbGet(key) {
+    return openIdb().then(db => new Promise((resolve, reject) => {
+      const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  function idbSet(key, value) {
+    return openIdb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+
   function cacheKey(companyKey, pathKey) {
     return `tm_cache_${companyKey}_${pathKey}`;
   }
 
+  // Every pathKey ever cached for a company: the two light fields plus
+  // every LAZY_PATHS section. Only used to know what to warm from
+  // IndexedDB on open — doesn't need to be exhaustive, a miss here just
+  // means that one section loads fresh instead of from cache, same as
+  // any first-ever open.
+  function allCacheablePathKeys() {
+    return ['company_info', 'outstanding_receivables', ...Object.keys(LAZY_PATHS)];
+  }
+
+  // Warms _cacheMem from IndexedDB, and migrates any leftover entries
+  // from the pre-IndexedDB localStorage cache one time, so upgrading to
+  // this version doesn't cost a person their existing instant-reopen
+  // cache on the very next open. Awaited once, right at app open (see
+  // showApp()) — IndexedDB reads are fast (single-digit to low tens of
+  // ms even for a few MB), nowhere close to the multi-second network
+  // waits this whole change exists to remove.
+  async function warmCacheFromIndexedDB(companyKey) {
+    await Promise.all(allCacheablePathKeys().map(async pathKey => {
+      const ck = cacheKey(companyKey, pathKey);
+      try {
+        const fromIdb = await idbGet(ck);
+        if (fromIdb) { _cacheMem.set(ck, fromIdb); return; }
+      } catch (e) {
+        // IndexedDB unavailable/broken — fall through to the localStorage
+        // migration check below, same handling as a plain cache miss.
+      }
+      try {
+        const raw = localStorage.getItem(ck);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          _cacheMem.set(ck, parsed);
+          idbSet(ck, parsed).catch(() => {}); // adopt it into IndexedDB, best-effort
+          localStorage.removeItem(ck); // reclaim the old (small) quota
+        }
+      } catch (e) {
+        // Nothing usable either way — this section just loads fresh.
+      }
+    }));
+  }
+
   function saveToCache(companyKey, pathKey, data) {
-    try {
-      localStorage.setItem(cacheKey(companyKey, pathKey), JSON.stringify({ data, ts: Date.now() }));
-    } catch (e) {
-      // Quota exceeded or similar — silently skip caching this section.
-    }
+    const ck = cacheKey(companyKey, pathKey);
+    const entry = { data, ts: Date.now() };
+    _cacheMem.set(ck, entry); // synchronous — an immediate re-read in this tick sees it
+    idbSet(ck, entry).catch(e => {
+      // Best-effort, same philosophy as the old localStorage try/catch —
+      // caching is a nice-to-have, never something that should break the
+      // app if it fails (private browsing, storage disabled, etc.).
+    });
   }
 
   function loadFromCache(companyKey, pathKey) {
-    try {
-      const raw = localStorage.getItem(cacheKey(companyKey, pathKey));
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (e) {
-      return null;
-    }
+    return _cacheMem.get(cacheKey(companyKey, pathKey)) || null;
   }
 
   function listenToCurrentCompany() {
@@ -2441,8 +2579,11 @@
       cd.outstanding_receivables = val.outstanding_receivables;
       cd.last_synced = val.last_synced;
       // Riding the same always-live root listener rather than opening a
-      // separate one -- val already contains the whole company node, so
-      // pending_invoices/pending_bank_statements come along for free.
+      // separate one -- pending_invoices/pending_bank_statements are
+      // themselves small (queue items, not the heavy synced lists), so
+      // reading them off the same snapshot costs nothing extra now that
+      // the heavy sections no longer live on this same node (see the
+      // schema-split note in tally_firebase_sync_v2.py's sync_company()).
       // Not cached to localStorage: these are queue/live-status data,
       // stale counts here would be actively misleading (unlike reports).
       cd.pending_invoices = val.pending_invoices;
@@ -2891,7 +3032,13 @@
       return;
     }
 
-    contentArea.innerHTML = `<div class="list-card">${rows.map(r => {
+    // PERFORMANCE FIX (Sept 2026): this used to .map() every filtered row
+    // into one giant innerHTML string with no cap -- with thousands of
+    // vouchers in a company's daybook, that's a large synchronous DOM
+    // build every time Daybook opens or the search term changes. Capped
+    // at 300 to match renderLedgers/renderStock's existing convention
+    // (same "narrow your search to see more" hint below).
+    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => {
       const isSales = (r.voucher_type || '').toLowerCase() === 'sales';
       const isPurchase = (r.voucher_type || '').toLowerCase() === 'purchase';
       const isClickable = isSales || isPurchase;
@@ -2904,7 +3051,8 @@
         </div>
         <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
       </div>`;
-    }).join('')}</div>`;
+    }).join('')}</div>
+    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => {
         const kind = row.dataset.vkind || 'sales';
@@ -4591,6 +4739,13 @@
     // Stock Items) would silently show every HSN cell as blank, since
     // ensureSectionLoaded() only WARMS the cache in the background; it
     // doesn't block until data actually arrives.
+    // Now that every section is preloaded in the background right when
+    // the app opens (see preloadAllSections()), this wait should rarely
+    // trigger at all -- it's the fallback for exporting within the first
+    // moment or two of a fresh open, before that background load has
+    // finished. Non-blocking to the rest of the app either way (the
+    // await yields back to the event loop every 150ms); the button's own
+    // "…"/disabled state is the visible sign something's happening.
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
       const exportBtnId = mode === 'download' ? 'voucher-download-btn'
         : mode === 'share' ? 'voucher-share-btn' : 'voucher-view-btn';
@@ -4962,7 +5117,9 @@
 
     // Same reasoning as exportInvoicePDF: HSN is looked up from
     // stock_items, which is only loaded in the background unless the
-    // person has visited that tab directly.
+    // person has visited that tab directly (or preloadAllSections() has
+    // already finished warming it, in which case this wait is skipped
+    // entirely -- see that function's comment).
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
       const exportBtnId = mode === 'download' ? 'voucher-download-btn'
         : mode === 'share' ? 'voucher-share-btn' : 'voucher-view-btn';
@@ -5486,8 +5643,12 @@
     });
   }
 
-  // Registering a service worker is required for Chrome to offer a real
-  // "Install" prompt instead of just a home-screen shortcut.
+  // sw.js (deployed alongside this file) now actually caches the app
+  // shell (stale-while-revalidate -- see its own top comment) so
+  // reopening doesn't have to re-download this whole HTML/JS file over
+  // the network every time on top of Firebase data. Registering a
+  // service worker is also still what's required for Chrome to offer a
+  // real "Install" prompt instead of just a home-screen shortcut.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').catch(err => {
@@ -8318,15 +8479,26 @@
         })),
       };
       applyStatementDateRange({ from: null, to: stmtDetectedRange?.to || null }); // immediate render, refined below
+      stmtActivateStep('stmt-step-review');
+      document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
       if (!ensureSectionLoaded(currentCompany, 'bank_related_vouchers')) {
+        // Now that every section is preloaded in the background right
+        // when the app opens (see preloadAllSections()), this branch
+        // should rarely trigger at all -- it's only the fallback for
+        // uploading a statement within the first moment or two of a
+        // fresh app open, before that background load has finished. The
+        // review screen above is already visible and usable while this
+        // waits; a title hint (visible without needing a new DOM
+        // element) is enough to say something's still catching up,
+        // rather than leaving it looking idle for up to a few seconds.
+        document.getElementById('statement-upload-title').textContent = 'Review Bank Statement (refining suggestions…)';
         const start = Date.now();
         while (!(companyData[currentCompany] || {}).bank_related_vouchers && Date.now() - start < 6000) {
           await new Promise(r => setTimeout(r, 150));
         }
+        document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
       }
       applyStatementDateRange(suggestStatementDateRange());
-      stmtActivateStep('stmt-step-review');
-      document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
     } else if (status === 'failed') {
       // Raw PDF-processing failure, before review -- no confirmed_transactions
       // exist yet to retry into, so no retry callback here (same treatment
