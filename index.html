@@ -7158,6 +7158,11 @@
       document.getElementById('scan-step-review').classList.add('active');
       document.getElementById('invoice-upload-title').textContent = 'Review Invoice';
     } else if (status === 'failed') {
+      // Processing/OCR itself failed before ever reaching review -- no
+      // mappingData/mappingState to retry INTO, so this deliberately
+      // does NOT pass a retry callback (see showInvoiceResult's canRetry
+      // param). Only a posting failure (post_failed, below) has a real
+      // reviewed mapping behind it worth reopening.
       showInvoiceResult(false, 'Processing failed', data.error || 'Unknown error');
     } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
       document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
@@ -7167,11 +7172,38 @@
       showInvoiceResult(true, 'Posted as Optional Voucher',
         "Nothing has affected your books yet — open it in Tally to review and confirm.");
     } else if (status === 'post_failed') {
-      showInvoiceResult(false, 'Posting failed', data.error || 'Unknown error');
+      // Re-seed mappingData/mappingState from what was actually
+      // submitted (confirmMapping's Object.assign keeps item_matches/
+      // party_result/fields from the original OCR pass AND adds
+      // confirmed_party/confirmed_items/confirmed_invoice_no/
+      // confirmed_date_yyyymmdd alongside them -- handle_confirmed_
+      // invoice on the PC only .update()s status/error on top of that,
+      // never overwriting it) so Retry below can reopen the review
+      // screen exactly as last submitted, letting DJ fix a bad party/
+      // item match or a typo'd quantity before trying again instead of
+      // only being able to delete and lose the scan entirely.
+      mappingData = data;
+      const confirmedDate = data.confirmed_date_yyyymmdd;
+      mappingState = {
+        party: data.confirmed_party || null,
+        invoiceNo: data.confirmed_invoice_no || '',
+        invoiceDate: confirmedDate && /^\d{8}$/.test(confirmedDate)
+          ? `${confirmedDate.slice(0,4)}-${confirmedDate.slice(4,6)}-${confirmedDate.slice(6,8)}` : '',
+        items: (data.confirmed_items || data.item_matches || []).map(item => ({
+          confirmed: item.confirmed ?? null,
+          gst_rate: item.gst_rate != null ? String(item.gst_rate) : null,
+          quantity: item.quantity,
+          rate: item.rate,
+          unit: item.unit,
+          amount: item.amount,
+          discount_pct: item.discount_pct,
+        })),
+      };
+      showInvoiceResult(false, 'Posting failed', data.error || 'Unknown error', retryInvoice);
     }
   }
 
-  function showInvoiceResult(success, title, detail) {
+  function showInvoiceResult(success, title, detail, retryFn = null) {
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-result').classList.add('active');
@@ -7182,7 +7214,10 @@
         <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
         <div class="detail">${escapeHtml(detail || '')}</div>
       </div>
-      ${success ? '' : '<button type="button" class="map-discard-btn" id="result-discard-btn">Delete from queue</button>'}
+      ${success ? '' : `
+        ${retryFn ? '<button type="button" class="map-confirm-btn" id="result-retry-btn">Edit &amp; Retry</button>' : ''}
+        <button type="button" class="map-discard-btn" id="result-discard-btn">Delete from queue</button>
+      `}
     `;
     // Was previously a dead end: landing here from the Review Queue on a
     // failed/post_failed item showed the error with no way to remove it
@@ -7190,8 +7225,30 @@
     // correctly (writes a history record, then removes pending_invoices
     // + invoice_photos), it just wasn't reachable from this screen.
     if (!success) {
+      if (retryFn) document.getElementById('result-retry-btn').addEventListener('click', retryFn);
       document.getElementById('result-discard-btn').addEventListener('click', discardInvoice);
     }
+  }
+
+  function retryInvoice() {
+    // mappingData/mappingState were already re-seeded with the
+    // last-submitted values when this post_failed status first came in
+    // (see handleInvoiceStatusChange) -- reopen the review screen on
+    // them. updateConfirmButtonState() is called explicitly because
+    // nothing else does after a plain render (it's normally only
+    // triggered reactively by picking a party/item) -- without it the
+    // Confirm button would sit disabled despite everything already
+    // being filled in from the prior attempt.
+    renderMappingScreen();
+    updateConfirmButtonState();
+    document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('scan-step-review').classList.add('active');
+    document.getElementById('invoice-upload-title').textContent = 'Review Invoice';
+    // Re-subscribe -- showInvoiceResult tore the live listener down when
+    // the error first showed; without it, tapping Confirm again would
+    // write 'confirmed' but nothing would be watching for the PC's
+    // response.
+    listenForInvoiceUpdates(scanCurrentInvoiceId);
   }
 
   // ---- Mapping / picker rendering ----
@@ -8271,6 +8328,9 @@
       stmtActivateStep('stmt-step-review');
       document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
     } else if (status === 'failed') {
+      // Raw PDF-processing failure, before review -- no confirmed_transactions
+      // exist yet to retry into, so no retry callback here (same treatment
+      // as the invoice flow's equivalent 'failed' branch).
       showStatementResult(false, 'Processing failed', data.error || 'Unknown error');
     } else if (status === 'needs_password') {
       stmtActivateStep('stmt-step-password');
@@ -8284,11 +8344,30 @@
     } else if (status === 'posted') {
       showStatementResult(true, 'Posted to Tally', data.post_message || 'Vouchers were created in Tally.');
     } else if (status === 'post_failed') {
-      showStatementResult(false, 'Posting failed', data.error || 'Unknown error');
+      // Preserve reviewable state so retryStatement() can reopen the review
+      // screen with what was last submitted -- confirmed_transactions only
+      // carries the final {date, narration, instrument, amount,
+      // voucher_type} shape, so the review-UI-only flags
+      // (manuallyRemoved/dateExcluded/possible_duplicate) are defaulted
+      // fresh, same as a brand new statement with nothing excluded.
+      stmtReviewData = data;
+      stmtState = {
+        transactions: (data.confirmed_transactions || data.transactions || []).map(t => ({
+          date: t.date,
+          narration: t.narration,
+          instrument: t.instrument,
+          amount: t.amount,
+          voucher_type: t.voucher_type,
+          manuallyRemoved: false,
+          dateExcluded: false,
+          possible_duplicate: !!t.possible_duplicate,
+        })),
+      };
+      showStatementResult(false, 'Posting failed', data.error || 'Unknown error', retryStatement);
     }
   }
 
-  function showStatementResult(success, title, detail) {
+  function showStatementResult(success, title, detail, retryFn = null) {
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     stmtActivateStep('stmt-step-result');
     document.getElementById('statement-upload-title').textContent = success ? 'Done' : 'Error';
@@ -8298,11 +8377,28 @@
         <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
         <div class="detail">${escapeHtml(detail || '')}</div>
       </div>
-      ${success ? '' : '<button type="button" class="map-discard-btn" id="stmt-result-discard-btn">Delete from queue</button>'}
+      ${success ? '' : `
+        ${retryFn ? '<button type="button" class="map-confirm-btn" id="stmt-result-retry-btn">Edit &amp; Retry</button>' : ''}
+        <button type="button" class="map-discard-btn" id="stmt-result-discard-btn">Delete from queue</button>
+      `}
     `;
     if (!success) {
+      if (retryFn) document.getElementById('stmt-result-retry-btn').addEventListener('click', retryFn);
       document.getElementById('stmt-result-discard-btn').addEventListener('click', discardStatement);
     }
+  }
+
+  function retryStatement() {
+    // Re-subscribe the live listener (showStatementResult tore it down),
+    // then re-render the review screen from the reconstructed stmtState.
+    // applyStatementDateRange({from:null, to:null}) both recomputes
+    // dateExcluded (nothing excluded, since confirmed_transactions is
+    // already the final filtered set) and calls renderStatementReviewScreen()
+    // internally -- same single-call pattern used by ready_for_review above.
+    listenForStatementUpdates(stmtCurrentId);
+    applyStatementDateRange({ from: null, to: null });
+    stmtActivateStep('stmt-step-review');
+    document.getElementById('statement-upload-title').textContent = 'Review Bank Statement';
   }
 
   async function discardStatement() {
@@ -8656,6 +8752,22 @@
     } else if (status === 'posted') {
       showVoucherResult(true, 'Posted to Tally', data.post_message || 'Voucher was created in Tally.');
     } else if (status === 'post_failed') {
+      // Re-seed voucherReviewData/voucherEdit from the last-submitted
+      // values (handle_confirmed_bank_voucher only ever .update()s
+      // status/error onto this node, never overwriting the rest -- see
+      // tally_firebase_sync_v2.py -- so `data` here still carries
+      // exactly what was posted) so Retry below can reopen the review
+      // screen pre-filled with what actually failed, letting DJ fix a
+      // typo'd ledger name or wrong amount before trying again instead
+      // of only being able to delete and lose the transaction entirely.
+      voucherReviewData = data;
+      voucherEdit = {
+        voucher_type: data.voucher_type,
+        amount: data.amount,
+        dr_ledger: data.dr_ledger,
+        cr_ledger: data.cr_ledger,
+        narration: data.narration || '',
+      };
       showVoucherResult(false, 'Posting failed', data.error || 'Unknown error');
     }
   }
@@ -8670,11 +8782,29 @@
         <div style="font-weight:700; font-size:16px;">${escapeHtml(title)}</div>
         <div class="detail">${escapeHtml(detail || '')}</div>
       </div>
-      ${success ? '' : '<button type="button" class="map-discard-btn" id="voucher-result-discard-btn">Delete from queue</button>'}
+      ${success ? '' : `
+        <button type="button" class="map-confirm-btn" id="voucher-result-retry-btn">Edit &amp; Retry</button>
+        <button type="button" class="map-discard-btn" id="voucher-result-discard-btn">Delete from queue</button>
+      `}
     `;
     if (!success) {
+      document.getElementById('voucher-result-retry-btn').addEventListener('click', retryVoucher);
       document.getElementById('voucher-result-discard-btn').addEventListener('click', discardVoucher);
     }
+  }
+
+  function retryVoucher() {
+    // voucherReviewData/voucherEdit were already re-seeded with the
+    // last-submitted values when this post_failed status first came in
+    // (see handleVoucherStatusChange) -- just reopen the review screen
+    // on them. Re-subscribes because showVoucherResult tore the live
+    // listener down when the error first showed; without it, tapping
+    // Confirm again would write 'confirmed' but nothing would be
+    // watching for the PC's response.
+    listenForVoucherUpdates(voucherCurrentId);
+    renderVoucherReviewScreen();
+    voucherActivateStep('voucher-step-review');
+    document.getElementById('bank-voucher-review-title').textContent = 'Review Bank Transaction';
   }
 
   async function discardVoucher() {
