@@ -35,6 +35,25 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
 
+  /* Fix for a pre-existing iPhone Home-Screen-install bug DJ reported
+     (Sept 2026): the app was a few pixels wider than the actual screen,
+     so a right-swipe on the Home Screen app icon (standalone/fullscreen
+     mode) would scroll the whole page sideways and reveal a stray gap --
+     never noticed in a normal Safari tab, where that same gesture mostly
+     triggers back/forward-swipe navigation instead. Whatever the exact
+     pixel culprit is (a fixed-position element, a rounding edge case --
+     nothing in the CSS obviously stands out and it isn't reproducible
+     from here without an actual iPhone), the app was never meant to
+     scroll horizontally as a whole page in the first place -- every
+     PLACE that intentionally scrolls sideways (month bars, filter chips,
+     etc.) already has its own explicit overflow-x: auto on its own
+     specific container, scoped separately from this. So this is a safe,
+     standard mobile-web guard: it removes the visible symptom (the page
+     itself can no longer be dragged sideways) without touching any of
+     those inner scrollable strips at all.
+  */
+  html, body { overflow-x: hidden; }
+
   body {
     background: var(--paper);
     color: var(--ink);
@@ -2263,20 +2282,83 @@
     preloadAllSections(currentCompany);
   }
 
-  // Kicks off ensureSectionLoaded() for every LAZY_PATHS section at once,
-  // right after the app opens or the company is switched -- by the time
-  // the person actually opens Ledgers/Daybook/Stock/etc., the data is
-  // either already sitting in companyData (this preload already finished,
-  // possibly from cache instantly) or already mid-flight, in which case
-  // ensureSectionLoaded's own de-dupe (state[pathKey] === 'loading')
-  // means opening the section doesn't start a second redundant fetch, it
-  // just renders once this one arrives. Deliberately fire-and-forget --
-  // ensureSectionLoaded's fetches are async and update companyData/render()
-  // on their own as they land, so nothing here needs to be awaited, and a
-  // slow or failed section (e.g. Tally hasn't synced stock_items yet)
-  // never blocks the app from opening or any other section from working.
-  function preloadAllSections(companyKey) {
-    ensureSectionLoaded(companyKey, ...Object.keys(LAZY_PATHS));
+  // PERFORMANCE FIX (Sept 2026): this used to fire every LAZY_PATHS
+  // section's fetch at once (ensureSectionLoaded(companyKey, ...every
+  // key)). On a fast connection ten simultaneous requests is harmless,
+  // but on a slow one -- DJ's is around 29 KB/s -- they all share the
+  // same thin pipe, so the sections he actually opens constantly
+  // (Ledgers, Daybook) ended up crawling along at the same throttled
+  // rate as ones he rarely needs (Balance Sheet, Party Details), just
+  // because all ten were downloading at once. Now the priority tier gets
+  // the connection to itself and finishes first; everything else still
+  // follows right after in the background, just a beat later, instead
+  // of racing the priority sections for scraps of bandwidth.
+  //
+  // Adjust PRELOAD_PRIORITY if a different section turns out to be what
+  // gets opened most in practice -- this is a guess (Ledgers and Daybook
+  // seemed the likeliest candidates), not something measured.
+  const PRELOAD_PRIORITY = ['ledgers', 'daybook'];
+
+  // Mirrors ensureSectionLoaded's own per-section logic (check cache,
+  // respect an in-flight 'loading' state, save the result once it
+  // arrives) but returns a Promise that resolves once THIS section's
+  // fetch actually completes, so preloadAllSections can await just the
+  // priority tier before moving on. ensureSectionLoaded itself is left
+  // completely untouched -- roughly a dozen other call sites throughout
+  // this file depend on its exact synchronous true/false return, and
+  // changing that contract to support this one caller isn't worth that
+  // risk.
+  async function preloadSection(companyKey, pathKey) {
+    const state = sectionLoadState[companyKey] || (sectionLoadState[companyKey] = {});
+    if (state[pathKey] === 'loaded' || state[pathKey] === 'cached' || state[pathKey] === 'loading') {
+      // Already being handled -- either a previous preload call already
+      // has it, or the person tapped into this section themselves before
+      // preload got to it. Either way, don't start a second fetch.
+      return;
+    }
+    const cached = loadFromCache(companyKey, pathKey);
+    if (cached) {
+      companyData[companyKey] = companyData[companyKey] || {};
+      companyData[companyKey][pathKey] = cached.data;
+      state[pathKey] = 'cached';
+      if (companyKey === currentCompany) render();
+      // Still worth refreshing in the background even though cached data
+      // is already showing -- fall through instead of returning early.
+    }
+    state[pathKey] = state[pathKey] === 'cached' ? 'cached' : 'loading';
+    const path = LAZY_PATHS[pathKey];
+    try {
+      const snapshot = await get(ref(db, `companies/${companyKey}/${path}`));
+      state[pathKey] = 'loaded';
+      companyData[companyKey] = companyData[companyKey] || {};
+      companyData[companyKey][pathKey] = snapshot.val();
+      saveToCache(companyKey, pathKey, snapshot.val());
+      if (companyKey === currentCompany) { render(); refreshOpenOverlays(); }
+    } catch (err) {
+      state[pathKey] = state[pathKey] === 'cached' ? 'cached' : null; // allow retry, unless cache still covers it
+      console.error(`Failed to preload ${pathKey} for ${companyKey}:`, err);
+      if (companyKey === currentCompany) render();
+    }
+  }
+
+  // Kicks off loading for every LAZY_PATHS section, right after the app
+  // opens or the company is switched -- by the time the person actually
+  // opens Ledgers/Daybook/Stock/etc., the data is either already sitting
+  // in companyData (this preload already finished, possibly from cache
+  // instantly) or already mid-flight, in which case ensureSectionLoaded's
+  // own de-dupe (state[pathKey] === 'loading') means opening the section
+  // doesn't start a second redundant fetch, it just renders once this one
+  // arrives. Deliberately fire-and-forget from showApp()'s point of view
+  // -- nothing here needs to be awaited by the caller, and a slow or
+  // failed section (e.g. Tally hasn't synced stock_items yet) never
+  // blocks the app from opening or any other section from working; the
+  // await below only sequences the two tiers against EACH OTHER.
+  async function preloadAllSections(companyKey) {
+    for (const pathKey of PRELOAD_PRIORITY) {
+      await preloadSection(companyKey, pathKey);
+    }
+    const rest = Object.keys(LAZY_PATHS).filter(k => !PRELOAD_PRIORITY.includes(k));
+    ensureSectionLoaded(companyKey, ...rest);
   }
 
   // Firebase Auth persists the signed-in session itself (survives reload
