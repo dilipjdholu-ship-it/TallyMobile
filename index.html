@@ -898,6 +898,23 @@
     border: 1.5px solid var(--border); font-size: 13.5px;
   }
   .map-field-input.spaced { margin-bottom: 10px; }
+  /* FIX (Sept 2026): DJ reported the browser offering to "save password"
+     when posting from the review/reallocation screens -- root cause was
+     THIS field (the PDF-unlock password for a protected bank statement),
+     not the real login password. It's type="password" so it's masked on
+     screen, but that also makes every major mobile browser register it
+     with their actual credential-manager subsystem -- autocomplete="off"
+     is deliberately IGNORED on type="password" fields by Chrome/Safari/
+     Firefox for security reasons, so that alone can't opt out. Once
+     typed into, a browser can offer to save it later, at whatever the
+     next "significant" action on the page is (tapping Confirm & Post
+     elsewhere counts), which is what looked like it was tied to
+     posting. This isn't a real account credential, so type="text" +
+     this CSS (-webkit-text-security: a WebKit/Chromium-supported way to
+     visually mask input as dots WITHOUT it being a real password field)
+     keeps the on-screen masking DJ would expect while staying
+     completely outside any browser's credential-saving heuristics. */
+  #stmt-password-input { -webkit-text-security: disc; text-security: disc; }
   .map-field-warn { font-size: 12px; color: var(--amber); margin-top: 6px; }
   .new-item-card { border: 1.5px solid var(--rust); border-radius: 9px; padding: 12px; margin-top: 6px; }
   .new-item-card-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
@@ -1524,7 +1541,9 @@
           <div class="map-section">
             <div class="map-section-title">Password Required</div>
             <p class="totals-card-hint" id="stmt-password-hint" style="margin-bottom:10px;">This PDF is password-protected. Enter the password to continue.</p>
-            <input type="password" id="stmt-password-input" class="map-field-input spaced" placeholder="PDF password" autocomplete="off">
+            <!-- type="text" + -webkit-text-security (not type="password") --
+                 see the #stmt-password-input CSS rule below for why. -->
+            <input type="text" id="stmt-password-input" class="map-field-input spaced" placeholder="PDF password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
             <button type="button" class="map-confirm-btn" id="stmt-password-submit-btn">Unlock & Continue</button>
           </div>
           <button type="button" class="map-discard-btn" id="stmt-password-discard-btn">Discard this statement</button>
