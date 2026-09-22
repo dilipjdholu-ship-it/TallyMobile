@@ -5859,6 +5859,12 @@
   // time through the picker, only an exact existing-ledger match is safe
   // to fire off in bulk). See computeLedgerAllocBulkMatches.
   let ledgerAllocBulkMatches = [];
+  // Sept 2026: snapshot of the currently-rendered Pending-view list, kept
+  // so the picker screen's Save button can jump straight to the next
+  // voucher still needing a ledger instead of always bouncing back to
+  // this list -- see advanceToNextReallocationOrExit. Empty/stale outside
+  // the Pending view, where nothing is clickable into the picker anyway.
+  let ledgerAllocLastPendingVouchers = [];
 
   function openLedgerAllocationOverlay() {
     ledgerAllocPickVoucher = null;
@@ -6246,6 +6252,10 @@
     ledgerAllocPickVoucher = null;
     document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
     document.getElementById('ledger-alloc-step-list').classList.add('active');
+    // Undoes the "· N left" the pick step may have set on this shared
+    // title (see openLedgerAllocPick) -- otherwise it stays stuck showing
+    // a stale count once back on the list.
+    document.getElementById('ledger-allocation-title').textContent = 'Ledger Allocation';
   }
 
   // ===== Ledger Allocation: list <-> pick step history + scroll =====
@@ -6285,6 +6295,28 @@
       history.back(); // popstate handler above calls returnToLedgerAllocList()
     } else {
       returnToLedgerAllocList();
+    }
+  }
+
+  // Sept 2026: picks the next voucher from the Pending-view list snapshot
+  // that was on screen when this review session started (see
+  // ledgerAllocLastPendingVouchers), skipping the one just handled and
+  // anything that already picked up an in-flight request since that
+  // snapshot was taken -- the always-live pending_ledger_reallocations
+  // listener (see listenToCurrentCompany) can beat this to it for a
+  // voucher DJ handled moments ago. Falls back to the ordinary "return to
+  // list" behavior once nothing's left.
+  async function advanceToNextReallocationOrExit(justHandledVoucherId) {
+    const data = companyData[currentCompany] || {};
+    const remaining = ledgerAllocLastPendingVouchers.filter(v => {
+      if (v.voucher_id === justHandledVoucherId) return false;
+      const req = findReallocationRequest(data, v.voucher_id);
+      return !(req && (req.status === 'requested' || req.status === 'posted' || req.status === 'waiting_for_tally'));
+    });
+    if (remaining.length > 0) {
+      await openLedgerAllocPick(remaining[0], { replaceHistory: true, remainingCount: remaining.length });
+    } else {
+      goBackFromLedgerAllocPick();
     }
   }
 
@@ -6359,7 +6391,13 @@
     if (isPendingView || isPostingView) {
       rawList = getVouchersNeedingAllocation(data).filter(v => {
         const req = findReallocationRequest(data, v.voucher_id);
-        const inFlight = !!(req && (req.status === 'requested' || req.status === 'posted'));
+        // waiting_for_tally counts as in-flight too (Sept 2026) -- it's
+        // a saved, submitted request just like 'requested', only queued
+        // because Tally happened to be closed at the moment the PC-side
+        // poller tried it. Without this it would fall back into Pending
+        // as if nothing had been saved, and be openable again for a
+        // duplicate submission.
+        const inFlight = !!(req && (req.status === 'requested' || req.status === 'posted' || req.status === 'waiting_for_tally'));
         return isPostingView ? inFlight : !inFlight;
       });
     } else {
@@ -6371,6 +6409,8 @@
     const vouchers = filterAllocVouchers(rawList, filter)
       .slice()
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    ledgerAllocLastPendingVouchers = isPendingView ? vouchers : [];
 
     // Bulk auto-post candidates -- see ledgerAllocBulkMatches' declaration
     // for the (deliberately narrow) matching rule. Scoped to the list
@@ -6412,6 +6452,12 @@
         const req = findReallocationRequest(data, v.voucher_id);
         if (req && req.status === 'requested') {
           statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posting…</span>';
+        } else if (req && req.status === 'waiting_for_tally') {
+          // Sept 2026: distinct from plain "Posting…" -- Tally's actually
+          // closed on the PC right now, and this will post automatically
+          // the moment it's back, same wording as the bank voucher/
+          // invoice screens for the same underlying status.
+          statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Waiting for Tally…</span>';
         } else if (req && req.status === 'posted') {
           statusHtml = '<span class="alloc-voucher-status alloc-status-pending">Posted — refreshing…</span>';
         }
@@ -6459,14 +6505,15 @@
         const voucherId = row.dataset.voucherId;
         const voucher = vouchers.find(v => v.voucher_id === voucherId);
         if (!voucher) return;
-        // A voucher with a request already in flight (posting, posted-
-        // awaiting-resync, or failed) isn't re-openable for a fresh pick
-        // -- a 'requested'/'posted' one would race the PC-side handler,
-        // and 'post_failed' is surfaced with its error right in the list
+        // A voucher with a request already in flight (posting, waiting
+        // for Tally to reopen, posted-awaiting-resync, or failed) isn't
+        // re-openable for a fresh pick -- a 'requested'/'posted'/
+        // 'waiting_for_tally' one would race the PC-side handler, and
+        // 'post_failed' is surfaced with its error right in the list
         // (title attribute) rather than routing into the picker again,
         // since the same submit would very likely just fail the same way.
         const req = findReallocationRequest(data, voucherId);
-        if (req && (req.status === 'requested' || req.status === 'posted')) return;
+        if (req && (req.status === 'requested' || req.status === 'posted' || req.status === 'waiting_for_tally')) return;
         openLedgerAllocPick(voucher);
       });
     });
@@ -6750,15 +6797,28 @@
     }
   }
 
-  async function openLedgerAllocPick(voucher) {
+  async function openLedgerAllocPick(voucher, { replaceHistory = false, remainingCount = null } = {}) {
     // Save where the list was scrolled to, and give this step its own
     // back-button stop -- see the two functions' comments near
-    // ledgerAllocGoToList for why both matter here.
-    ledgerAllocListScrollTop = document.getElementById('ledger-allocation-overlay').scrollTop;
-    pushLedgerAllocPickState();
+    // ledgerAllocGoToList for why both matter here. Skipped when auto-
+    // advancing straight to the next voucher after a save (replaceHistory
+    // -- see advanceToNextReallocationOrExit): the list's scroll position
+    // was already captured when this review session started, and this
+    // step's history entry is REPLACED rather than stacked, so the back
+    // button still only takes DJ back to the list after any number of
+    // vouchers handled in one sitting, not back through each one already
+    // done.
+    if (replaceHistory) {
+      history.replaceState({ overlay: 'ledger-allocation-overlay', allocPick: true }, '', '');
+    } else {
+      ledgerAllocListScrollTop = document.getElementById('ledger-allocation-overlay').scrollTop;
+      pushLedgerAllocPickState();
+    }
     ledgerAllocPickVoucher = voucher;
     document.querySelectorAll('#ledger-allocation-overlay .alloc-step').forEach(s => s.classList.remove('active'));
     document.getElementById('ledger-alloc-step-pick').classList.add('active');
+    document.getElementById('ledger-allocation-title').textContent =
+      remainingCount > 1 ? `Ledger Allocation · ${remainingCount} left` : 'Ledger Allocation';
 
     document.getElementById('ledger-alloc-pick-vnum').textContent =
       `${voucher.voucher_type || ''} ${voucher.voucher_number || ''}`.trim();
@@ -6936,7 +6996,14 @@
         if (pan) payload.new_ledger_pan = pan;
       }
       await set(reqRef, payload);
-      goBackFromLedgerAllocPick();
+      // Sept 2026: the decision is saved the instant this write succeeds
+      // -- posting to Tally happens separately in the background (works
+      // whether or not Tally's even reachable right now, see
+      // handle_ledger_reallocation_request in tally_firebase_sync_v2.py)
+      // -- so jump straight to the next voucher still needing a ledger
+      // instead of always bouncing back to the list, letting DJ clear a
+      // whole backlog in one sitting.
+      await advanceToNextReallocationOrExit(voucher.voucher_id);
     } catch (err) {
       console.error('Could not submit ledger reallocation:', err);
       document.getElementById('ledger-alloc-pick-error').textContent =
@@ -9039,6 +9106,18 @@
     } else if (status === 'confirmed') {
       voucherActivateStep('voucher-step-progress');
       document.getElementById('voucher-progress-text').textContent = 'Posting to Tally…';
+    } else if (status === 'waiting_for_tally') {
+      // Sept 2026: matches the invoice-scan screen's identical message
+      // for the same underlying status -- written by the PC-side poller
+      // (see handle_confirmed_bank_voucher in tally_firebase_sync_v2.py)
+      // the moment it notices Tally's closed, instead of leaving this on
+      // an indefinite, unexplained "Posting to Tally…" spinner. Nothing
+      // further is needed from here -- the poller retries automatically
+      // every few seconds and this same listener will pick up 'posted'
+      // or 'post_failed' whenever that happens.
+      voucherActivateStep('voucher-step-progress');
+      document.getElementById('voucher-progress-text').textContent =
+        'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
     } else if (status === 'posted') {
       showVoucherResult(true, 'Posted to Tally', data.post_message || 'Voucher was created in Tally.');
     } else if (status === 'post_failed') {
@@ -9097,6 +9176,57 @@
     document.getElementById('bank-voucher-review-title').textContent = 'Review Bank Transaction';
   }
 
+  // Sept 2026: lets DJ tap through several queued vouchers back-to-back
+  // (Confirm or Discard one, land straight on the next one needing
+  // review) instead of being bounced back to the Review Queue list after
+  // every single item -- see the matching addition for Ledger Allocation
+  // below. Deliberately a one-shot get() rather than a live subscription
+  // to the whole pending_bank_vouchers node: this screen already has its
+  // own live listener on the ONE voucher being reviewed (listenForVoucher
+  // Updates), and a second, wider listener running alongside it would
+  // just be extra complexity for something only needed at the moment of
+  // advancing.
+  async function findNextVoucherToReview(excludeId) {
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/pending_bank_vouchers`));
+      const all = snap.val() || {};
+      const ids = Object.keys(all).filter(id => id !== excludeId && all[id] && all[id].status === 'pending_review');
+      // Oldest-detected first -- works through the backlog in the order
+      // it built up, same as it would if DJ opened them one at a time
+      // from the Review Queue (which lists newest-first, so the oldest
+      // unreviewed item is the one that's been waiting longest).
+      ids.sort((a, b) => (all[a].detected_at || '').localeCompare(all[b].detected_at || ''));
+      return ids.length ? { id: ids[0], data: all[ids[0]], remaining: ids.length } : null;
+    } catch (err) {
+      console.error('Could not check for the next voucher to review:', err);
+      return null;
+    }
+  }
+
+  async function advanceToNextVoucherOrExit(justHandledId) {
+    if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
+    const next = await findNextVoucherToReview(justHandledId);
+    if (!next) {
+      resetVoucherFlow();
+      goBackFromOverlay();
+      return;
+    }
+    voucherReviewData = next.data;
+    voucherEdit = {
+      voucher_type: next.data.voucher_type,
+      amount: next.data.amount,
+      dr_ledger: next.data.dr_ledger,
+      cr_ledger: next.data.cr_ledger,
+      narration: next.data.narration || '',
+    };
+    voucherCurrentId = next.id;
+    renderVoucherReviewScreen();
+    voucherActivateStep('voucher-step-review');
+    document.getElementById('bank-voucher-review-title').textContent =
+      next.remaining > 1 ? `Review Bank Transaction · ${next.remaining} left` : 'Review Bank Transaction';
+    listenForVoucherUpdates(next.id);
+  }
+
   async function discardVoucher() {
     if (!confirm('Discard this bank transaction? It will NOT be posted to Tally, and this cannot be undone.')) return;
     if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
@@ -9113,6 +9243,10 @@
         }
         await remove(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${idToDelete}`));
       }
+      // Sept 2026: move straight to the next item waiting for review
+      // instead of always bouncing back to the queue list.
+      await advanceToNextVoucherOrExit(idToDelete);
+      return;
     } catch (err) {
       console.error('Failed to discard bank voucher:', err);
       alert('Could not fully discard this transaction -- check your connection and try again from the Review Queue.');
@@ -9245,11 +9379,22 @@
       cr_ledger: e.cr_ledger,
       narration: e.narration,
     };
+    const savedId = voucherCurrentId;
     voucherActivateStep('voucher-step-progress');
-    document.getElementById('voucher-progress-text').textContent = 'Posting to Tally…';
+    document.getElementById('voucher-progress-text').textContent = 'Saving…';
     try {
-      await set(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${voucherCurrentId}`),
+      await set(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${savedId}`),
         Object.assign({}, voucherReviewData, payload));
+      // Sept 2026: the decision is saved the instant this write succeeds
+      // -- posting to Tally happens separately in the background (see
+      // tally_firebase_sync_v2.py's poller) and works whether or not
+      // Tally's even reachable right now. Move straight on to the next
+      // voucher needing review instead of parking here waiting for that
+      // to resolve, so DJ can clear a whole backlog in one sitting. If
+      // this one fails to post later, it still shows up flagged as
+      // "Error" back in the Review Queue -- nothing is silently lost by
+      // moving on.
+      await advanceToNextVoucherOrExit(savedId);
     } catch (err) {
       console.error('Failed to save confirmation:', err);
       showVoucherResult(false, 'Could not save your confirmation', err.message || String(err));
