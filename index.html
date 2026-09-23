@@ -7073,11 +7073,19 @@
     const voucherItems = Object.entries(queueVouchers)
       .filter(([, d]) => d.status !== 'posted')
       .map(([id, d]) => ({ id, d, kind: 'voucher' }));
+    // Sept 2026: vouchers prefer txn_datetime (the bank's OWN stated
+    // transaction time, parsed from the alert email) over detected_at
+    // (when the Gmail poller happened to find the message) -- several
+    // transactions that arrive in the same ~3-minute poll window used to
+    // all get the same detected_at, making it impossible to tell their
+    // real order apart here even though the bank clearly did. Older
+    // records from before this field existed just fall back to
+    // detected_at as before.
+    const queueSortKey = (d) => d.uploaded_at || d.txn_datetime || d.detected_at || '';
     const all = [...invItems, ...stmtItems, ...voucherItems].sort((a, b) =>
-      // Vouchers use detected_at (when the Gmail alert was found) since
-      // they have no uploaded_at -- both are ISO strings, so this still
-      // sorts everything newest-first on one shared timeline.
-      ((b.d.uploaded_at || b.d.detected_at) || '').localeCompare((a.d.uploaded_at || a.d.detected_at) || ''));
+      // All ISO-ish strings, so this still sorts everything newest-first
+      // on one shared timeline.
+      queueSortKey(b.d).localeCompare(queueSortKey(a.d)));
 
     const body = document.getElementById('review-queue-body');
     if (all.length === 0) {
@@ -7098,7 +7106,8 @@
         : kind === 'voucher'
         ? `${d.voucher_type || 'Bank'} · ${formatCurrency(parseAmt(d.amount))}`
         : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
-      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at) : (d.detected_at ? formatDateTime(d.detected_at) : '');
+      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at)
+        : (d.txn_datetime ? formatDateTime(d.txn_datetime) : (d.detected_at ? formatDateTime(d.detected_at) : ''));
       html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
         <div>
           <div class="name">${icon} ${escapeHtml(title)}</div>
@@ -9191,11 +9200,14 @@
       const snap = await get(ref(db, `companies/${currentCompany}/pending_bank_vouchers`));
       const all = snap.val() || {};
       const ids = Object.keys(all).filter(id => id !== excludeId && all[id] && all[id].status === 'pending_review');
-      // Oldest-detected first -- works through the backlog in the order
-      // it built up, same as it would if DJ opened them one at a time
-      // from the Review Queue (which lists newest-first, so the oldest
-      // unreviewed item is the one that's been waiting longest).
-      ids.sort((a, b) => (all[a].detected_at || '').localeCompare(all[b].detected_at || ''));
+      // Oldest-first by the bank's own txn_datetime when available (falls
+      // back to detected_at for older records queued before that field
+      // existed) -- works through the backlog in the order the bank
+      // actually processed the transactions, not just the order the
+      // Gmail poller happened to find them in, so reviewing straight
+      // through this queue naturally confirms them in the right order.
+      const nextSortKey = (id) => all[id].txn_datetime || all[id].detected_at || '';
+      ids.sort((a, b) => nextSortKey(a).localeCompare(nextSortKey(b)));
       return ids.length ? { id: ids[0], data: all[ids[0]], remaining: ids.length } : null;
     } catch (err) {
       console.error('Could not check for the next voucher to review:', err);
@@ -9279,7 +9291,17 @@
         <div class="label">Date</div>
         <div class="value mono">${escapeHtml(formatVoucherDate(d.date))}</div>
       </div>
+      ${d.txn_time ? `<div class="summary-chip">
+        <div class="label">Time</div>
+        <div class="value mono">${escapeHtml(d.txn_time)}</div>
+      </div>` : ''}
     </div>`;
+    // txn_time is the bank's own stated transaction time (from the alert
+    // email), not when this device happened to see/review it -- shown
+    // here so DJ can tell same-day transactions apart and post them to
+    // Tally in the same order the bank statement shows them. Guarded
+    // with d.txn_time so older pending vouchers (queued before this field
+    // existed) still render fine without an empty "Time" chip.
 
     html += `<div class="map-section">
       <div class="map-section-title">Type</div>
