@@ -2056,6 +2056,26 @@
       // showing the app from a single place whether this is a fresh
       // sign-in or a restored session from a previous visit.
       await signInWithEmailAndPassword(auth, email, password);
+      // Sept 2026, DJ's report: Chrome's "Save password?" bubble was
+      // popping up on unrelated screens (e.g. Ledger Allocation's "Save
+      // to Tally") instead of right here at login. Cause: this sign-in
+      // goes through Firebase's JS SDK, not a real <form> POST, so
+      // Chrome has no normal submission event to key its prompt off of
+      // -- it falls back to guessing, and defers the bubble to whatever
+      // later action looks like a "commit" point. Calling
+      // navigator.credentials.store() the moment sign-in actually
+      // succeeds is the standard fix: it tells Chrome explicitly, right
+      // now, that this is the credential to offer saving, so the prompt
+      // shows up here instead of ambushing DJ mid-task later. Not fatal
+      // if unsupported (older Safari/Firefox, or the PasswordCredential
+      // guard fails) -- Chrome just won't offer to save that one time.
+      if (window.PasswordCredential && navigator.credentials) {
+        try {
+          await navigator.credentials.store(new PasswordCredential({ id: email, password, name: email }));
+        } catch (credErr) {
+          console.warn('Could not offer to save credential:', credErr);
+        }
+      }
       // Mark the moment of a REAL credential check -- this is what
       // SESSION_MAX_AGE_MS counts from, not app-open/reload, which
       // would otherwise reset the clock every time the app is merely
@@ -2269,6 +2289,13 @@
 
   function afterLogin() {
     document.getElementById('login-screen').style.display = 'none';
+    // Belt-and-suspenders alongside the navigator.credentials.store()
+    // call in attemptLogin(): the login screen never leaves the DOM (it's
+    // just hidden), so the typed password would otherwise sit in
+    // #password-input's value for the rest of the session. Clearing it
+    // here removes any chance of Chrome re-noticing that field later and
+    // re-triggering a save-password guess off some unrelated action.
+    document.getElementById('password-input').value = '';
     const savedCompany = localStorage.getItem(COMPANY_SELECTION_KEY);
     if (savedCompany && COMPANIES.some(c => c.key === savedCompany)) {
       currentCompany = savedCompany;
@@ -6092,6 +6119,107 @@
     return !!(narration && narration.toUpperCase().includes('GOOGLEINDIADIGIT'));
   }
 
+  // ===== Creditor ledger narration matching (Sept 2026, DJ's request) =====
+  // The ONE implementation of this matching logic -- originally built
+  // twice (once here, once as party_ledger_match.py in Python for the
+  // bank-statement and bank-voucher-email pipelines), but DJ asked to
+  // consolidate down to client-side only, same pattern as the existing
+  // GPay-narration matching (isGpayNarration/findGpaySuggestion) already
+  // used. All three screens that suggest a creditor ledger from a bank
+  // narration -- Ledger Allocation, the bank-statement review screen, and
+  // the bank-voucher-email review screen -- call the functions here
+  // directly; nothing computes this server-side anymore.
+  const CREDITOR_MATCH_THRESHOLD = 0.72; // same "looser matching" bar DJ chose
+
+  function extractCreditorCandidateName(narration) {
+    if (!narration) return null;
+    narration = narration.trim();
+    if (!narration) return null;
+
+    if (/\bNEFT\b/i.test(narration) && narration.includes('/')) {
+      const parts = narration.split('/').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 3) return parts[parts.length - 1];
+      return null;
+    }
+
+    const upper = narration.toUpperCase();
+    if (upper.startsWith('UPI') || upper.startsWith('IMPS')) return null;
+
+    if (!narration.includes('/')) {
+      const stripped = narration.replace(/^-+/, '').trim();
+      return stripped || null;
+    }
+    return null;
+  }
+
+  function _creditorNormalize(name) {
+    return name.trim().toUpperCase().replace(/\s+/g, ' ');
+  }
+
+  function _creditorSquish(name) {
+    return name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  // Same edit-distance-free ratio difflib.SequenceMatcher gives for the
+  // common case of two mostly-similar strings -- good enough to mirror
+  // the Python side's behavior without pulling in a library for it.
+  function _similarityRatio(a, b) {
+    if (a === b) return 1;
+    if (!a.length || !b.length) return 0;
+    // Longest common subsequence length via classic DP, then
+    // difflib's own ratio formula: 2*M / T (M = matching chars, T = total length).
+    const m = a.length, n = b.length;
+    const dp = new Array(n + 1).fill(0);
+    let matches = 0;
+    for (let i = 1; i <= m; i++) {
+      let prevDiag = 0;
+      for (let j = 1; j <= n; j++) {
+        const temp = dp[j];
+        if (a[i - 1] === b[j - 1]) {
+          dp[j] = prevDiag + 1;
+        } else {
+          dp[j] = Math.max(dp[j], dp[j - 1]);
+        }
+        prevDiag = temp;
+      }
+    }
+    matches = dp[n];
+    return (2 * matches) / (m + n);
+  }
+
+  function guessCreditorLedger(narration, ledgerNames, minLen = 4) {
+    const candidate = extractCreditorCandidateName(narration);
+    if (!candidate || candidate.length < minLen) return null;
+
+    const candNorm = _creditorNormalize(candidate);
+    const candSquished = _creditorSquish(candidate);
+    if (candSquished.length < minLen) return null;
+
+    let bestName = null, bestScore = 0;
+    for (const ledgerName of ledgerNames) {
+      if (!ledgerName) continue;
+      const ledNorm = _creditorNormalize(ledgerName);
+      const ledSquished = _creditorSquish(ledgerName);
+      if (!ledSquished) continue;
+
+      let score;
+      if (candNorm === ledNorm || candSquished === ledSquished) {
+        score = 1;
+      } else if ((ledSquished.startsWith(candSquished) || candSquished.startsWith(ledSquished))
+                 && candSquished.length >= minLen && ledSquished.length >= minLen) {
+        score = 0.9;
+      } else {
+        score = _similarityRatio(candSquished, ledSquished);
+      }
+      if (score > bestScore) { bestName = ledgerName; bestScore = score; }
+    }
+
+    if (bestScore >= CREDITOR_MATCH_THRESHOLD) {
+      return { name: bestName, score: Math.round(bestScore * 1000) / 1000 };
+    }
+    return null;
+  }
+
   // gpayCache holds the (already-grouped) match index for ONE company at a
   // time -- rebuilt whenever the selected company changes or a fresh CSV
   // is imported. getGpayIndexIfReady() returns null while the background
@@ -6412,11 +6540,17 @@
 
     ledgerAllocLastPendingVouchers = isPendingView ? vouchers : [];
 
+    // Sept 2026, DJ's request: computed once per render (not per row or
+    // per bulk-match call) -- used both for the list's per-row suggestion
+    // below and for computeLedgerAllocBulkMatches. See getCreditorLedgerNames.
+    const creditorLedgerNames = getCreditorLedgerNames();
+
     // Bulk auto-post candidates -- see ledgerAllocBulkMatches' declaration
     // for the (deliberately narrow) matching rule. Scoped to the list
     // exactly as currently filtered/sorted, so "Post N to Tally" never
     // touches a voucher the person can't see on screen right now.
-    ledgerAllocBulkMatches = isPendingView ? computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName) : [];
+    ledgerAllocBulkMatches = isPendingView
+      ? computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames) : [];
     renderLedgerAllocBulkButton();
 
     if (vouchers.length === 0) {
@@ -6485,6 +6619,20 @@
           // the CSS comment on .alloc-voucher-suggest-none).
           suggestHtml = '<div class="alloc-voucher-suggest-none">No match in imported GPay data for this date/amount</div>';
         }
+      } else if (isPendingView && creditorLedgerNames.length && !isGpayNarration(v.narration)) {
+        // Sept 2026, DJ's request: a second, independent suggestion
+        // source for NEFT/IB and cheque-style narrations (see
+        // guessCreditorLedger) -- entirely separate from the GPay-CSV
+        // matching above, which only ever applies to GOOGLEINDIADIGIT
+        // narrations. Unlike GPay, no "no match" line here when nothing
+        // was even attempted (a plain UPI narration to a person, say) --
+        // that would just be noise on every row that was never a
+        // creditor payment in the first place; guessCreditorLedger
+        // already returns null for those.
+        const creditorMatch = guessCreditorLedger(v.narration, creditorLedgerNames);
+        if (creditorMatch) {
+          suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(creditorMatch.name)}</div>`;
+        }
       }
       return `
         <div class="alloc-voucher-row" data-voucher-id="${escapeHtml(v.voucher_id || '')}" ${isPendingView ? '' : 'style="cursor:default;"'}>
@@ -6528,8 +6676,20 @@
   // is a materially different (riskier) action than bulk-picking among
   // ledgers that already exist, and this project has been burned before
   // by automating something that looked safe but wasn't verified first.
-  function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName) {
-    if (!gpayIndex) return [];
+  // Sundry Creditors ledger names, from the same already-synced cache
+  // fetchLedgerNames()/computeLedgerAllocBulkMatches read -- filtered to
+  // the group DJ said these will generally come from (Sept 2026). Safe
+  // to call on every render: ensureSectionLoaded is a cheap no-op once
+  // 'ledgers' is already loaded for this company.
+  function getCreditorLedgerNames() {
+    ensureSectionLoaded(currentCompany, 'ledgers');
+    const ledgers = safeArray((companyData[currentCompany] || {}).ledgers);
+    return ledgers
+      .filter(l => l.group === 'Sundry Creditors' && (l.name || '').trim())
+      .map(l => l.name.trim());
+  }
+
+  function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames) {
     // Same source the picker's "existing ledger" search uses (see
     // openLedgerAllocPick/fetchLedgerNames) -- read from the already-
     // synced cache instead of a fresh fetch so this can run synchronously
@@ -6545,12 +6705,27 @@
 
     const matches = [];
     vouchers.forEach(v => {
-      if (!v.voucher_id || !isGpayNarration(v.narration)) return;
-      const suggestion = findGpaySuggestion(gpayIndex, v.date, parseAmt(v.amount));
-      if (!suggestion || !suggestion.confident) return;
-      const existingName = byLowerName.get(suggestion.name.trim().toLowerCase());
-      if (!existingName) return;
-      matches.push({ voucher: v, ledgerName: existingName });
+      if (!v.voucher_id) return;
+      if (isGpayNarration(v.narration)) {
+        if (!gpayIndex) return;
+        const suggestion = findGpaySuggestion(gpayIndex, v.date, parseAmt(v.amount));
+        if (!suggestion || !suggestion.confident) return;
+        const existingName = byLowerName.get(suggestion.name.trim().toLowerCase());
+        if (!existingName) return;
+        matches.push({ voucher: v, ledgerName: existingName });
+      } else if (creditorLedgerNames && creditorLedgerNames.length) {
+        // Sept 2026, DJ's request: same "existing ledger only" safety
+        // rule as the GPay path above -- guessCreditorLedger already only
+        // ever returns a name from creditorLedgerNames itself (real,
+        // already-existing Sundry Creditors ledgers), so this lookup is
+        // really just re-confirming the exact stored casing/spelling for
+        // the reallocation request, not a second matching decision.
+        const creditorMatch = guessCreditorLedger(v.narration, creditorLedgerNames);
+        if (!creditorMatch) return;
+        const existingName = byLowerName.get(creditorMatch.name.trim().toLowerCase());
+        if (!existingName) return;
+        matches.push({ voucher: v, ledgerName: existingName });
+      }
     });
     return matches;
   }
@@ -6883,6 +7058,25 @@
           `${formatCurrency(Math.abs(parseAmt(voucher.amount)))}. Re-check the CSV was imported and covers this date, or search manually above.`;
         suggestChips.innerHTML = '';
         suggestBox.style.display = 'block';
+      }
+    } else {
+      // Sept 2026, DJ's request: the same idea as the GPay suggestion
+      // above, but for NEFT/IB and cheque-style narrations matched
+      // against real Sundry Creditors ledgers (see guessCreditorLedger) --
+      // entirely separate matching source, never offered together with
+      // the GPay one for the same voucher. Only ever pre-fills an
+      // EXISTING ledger (same safety rule as the bulk-match button) --
+      // no "create new ledger, name pre-filled" fallback the way GPay's
+      // applyGpaySuggestedName has, since a creditor guess with no real
+      // ledger to back it isn't something worth creating unattended.
+      const creditorMatch = guessCreditorLedger(voucher.narration, getCreditorLedgerNames());
+      if (creditorMatch) {
+        const existing = filteredNames.find(n => n.trim().toLowerCase() === creditorMatch.name.trim().toLowerCase());
+        if (existing) {
+          setLedgerAllocCreateMode(false);
+          populateLedgerSelect(select, filteredNames, existing);
+          updateLedgerAllocSaveState();
+        }
       }
     }
   }
@@ -8252,6 +8446,24 @@
     }
   }
 
+  // Sundry Creditors ledger names only, for the narration-matching
+  // suggestion (guessCreditorLedger). A fresh get() rather than
+  // getCreditorLedgerNames()'s companyData cache -- the voucher review
+  // and statement review screens don't otherwise guarantee that cache is
+  // warm the way the Ledger Allocation screen does (it explicitly loads
+  // and reactively re-renders on the ledgers section), so this is the
+  // reliable data source for those two screens specifically.
+  async function fetchCreditorLedgerNames() {
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/ledgers`));
+      const ledgers = safeArray(snap.val());
+      return ledgers.filter(l => l.group === 'Sundry Creditors').map(l => l.name).filter(Boolean);
+    } catch (err) {
+      console.error('Could not load creditor ledgers for suggestion matching:', err);
+      return [];
+    }
+  }
+
   function populateLedgerSelect(selectEl, names, currentValue) {
     selectEl.innerHTML = '<option value="">Select…</option>' +
       names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
@@ -8975,6 +9187,11 @@
           </div>
           <input type="number" step="0.01" inputmode="decimal" data-amount-idx="${idx}" value="${t.amount}">
         </div>
+        <div class="map-section" style="margin-top:8px;">
+          <div class="map-field-label">Ledger (other side)</div>
+          <select data-ledger-idx="${idx}" class="map-field-input"><option>Loading ledgers…</option></select>
+          ${t.contra_ledger_match_score != null ? '<div class="totals-card-hint" style="margin-top:4px;">💡 Suggested from narration -- check before confirming</div>' : ''}
+        </div>
       </div>`;
     });
 
@@ -8988,6 +9205,10 @@
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.typeIdx, 10);
         stmtState.transactions[idx].voucher_type = btn.dataset.type;
+        // Give the narration-matching suggestion a fresh chance if this
+        // just became a Payment (or stopped being one) -- see
+        // _suggestionChecked below.
+        delete stmtState.transactions[idx]._suggestionChecked;
         renderStatementReviewScreen();
       });
     });
@@ -9003,6 +9224,57 @@
         const idx = parseInt(btn.dataset.removeIdx, 10);
         stmtState.transactions[idx].manuallyRemoved = true;
         renderStatementReviewScreen();
+      });
+    });
+    // Sept 2026, DJ's request: each transaction gets its own ledger
+    // picker instead of every transaction sharing the one fixed contra
+    // ledger from Bank Statement Settings -- defaults to whatever
+    // guessCreditorLedger suggests from the narration, computed right
+    // here (see below), or the statement-level contra ledger when
+    // nothing matched. This suggestion used to be computed server-side
+    // in tally_firebase_sync_v2.py (party_ledger_match.py) -- DJ asked
+    // to consolidate down to this one client-side implementation
+    // instead, the same pattern the existing GPay-narration matching on
+    // the Ledger Allocation screen already used. One fetchLedgerNames()
+    // + fetchCreditorLedgerNames() pair populates every row rather than
+    // one fetch per row.
+    Promise.all([fetchLedgerNames(), fetchCreditorLedgerNames()]).then(([names, creditorNames]) => {
+      if (!document.body.contains(container)) return; // screen navigated away before this landed
+
+      // Compute the narration-based suggestion once per transaction --
+      // _suggestionChecked guards it so a transaction that already got a
+      // suggestion (or was checked and had no confident match) doesn't
+      // get silently re-guessed on every re-render (amount edit, date
+      // range change, etc). The type-toggle handler above clears the
+      // flag when a transaction becomes (or stops being) a Payment, so
+      // it gets one fresh check for its new type.
+      let suggested = false;
+      txns.forEach(t => {
+        if (t._suggestionChecked) return;
+        t._suggestionChecked = true;
+        if (t.voucher_type !== 'Payment' || t.contra_ledger) return;
+        const match = guessCreditorLedger(t.narration, creditorNames);
+        if (match) {
+          t.contra_ledger = match.name;
+          t.contra_ledger_match_score = match.score;
+          suggested = true;
+        }
+      });
+      if (suggested) { renderStatementReviewScreen(); return; }
+
+      container.querySelectorAll('[data-ledger-idx]').forEach(sel => {
+        const idx = parseInt(sel.dataset.ledgerIdx, 10);
+        const t = txns[idx];
+        const current = t.contra_ledger || stmtReviewData.contra_ledger || '';
+        populateLedgerSelect(sel, names, current);
+        sel.onchange = () => {
+          stmtState.transactions[idx].contra_ledger = sel.value;
+          // A manual pick isn't "the suggestion" anymore -- clear the
+          // score so the 💡 hint doesn't keep showing next to a value
+          // DJ chose himself.
+          stmtState.transactions[idx].contra_ledger_match_score = null;
+          renderStatementReviewScreen();
+        };
       });
     });
     document.getElementById('stmt-review-date-from').addEventListener('change', (e) => {
@@ -9026,6 +9298,11 @@
         instrument: t.instrument,
         amount: parseAmt(t.amount),
         voucher_type: t.voucher_type,
+        // Sept 2026: per-transaction ledger override (from the narration
+        // match, or DJ's own pick in the per-row select) -- null/omitted
+        // falls back to the statement-level contra_ledger in bankcore.
+        // build_xml, exactly as every transaction behaved before this.
+        contra_ledger: t.contra_ledger || null,
       }));
 
     const payload = {
@@ -9108,6 +9385,7 @@
           cr_ledger: data.cr_ledger,
           narration: data.narration || '',
         };
+        applyVoucherCreditorSuggestion(voucherEdit);
       }
       renderVoucherReviewScreen();
       voucherActivateStep('voucher-step-review');
@@ -9231,6 +9509,7 @@
       cr_ledger: next.data.cr_ledger,
       narration: next.data.narration || '',
     };
+    applyVoucherCreditorSuggestion(voucherEdit);
     voucherCurrentId = next.id;
     renderVoucherReviewScreen();
     voucherActivateStep('voucher-step-review');
@@ -9274,6 +9553,29 @@
     const s = String(yyyymmdd || '');
     if (!/^\d{8}$/.test(s)) return s;
     return `${s.slice(6, 8)}-${s.slice(4, 6)}-${s.slice(0, 4)}`;
+  }
+
+  // Sept 2026, DJ's request ("consolidate to client-side only"): suggest
+  // the real creditor ledger for a Payment voucher's contra leg from its
+  // narration, the same guessCreditorLedger used by the bank-statement
+  // and Ledger Allocation screens. This used to be computed server-side
+  // in gmail_bank_alert_sync.py (party_ledger_match.py) -- dropped now
+  // that this one client-side implementation covers it. Only offered
+  // when the contra leg is still the untouched "Suspense" default --
+  // never overwrites something DJ has already edited or chosen, and
+  // editRef is checked against the live voucherEdit before applying so
+  // a stale fetch resolving after DJ has moved to a different voucher
+  // (Confirm/Discard/advance) can't clobber the new one.
+  async function applyVoucherCreditorSuggestion(editRef) {
+    if (editRef.voucher_type !== 'Payment' || editRef.dr_ledger !== 'Suspense') return;
+    const names = await fetchCreditorLedgerNames();
+    if (voucherEdit !== editRef || editRef.dr_ledger !== 'Suspense') return;
+    const match = guessCreditorLedger(editRef.narration, names);
+    if (match) {
+      editRef.dr_ledger = match.name;
+      editRef._suggested = true;
+      renderVoucherReviewScreen();
+    }
   }
 
   function renderVoucherReviewScreen() {
@@ -9324,7 +9626,8 @@
     html += `<div class="map-section">
       <div class="map-field-label">Other Ledger (contra)</div>
       <select id="voucher-contra-ledger-select" class="map-field-input"><option>Loading ledgers…</option></select>
-      <p class="totals-card-hint" style="margin-top:6px;">Usually "Suspense" -- correct it here to the real party/expense ledger if you already know it, or leave it as Suspense and reallocate later from Ledger Allocation.</p>
+      ${e._suggested ? '<div class="totals-card-hint" style="margin-top:4px;">💡 Suggested from narration -- check before confirming</div>' :
+        '<p class="totals-card-hint" style="margin-top:6px;">Usually "Suspense" -- correct it here to the real party/expense ledger if you already know it, or leave it as Suspense and reallocate later from Ledger Allocation.</p>'}
     </div>`;
 
     html += `<div class="map-section">
@@ -9353,6 +9656,9 @@
         e.voucher_type = 'Payment';
         e.dr_ledger = contraVal;
         e.cr_ledger = bankLedgerVal;
+        // Just became a Payment -- give the narration-matching suggestion
+        // a chance if the contra side is still the untouched default.
+        applyVoucherCreditorSuggestion(e);
         renderVoucherReviewScreen();
       }
     });
@@ -9380,6 +9686,10 @@
       contraSelect.onchange = () => {
         const val = contraSelect.value;
         if (e.voucher_type === 'Receipt') e.cr_ledger = val; else e.dr_ledger = val;
+        // A manual pick isn't "the suggestion" anymore -- drop the 💡
+        // hint next to a value DJ chose himself.
+        e._suggested = false;
+        renderVoucherReviewScreen();
       };
     });
     document.getElementById('voucher-narration-input').addEventListener('input', (ev) => { e.narration = ev.target.value; });
