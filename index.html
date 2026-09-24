@@ -6119,19 +6119,31 @@
     return !!(narration && narration.toUpperCase().includes('GOOGLEINDIADIGIT'));
   }
 
-  // ===== Creditor ledger narration matching (Sept 2026, DJ's request) =====
+  // ===== Party ledger narration matching (Sept 2026, DJ's request) =====
   // The ONE implementation of this matching logic -- originally built
   // twice (once here, once as party_ledger_match.py in Python for the
   // bank-statement and bank-voucher-email pipelines), but DJ asked to
   // consolidate down to client-side only, same pattern as the existing
   // GPay-narration matching (isGpayNarration/findGpaySuggestion) already
-  // used. All three screens that suggest a creditor ledger from a bank
+  // used. All three screens that suggest a real ledger from a bank
   // narration -- Ledger Allocation, the bank-statement review screen, and
   // the bank-voucher-email review screen -- call the functions here
   // directly; nothing computes this server-side anymore.
-  const CREDITOR_MATCH_THRESHOLD = 0.72; // same "looser matching" bar DJ chose
+  //
+  // Originally creditor-only (Payment transactions, matched against
+  // Sundry Creditors) -- DJ pointed out his UPI examples were actually
+  // Receipts from customers, so this now also matches Receipts against
+  // Sundry Debtors. The matching itself (extractPartyCandidateName /
+  // guessPartyLedger below) never cared which group it was matching
+  // against -- only the CALL SITES decide that, by branching on
+  // voucher_type/Receipt-vs-Payment and choosing which ledger list
+  // (getCreditorLedgerNames/getDebtorLedgerNames or their fetch*
+  // equivalents) to pass in. Renamed from guessCreditorLedger /
+  // extractCreditorCandidateName to reflect that -- same logic, just no
+  // longer creditor-only in name.
+  const PARTY_MATCH_THRESHOLD = 0.72; // same "looser matching" bar DJ chose
 
-  function extractCreditorCandidateName(narration) {
+  function extractPartyCandidateName(narration) {
     if (!narration) return null;
     narration = narration.trim();
     if (!narration) return null;
@@ -6143,7 +6155,37 @@
     }
 
     const upper = narration.toUpperCase();
-    if (upper.startsWith('UPI') || upper.startsWith('IMPS')) return null;
+
+    // Sept 2026, DJ's request: UPI narrations carry a usable party name
+    // too, in a fixed slot -- unlike NEFT/IB (name is the LAST segment),
+    // the standard bank UPI format sandwiches it right after the UTR
+    // reference number: UPI/<ref>/<NAME>/<bank IFSC prefix>/XX<acct last
+    // 4>/UPI. Real examples DJ sent: "UPI/661810038556/RAMESH
+    // PAN/UTIB/XX3459/UPI" -> "RAMESH PAN", "UPI/661878843701/Mr Sahil
+    // C/IDIB/XX3483/UPI" -> "Mr Sahil C", "UPI/625275090330/NILESH
+    // VAS/BKID/XX0190/UPI" -> "NILESH VAS" -- always the 3rd slash-
+    // separated part (these three were actually Receipts from customers,
+    // not Payments -- see guessPartyLedger's callers, which match a
+    // Receipt's UPI narration against Sundry Debtors instead of
+    // Creditors). The name can itself be truncated/wrapped by the bank's
+    // fixed-width field, same caveat as NEFT -- guessPartyLedger already
+    // tolerates that via its truncation/prefix match branch. This is
+    // still just a SUGGESTION DJ reviews before confirming, so a UPI
+    // payment/receipt with a friend or relative that happens to extract a
+    // "name" here costs nothing -- it just won't match any real ledger
+    // and nothing gets suggested. Guarded on starting AND ending with
+    // "UPI" (not just starting) so this doesn't misfire on some other
+    // narration that merely mentions UPI in passing.
+    if (upper.startsWith('UPI/') && upper.endsWith('/UPI') && narration.includes('/')) {
+      const parts = narration.split('/').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 4) return parts[2];
+      return null;
+    }
+
+    // IMPS narrations use a colon-separated shape ("IMPS:ref:ref2:NAME")
+    // that doesn't reliably carry a clean party name the way NEFT/UPI do
+    // -- left unhandled (falls through to null) rather than guessed at.
+    if (upper.startsWith('IMPS')) return null;
 
     if (!narration.includes('/')) {
       const stripped = narration.replace(/^-+/, '').trim();
@@ -6152,11 +6194,11 @@
     return null;
   }
 
-  function _creditorNormalize(name) {
+  function _partyNormalize(name) {
     return name.trim().toUpperCase().replace(/\s+/g, ' ');
   }
 
-  function _creditorSquish(name) {
+  function _partySquish(name) {
     return name.toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
 
@@ -6187,19 +6229,23 @@
     return (2 * matches) / (m + n);
   }
 
-  function guessCreditorLedger(narration, ledgerNames, minLen = 4) {
-    const candidate = extractCreditorCandidateName(narration);
+  // ledgerNames is whatever list the caller passes -- Sundry Creditors
+  // for a Payment, Sundry Debtors for a Receipt (see getCreditorLedgerNames/
+  // getDebtorLedgerNames and their fetch* equivalents). This function
+  // itself has no opinion on which group it's matching against.
+  function guessPartyLedger(narration, ledgerNames, minLen = 4) {
+    const candidate = extractPartyCandidateName(narration);
     if (!candidate || candidate.length < minLen) return null;
 
-    const candNorm = _creditorNormalize(candidate);
-    const candSquished = _creditorSquish(candidate);
+    const candNorm = _partyNormalize(candidate);
+    const candSquished = _partySquish(candidate);
     if (candSquished.length < minLen) return null;
 
     let bestName = null, bestScore = 0;
     for (const ledgerName of ledgerNames) {
       if (!ledgerName) continue;
-      const ledNorm = _creditorNormalize(ledgerName);
-      const ledSquished = _creditorSquish(ledgerName);
+      const ledNorm = _partyNormalize(ledgerName);
+      const ledSquished = _partySquish(ledgerName);
       if (!ledSquished) continue;
 
       let score;
@@ -6214,7 +6260,7 @@
       if (score > bestScore) { bestName = ledgerName; bestScore = score; }
     }
 
-    if (bestScore >= CREDITOR_MATCH_THRESHOLD) {
+    if (bestScore >= PARTY_MATCH_THRESHOLD) {
       return { name: bestName, score: Math.round(bestScore * 1000) / 1000 };
     }
     return null;
@@ -6542,15 +6588,20 @@
 
     // Sept 2026, DJ's request: computed once per render (not per row or
     // per bulk-match call) -- used both for the list's per-row suggestion
-    // below and for computeLedgerAllocBulkMatches. See getCreditorLedgerNames.
+    // below and for computeLedgerAllocBulkMatches. Two separate lists
+    // because a Payment's narration matches against Sundry Creditors but
+    // a Receipt's matches against Sundry Debtors (DJ's UPI examples were
+    // actually Receipts from customers) -- see getCreditorLedgerNames /
+    // getDebtorLedgerNames.
     const creditorLedgerNames = getCreditorLedgerNames();
+    const debtorLedgerNames = getDebtorLedgerNames();
 
     // Bulk auto-post candidates -- see ledgerAllocBulkMatches' declaration
     // for the (deliberately narrow) matching rule. Scoped to the list
     // exactly as currently filtered/sorted, so "Post N to Tally" never
     // touches a voucher the person can't see on screen right now.
     ledgerAllocBulkMatches = isPendingView
-      ? computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames) : [];
+      ? computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames, debtorLedgerNames) : [];
     renderLedgerAllocBulkButton();
 
     if (vouchers.length === 0) {
@@ -6619,19 +6670,24 @@
           // the CSS comment on .alloc-voucher-suggest-none).
           suggestHtml = '<div class="alloc-voucher-suggest-none">No match in imported GPay data for this date/amount</div>';
         }
-      } else if (isPendingView && creditorLedgerNames.length && !isGpayNarration(v.narration)) {
+      } else if (isPendingView && !isGpayNarration(v.narration) &&
+                 (v.voucher_type === 'Payment' || v.voucher_type === 'Receipt')) {
         // Sept 2026, DJ's request: a second, independent suggestion
-        // source for NEFT/IB and cheque-style narrations (see
-        // guessCreditorLedger) -- entirely separate from the GPay-CSV
+        // source for NEFT/IB, UPI, and cheque-style narrations (see
+        // guessPartyLedger) -- entirely separate from the GPay-CSV
         // matching above, which only ever applies to GOOGLEINDIADIGIT
-        // narrations. Unlike GPay, no "no match" line here when nothing
-        // was even attempted (a plain UPI narration to a person, say) --
-        // that would just be noise on every row that was never a
-        // creditor payment in the first place; guessCreditorLedger
-        // already returns null for those.
-        const creditorMatch = guessCreditorLedger(v.narration, creditorLedgerNames);
-        if (creditorMatch) {
-          suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(creditorMatch.name)}</div>`;
+        // narrations. Payment matches against Sundry Creditors, Receipt
+        // against Sundry Debtors -- DJ pointed out his UPI examples were
+        // actually Receipts from customers, not Payments to suppliers.
+        // Unlike GPay, no "no match" line here when nothing was even
+        // attempted (a plain UPI narration to a person, say) -- that
+        // would just be noise on every row that was never a real party
+        // transaction in the first place; guessPartyLedger already
+        // returns null for those.
+        const partyLedgerNames = v.voucher_type === 'Receipt' ? debtorLedgerNames : creditorLedgerNames;
+        const partyMatch = partyLedgerNames.length ? guessPartyLedger(v.narration, partyLedgerNames) : null;
+        if (partyMatch) {
+          suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(partyMatch.name)}</div>`;
         }
       }
       return `
@@ -6689,7 +6745,19 @@
       .map(l => l.name.trim());
   }
 
-  function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames) {
+  // Same as getCreditorLedgerNames but for Sundry Debtors -- Sept 2026:
+  // DJ pointed out his UPI narration examples were actually Receipts from
+  // customers, not Payments to suppliers, so a Receipt-type voucher's
+  // narration needs matching against this list instead.
+  function getDebtorLedgerNames() {
+    ensureSectionLoaded(currentCompany, 'ledgers');
+    const ledgers = safeArray((companyData[currentCompany] || {}).ledgers);
+    return ledgers
+      .filter(l => l.group === 'Sundry Debtors' && (l.name || '').trim())
+      .map(l => l.name.trim());
+  }
+
+  function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames, debtorLedgerNames) {
     // Same source the picker's "existing ledger" search uses (see
     // openLedgerAllocPick/fetchLedgerNames) -- read from the already-
     // synced cache instead of a fresh fetch so this can run synchronously
@@ -6713,16 +6781,21 @@
         const existingName = byLowerName.get(suggestion.name.trim().toLowerCase());
         if (!existingName) return;
         matches.push({ voucher: v, ledgerName: existingName });
-      } else if (creditorLedgerNames && creditorLedgerNames.length) {
+      } else if (v.voucher_type === 'Payment' || v.voucher_type === 'Receipt') {
         // Sept 2026, DJ's request: same "existing ledger only" safety
-        // rule as the GPay path above -- guessCreditorLedger already only
-        // ever returns a name from creditorLedgerNames itself (real,
-        // already-existing Sundry Creditors ledgers), so this lookup is
-        // really just re-confirming the exact stored casing/spelling for
-        // the reallocation request, not a second matching decision.
-        const creditorMatch = guessCreditorLedger(v.narration, creditorLedgerNames);
-        if (!creditorMatch) return;
-        const existingName = byLowerName.get(creditorMatch.name.trim().toLowerCase());
+        // rule as the GPay path above -- guessPartyLedger already only
+        // ever returns a name from the list it was given (real,
+        // already-existing ledgers), so this lookup is really just
+        // re-confirming the exact stored casing/spelling for the
+        // reallocation request, not a second matching decision. Payment
+        // matches against Sundry Creditors, Receipt against Sundry
+        // Debtors (DJ's UPI examples were actually Receipts from
+        // customers).
+        const partyLedgerNames = v.voucher_type === 'Receipt' ? debtorLedgerNames : creditorLedgerNames;
+        if (!partyLedgerNames || !partyLedgerNames.length) return;
+        const partyMatch = guessPartyLedger(v.narration, partyLedgerNames);
+        if (!partyMatch) return;
+        const existingName = byLowerName.get(partyMatch.name.trim().toLowerCase());
         if (!existingName) return;
         matches.push({ voucher: v, ledgerName: existingName });
       }
@@ -7059,19 +7132,23 @@
         suggestChips.innerHTML = '';
         suggestBox.style.display = 'block';
       }
-    } else {
+    } else if (voucher.voucher_type === 'Payment' || voucher.voucher_type === 'Receipt') {
       // Sept 2026, DJ's request: the same idea as the GPay suggestion
-      // above, but for NEFT/IB and cheque-style narrations matched
-      // against real Sundry Creditors ledgers (see guessCreditorLedger) --
-      // entirely separate matching source, never offered together with
-      // the GPay one for the same voucher. Only ever pre-fills an
-      // EXISTING ledger (same safety rule as the bulk-match button) --
-      // no "create new ledger, name pre-filled" fallback the way GPay's
-      // applyGpaySuggestedName has, since a creditor guess with no real
-      // ledger to back it isn't something worth creating unattended.
-      const creditorMatch = guessCreditorLedger(voucher.narration, getCreditorLedgerNames());
-      if (creditorMatch) {
-        const existing = filteredNames.find(n => n.trim().toLowerCase() === creditorMatch.name.trim().toLowerCase());
+      // above, but for NEFT/IB, UPI, and cheque-style narrations matched
+      // against a real ledger (see guessPartyLedger) -- entirely separate
+      // matching source, never offered together with the GPay one for
+      // the same voucher. Payment matches against Sundry Creditors,
+      // Receipt against Sundry Debtors (DJ's UPI examples were actually
+      // Receipts from customers, not Payments to suppliers). Only ever
+      // pre-fills an EXISTING ledger (same safety rule as the bulk-match
+      // button) -- no "create new ledger, name pre-filled" fallback the
+      // way GPay's applyGpaySuggestedName has, since a party guess with
+      // no real ledger to back it isn't something worth creating
+      // unattended.
+      const partyLedgerNames = voucher.voucher_type === 'Receipt' ? getDebtorLedgerNames() : getCreditorLedgerNames();
+      const partyMatch = guessPartyLedger(voucher.narration, partyLedgerNames);
+      if (partyMatch) {
+        const existing = filteredNames.find(n => n.trim().toLowerCase() === partyMatch.name.trim().toLowerCase());
         if (existing) {
           setLedgerAllocCreateMode(false);
           populateLedgerSelect(select, filteredNames, existing);
@@ -8447,7 +8524,7 @@
   }
 
   // Sundry Creditors ledger names only, for the narration-matching
-  // suggestion (guessCreditorLedger). A fresh get() rather than
+  // suggestion (guessPartyLedger) on a Payment. A fresh get() rather than
   // getCreditorLedgerNames()'s companyData cache -- the voucher review
   // and statement review screens don't otherwise guarantee that cache is
   // warm the way the Ledger Allocation screen does (it explicitly loads
@@ -8460,6 +8537,21 @@
       return ledgers.filter(l => l.group === 'Sundry Creditors').map(l => l.name).filter(Boolean);
     } catch (err) {
       console.error('Could not load creditor ledgers for suggestion matching:', err);
+      return [];
+    }
+  }
+
+  // Same as fetchCreditorLedgerNames but for Sundry Debtors -- Sept 2026:
+  // DJ pointed out his UPI narration examples were actually Receipts from
+  // customers, not Payments to suppliers, so a Receipt-type transaction
+  // needs matching against this list instead (see guessPartyLedger).
+  async function fetchDebtorLedgerNames() {
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/ledgers`));
+      const ledgers = safeArray(snap.val());
+      return ledgers.filter(l => l.group === 'Sundry Debtors').map(l => l.name).filter(Boolean);
+    } catch (err) {
+      console.error('Could not load debtor ledgers for suggestion matching:', err);
       return [];
     }
   }
@@ -9229,16 +9321,19 @@
     // Sept 2026, DJ's request: each transaction gets its own ledger
     // picker instead of every transaction sharing the one fixed contra
     // ledger from Bank Statement Settings -- defaults to whatever
-    // guessCreditorLedger suggests from the narration, computed right
-    // here (see below), or the statement-level contra ledger when
-    // nothing matched. This suggestion used to be computed server-side
-    // in tally_firebase_sync_v2.py (party_ledger_match.py) -- DJ asked
-    // to consolidate down to this one client-side implementation
-    // instead, the same pattern the existing GPay-narration matching on
-    // the Ledger Allocation screen already used. One fetchLedgerNames()
-    // + fetchCreditorLedgerNames() pair populates every row rather than
-    // one fetch per row.
-    Promise.all([fetchLedgerNames(), fetchCreditorLedgerNames()]).then(([names, creditorNames]) => {
+    // guessPartyLedger suggests from the narration, computed right here
+    // (see below), or the statement-level contra ledger when nothing
+    // matched. This suggestion used to be computed server-side in
+    // tally_firebase_sync_v2.py (party_ledger_match.py) -- DJ asked to
+    // consolidate down to this one client-side implementation instead,
+    // the same pattern the existing GPay-narration matching on the Ledger
+    // Allocation screen already used. Fetches both Creditor and Debtor
+    // ledger names up front (a Payment matches against the former, a
+    // Receipt against the latter -- DJ pointed out his UPI examples were
+    // actually Receipts from customers) alongside fetchLedgerNames(), one
+    // round-trip pair for the whole screen rather than one per row.
+    Promise.all([fetchLedgerNames(), fetchCreditorLedgerNames(), fetchDebtorLedgerNames()])
+      .then(([names, creditorNames, debtorNames]) => {
       if (!document.body.contains(container)) return; // screen navigated away before this landed
 
       // Compute the narration-based suggestion once per transaction --
@@ -9246,14 +9341,17 @@
       // suggestion (or was checked and had no confident match) doesn't
       // get silently re-guessed on every re-render (amount edit, date
       // range change, etc). The type-toggle handler above clears the
-      // flag when a transaction becomes (or stops being) a Payment, so
-      // it gets one fresh check for its new type.
+      // flag when a transaction's Receipt/Payment call changes, so it
+      // gets one fresh check for its new type.
       let suggested = false;
       txns.forEach(t => {
         if (t._suggestionChecked) return;
         t._suggestionChecked = true;
-        if (t.voucher_type !== 'Payment' || t.contra_ledger) return;
-        const match = guessCreditorLedger(t.narration, creditorNames);
+        if (t.contra_ledger) return;
+        const partyNames = t.voucher_type === 'Receipt' ? debtorNames
+          : t.voucher_type === 'Payment' ? creditorNames : null;
+        if (!partyNames) return;
+        const match = guessPartyLedger(t.narration, partyNames);
         if (match) {
           t.contra_ledger = match.name;
           t.contra_ledger_match_score = match.score;
@@ -9556,23 +9654,31 @@
   }
 
   // Sept 2026, DJ's request ("consolidate to client-side only"): suggest
-  // the real creditor ledger for a Payment voucher's contra leg from its
-  // narration, the same guessCreditorLedger used by the bank-statement
-  // and Ledger Allocation screens. This used to be computed server-side
-  // in gmail_bank_alert_sync.py (party_ledger_match.py) -- dropped now
-  // that this one client-side implementation covers it. Only offered
-  // when the contra leg is still the untouched "Suspense" default --
-  // never overwrites something DJ has already edited or chosen, and
-  // editRef is checked against the live voucherEdit before applying so
-  // a stale fetch resolving after DJ has moved to a different voucher
-  // (Confirm/Discard/advance) can't clobber the new one.
+  // the real party ledger for a voucher's contra leg from its narration,
+  // the same guessPartyLedger used by the bank-statement and Ledger
+  // Allocation screens. This used to be computed server-side in
+  // gmail_bank_alert_sync.py (party_ledger_match.py) -- dropped now that
+  // this one client-side implementation covers it. Only offered when the
+  // contra leg is still the untouched "Suspense" default -- never
+  // overwrites something DJ has already edited or chosen. Payment's
+  // contra leg is dr_ledger, matched against Sundry Creditors; Receipt's
+  // is cr_ledger, matched against Sundry Debtors (DJ pointed out his UPI
+  // narration examples were actually Receipts from customers, not
+  // Payments to suppliers). editRef is checked against the live
+  // voucherEdit before applying so a stale fetch resolving after DJ has
+  // moved to a different voucher (Confirm/Discard/advance) can't clobber
+  // the new one.
   async function applyVoucherCreditorSuggestion(editRef) {
-    if (editRef.voucher_type !== 'Payment' || editRef.dr_ledger !== 'Suspense') return;
-    const names = await fetchCreditorLedgerNames();
-    if (voucherEdit !== editRef || editRef.dr_ledger !== 'Suspense') return;
-    const match = guessCreditorLedger(editRef.narration, names);
+    const isReceipt = editRef.voucher_type === 'Receipt';
+    const isPayment = editRef.voucher_type === 'Payment';
+    if (!isReceipt && !isPayment) return;
+    const contraField = isReceipt ? 'cr_ledger' : 'dr_ledger';
+    if (editRef[contraField] !== 'Suspense') return;
+    const names = await (isReceipt ? fetchDebtorLedgerNames() : fetchCreditorLedgerNames());
+    if (voucherEdit !== editRef || editRef[contraField] !== 'Suspense') return;
+    const match = guessPartyLedger(editRef.narration, names);
     if (match) {
-      editRef.dr_ledger = match.name;
+      editRef[contraField] = match.name;
       editRef._suggested = true;
       renderVoucherReviewScreen();
     }
@@ -9648,6 +9754,10 @@
         e.voucher_type = 'Receipt';
         e.dr_ledger = bankLedgerVal;
         e.cr_ledger = contraVal;
+        // Just became a Receipt -- give the narration-matching suggestion
+        // (against Sundry Debtors) a chance if the contra side is still
+        // the untouched default.
+        applyVoucherCreditorSuggestion(e);
         renderVoucherReviewScreen();
       }
     });
