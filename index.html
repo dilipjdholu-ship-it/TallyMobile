@@ -11,6 +11,21 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // Sept 2026: sets the dark-mode attribute BEFORE the stylesheet below
+  // ever paints anything, so a person who already opted into dark mode
+  // doesn't see a flash of the light theme for a frame on every reopen.
+  // Plain synchronous script (not type="module", not deferred, unlike the
+  // app's own main script further down) specifically so it runs before
+  // first paint. Dark mode is OPT-IN (matches "optional dark mode" -- this
+  // does NOT follow the phone's system-wide light/dark setting) --
+  // defaults to light until the person turns it on from Settings.
+  try {
+    if (localStorage.getItem('tallymobile_theme') === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  } catch (e) { /* localStorage unavailable (e.g. private mode) -- fall back to light, harmless */ }
+</script>
 <style>
   :root {
     --primary: #1565c0;
@@ -30,6 +45,40 @@
     --border: #e4e7ec;
     --radius: 12px;
     --shadow: 0 1px 2px rgba(16,24,40,0.06), 0 1px 3px rgba(16,24,40,0.08);
+  }
+
+  /* Sept 2026: dark mode -- an opt-in theme (toggled from Settings, see
+     the theme-init script in <head> and toggleDarkMode() further down),
+     not tied to the phone's system dark/light setting. Redefines the same
+     token set as :root above; every rule in this stylesheet was already
+     built on these variables rather than hardcoded colors (checked: no
+     stray hardcoded surface colors found except one chip background,
+     fixed separately), so this cascades through the whole app without
+     needing to touch individual component rules. --primary is brightened
+     a little from the light-mode value (#1565c0 reads a bit muddy against
+     a dark background); the header/splash gradient's own hardcoded pale
+     text colors (#cfe1f7 etc.) are untouched on purpose -- that gradient
+     is always the same dark blue in BOTH themes, so text tuned for it
+     doesn't need to change. Not yet checked on an actual phone screen --
+     if any specific spot looks off once this is live, that's easy to
+     patch precisely once you point it out. */
+  :root[data-theme="dark"] {
+    --primary: #5b9bd8;
+    --primary-dark: #0d47a1;
+    --primary-soft: #1c2f4a;
+    --ink: #e7eaf0;
+    --ink-soft: #97a2b8;
+    --paper: #11141c;
+    --paper-line: #262c3b;
+    --paper-card: #1a1f2b;
+    --forest: #3fb27f;
+    --forest-soft: #123524;
+    --rust: #e5534b;
+    --rust-soft: #3a1c1c;
+    --amber: #f0a020;
+    --amber-soft: #3a2c10;
+    --border: #2a3040;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 1px 4px rgba(0,0,0,0.45);
   }
 
   * { box-sizing: border-box; }
@@ -234,7 +283,14 @@
     font-weight: 600;
     color: var(--ink-soft);
   }
-  .bottom-nav-tab .bn-icon { font-size: 19px; line-height: 1; }
+  /* Sept 2026: was font-size: 19px on plain Unicode glyphs (⌂ ₹ ▤ ▦ ◫) --
+     each glyph rendered at a different visual weight/size depending on
+     the system font's own glyph metrics, so the row never looked quite
+     consistent. Replaced with inline SVGs (see the bottom-nav markup)
+     sized explicitly here instead, so all five match exactly and recolor
+     for free via currentColor when .active/dark-mode change `color`. */
+  .bottom-nav-tab .bn-icon { display: flex; align-items: center; justify-content: center; line-height: 1; }
+  .bottom-nav-tab .bn-icon svg { width: 21px; height: 21px; display: block; }
   .bottom-nav-tab.active { color: var(--primary); }
 
   main { padding: 14px 14px 84px; max-width: 720px; margin: 0 auto; }
@@ -411,6 +467,35 @@
   }
   .fab-chooser-option:last-of-type { border-bottom: none; }
   .fab-chooser-option .fc-icon { font-size: 20px; width: 28px; text-align: center; }
+
+  /* Sept 2026: Dark Mode row in the Settings sheet -- a toggle rather
+     than a button that navigates elsewhere, so it's styled as a row with
+     a switch pinned to the right instead of a plain .fab-chooser-option.
+     Small self-contained iOS-style switch, driven by a real (visually
+     hidden) checkbox for keyboard/screen-reader accessibility -- toggling
+     it flips data-theme on <html> immediately, see toggleDarkMode(). */
+  .settings-toggle-row {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; padding: 13px 10px;
+    border-bottom: 1px solid var(--paper-line);
+  }
+  .settings-toggle-row:last-of-type { border-bottom: none; }
+  .settings-toggle-row .fc-icon { font-size: 20px; width: 28px; text-align: center; }
+  .settings-toggle-row .settings-toggle-label { flex: 1; font-size: 15px; font-weight: 600; color: var(--ink); text-align: left; }
+  .switch { position: relative; display: inline-block; width: 42px; height: 25px; flex-shrink: 0; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch .switch-track {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: var(--border); transition: background 0.15s;
+  }
+  .switch .switch-track::before {
+    content: ''; position: absolute; left: 2.5px; top: 2.5px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--paper-card); box-shadow: var(--shadow);
+    transition: transform 0.15s;
+  }
+  .switch input:checked + .switch-track { background: var(--primary); }
+  .switch input:checked + .switch-track::before { transform: translateX(17px); }
   .fab-chooser-cancel {
     display: block; width: 100%; margin-top: 8px;
     padding: 13px; text-align: center;
@@ -684,7 +769,25 @@
   .empty-state .title { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
   .empty-state .desc { font-size: 13px; }
 
-  .loading-state { text-align: center; padding: 60px 20px; color: var(--ink-soft); font-size: 13px; }
+  .loading-state {
+    text-align: center; padding: 60px 20px; color: var(--ink-soft); font-size: 13px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  /* Sept 2026: a genuine "still waiting on data" spinner, added via
+     .spinner inside a .loading-state div (see loadingState() helper) --
+     plain gray text alone gave no sense that anything was actually
+     happening. NOT added to every .loading-state div indiscriminately:
+     a few of them are static notices ("Showing first 300 of N...", "using
+     a live custom-range fetch") that were just reusing this class for its
+     centered/muted look rather than because something is loading, and a
+     spinner on those would incorrectly suggest they're stuck. */
+  .loading-state .spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--primary);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   footer.last-synced {
     text-align: center;
@@ -798,7 +901,7 @@
   }
   .gpay-suggest-box .gpay-suggest-label { color: var(--ink-soft); margin-bottom: 6px; }
   .gpay-suggest-chip {
-    display: inline-block; background: white; border: 1px solid var(--paper-line);
+    display: inline-block; background: var(--paper-card); border: 1px solid var(--paper-line);
     border-radius: 14px; padding: 4px 10px; margin: 0 6px 6px 0;
     font-size: 12.5px; cursor: pointer;
   }
@@ -1221,18 +1324,37 @@
     <div id="summary-strip" class="summary-strip"></div>
 
     <div id="content-area">
-      <div class="loading-state">Loading data…</div>
+      <div class="loading-state"><span class="spinner"></span>Loading data…</div>
     </div>
 
     <footer class="last-synced" id="last-synced-footer"></footer>
   </main>
 
   <nav class="bottom-nav" id="bottom-nav">
-    <button class="bottom-nav-tab active" data-section="home"><span class="bn-icon">⌂</span>Home</button>
-    <button class="bottom-nav-tab" data-section="outstanding"><span class="bn-icon">₹</span>Outstanding</button>
-    <button class="bottom-nav-tab" data-section="ledgers"><span class="bn-icon">▤</span>Ledgers</button>
-    <button class="bottom-nav-tab" data-section="daybook"><span class="bn-icon">▦</span>Day Book</button>
-    <button class="bottom-nav-tab" data-section="stock"><span class="bn-icon">◫</span>Stock</button>
+    <!-- Sept 2026: swapped the plain Unicode glyphs (⌂ ₹ ▤ ▦ ◫) for inline
+         SVGs -- each glyph used to render at a slightly different visual
+         weight/baseline depending on the system font, so the row never
+         looked quite matched. currentColor means each one recolors for
+         free with .bottom-nav-tab.active and with dark mode, exactly like
+         the text label next to it already did -- no JS or extra CSS rule
+         needed per icon. Not yet checked on an actual phone screen; if
+         any one of these five looks off once it's live, it's a single
+         self-contained <svg> to swap, no build step involved. -->
+    <button class="bottom-nav-tab active" data-section="home">
+      <span class="bn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5"/><path d="M6 9.5V20h5v-6h2v6h5V9.5"/></svg></span>Home
+    </button>
+    <button class="bottom-nav-tab" data-section="outstanding">
+      <span class="bn-icon"><svg viewBox="0 0 24 24"><text x="12" y="17.5" text-anchor="middle" font-size="16" font-weight="700" fill="currentColor" font-family="Inter, sans-serif">&#8377;</text></svg></span>Outstanding
+    </button>
+    <button class="bottom-nav-tab" data-section="ledgers">
+      <span class="bn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span>Ledgers
+    </button>
+    <button class="bottom-nav-tab" data-section="daybook">
+      <span class="bn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg></span>Day Book
+    </button>
+    <button class="bottom-nav-tab" data-section="stock">
+      <span class="bn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v10l8 4 8-4V7Z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg></span>Stock
+    </button>
   </nav>
 
   <button class="scan-fab" id="scan-invoice-fab" title="Upload document" aria-label="Upload document">📷</button>
@@ -1266,6 +1388,10 @@
     <button class="fab-chooser-option" id="settings-choose-company">
       <span class="fc-icon">🏢</span><span>Company Details</span>
     </button>
+    <label class="settings-toggle-row" for="dark-mode-toggle">
+      <span class="fc-icon">🌙</span><span class="settings-toggle-label">Dark Mode</span>
+      <span class="switch"><input type="checkbox" id="dark-mode-toggle"><span class="switch-track"></span></span>
+    </label>
     <button class="fab-chooser-cancel" id="settings-chooser-cancel">Cancel</button>
   </div>
 
@@ -1279,7 +1405,7 @@
         <div class="overlay-title">Pending Review</div>
       </div>
       <div class="overlay-body" id="review-queue-body">
-        <div class="loading-state">Loading…</div>
+        <div class="loading-state"><span class="spinner"></span>Loading…</div>
       </div>
     </div>
   </div>
@@ -1297,7 +1423,7 @@
           <button class="history-tab active" id="history-tab-invoices" data-kind="invoices">Invoices</button>
           <button class="history-tab" id="history-tab-statements" data-kind="bank_statements">Bank Statements</button>
         </div>
-        <div id="history-body"><div class="loading-state">Loading…</div></div>
+        <div id="history-body"><div class="loading-state"><span class="spinner"></span>Loading…</div></div>
         <div class="history-retention-note">Entries are removed automatically after 30 days. You can also delete one any time.</div>
       </div>
     </div>
@@ -1363,7 +1489,7 @@
             <input type="date" id="ledger-alloc-date-to">
             <button class="date-range-reset" id="ledger-alloc-date-apply">Apply</button>
           </div>
-          <div id="ledger-alloc-list-body"><div class="loading-state">Loading…</div></div>
+          <div id="ledger-alloc-list-body"><div class="loading-state"><span class="spinner"></span>Loading…</div></div>
         </div>
 
         <div class="alloc-step" id="ledger-alloc-step-pick">
@@ -1981,7 +2107,20 @@
       returnToLedgerAllocList();
       return;
     }
-    closeTopOverlay();
+    if (closeTopOverlay()) return;
+    // Sept 2026: nothing was open to close, so this pop is a top-level
+    // section change (a bottom-nav tab, or a Home report tile like P&L /
+    // Balance Sheet / Monthly Sales / Purchases -- see goToSection).
+    // Restore whichever section the entry we popped BACK TO represents --
+    // pushHistory=false, since re-pushing here would just fight the very
+    // back button that got us to this entry. If history.state has neither
+    // an overlay nor a section, we've popped below the app's own baseline
+    // entry (see initApp's history.replaceState) -- that's the app's root
+    // screen, so letting the browser's default back action proceed
+    // (exiting/backgrounding the app) matches normal Android behavior.
+    if (history.state && history.state.section) {
+      goToSection(history.state.section, false);
+    }
   });
 
   // In-app "Back" buttons go through history.back() too, rather than
@@ -2207,6 +2346,32 @@
   document.getElementById('settings-choose-company').addEventListener('click', () => {
     closeSettingsChooser();
     openCompanyDetailsOverlay();
+  });
+
+  // ---- Dark Mode (opt-in toggle, see the theme-init <script> in <head>) ----
+  const THEME_KEY = 'tallymobile_theme';
+  function applyTheme(theme) {
+    if (theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    // Keeps the browser/OS chrome around the page (status bar on Android,
+    // the tab-switcher card background) matching the app instead of
+    // staying the light-mode blue while the page itself has gone dark.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#11141c' : '#1565c0');
+    const toggle = document.getElementById('dark-mode-toggle');
+    if (toggle) toggle.checked = (theme === 'dark');
+  }
+  // Sync the checkbox to whatever the <head> script already applied
+  // before this module's own code got a chance to run (see that script's
+  // comment for why the attribute has to be set that early).
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+  document.getElementById('dark-mode-toggle').addEventListener('change', (e) => {
+    const theme = e.target.checked ? 'dark' : 'light';
+    try { localStorage.setItem(THEME_KEY, theme); } catch (err) { /* best-effort, same as elsewhere in this file */ }
+    applyTheme(theme);
   });
   document.getElementById('gst-settings-back').addEventListener('click', () => goBackFromOverlay());
 
@@ -2507,6 +2672,23 @@
     attachSearch();
     attachExportButtons();
     listenToTallyStatus();
+    // Sept 2026: establishes the app's ROOT history entry, one time only
+    // (never re-run on a later showApp() call, e.g. switching companies --
+    // that would reset an in-progress back-stack). Without this, the
+    // section-navigation history entries pushed by goToSection() below
+    // have nothing underneath them, and see the "step by step, not
+    // straight to home / exit" fix in goToSection/attachSectionNav/
+    // popstate for why those are needed at all: bottom-nav taps and Home's
+    // report tiles (P&L/Balance Sheet/Monthly Sales/Purchases) used to
+    // change currentSection with NO history entry whatsoever, so the
+    // overlay-only back-button system further below never even saw those
+    // navigations -- the phone's back button skipped straight past
+    // whichever section you were viewing and exited the app (DJ's report:
+    // "go back step by step and not directly to home screen or exit
+    // app"). replaceState (not pushState) so this doesn't add an extra
+    // back-stop of its own -- it just labels the entry that's already
+    // there when the app opens.
+    history.replaceState({ section: currentSection }, '', '');
   }
 
   // Single top-level node, not per-company -- there's one local Tally
@@ -2567,12 +2749,13 @@
   function attachSectionNav() {
     document.querySelectorAll('.bottom-nav-tab').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.bottom-nav-tab').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentSection = btn.dataset.section;
         document.getElementById('search-input').value = '';
         searchTerm = '';
-        render();
+        // Sept 2026: routed through goToSection (which now also handles
+        // the back-button history entry) instead of setting currentSection
+        // and toggling tab classes directly here -- see goToSection's own
+        // comment and the popstate handler below.
+        goToSection(btn.dataset.section);
       });
     });
   }
@@ -2877,7 +3060,7 @@
     const searchBarRow = document.getElementById('search-bar-row');
 
     if (!data) {
-      contentArea.innerHTML = '<div class="loading-state">Loading data…</div>';
+      contentArea.innerHTML = loadingState('Loading data…');
       summaryStrip.innerHTML = '';
       footer.textContent = '';
       return;
@@ -2899,7 +3082,19 @@
     else if (currentSection === 'monthlypurchases') renderMonthlyPurchases(data, contentArea, summaryStrip);
   }
 
-  function goToSection(section) {
+  // Sept 2026: `pushHistory` defaults to true for every normal caller
+  // (bottom-nav taps, Home's report tiles). The popstate handler further
+  // below is the one exception -- it passes false when RESTORING a
+  // section the phone's back button already popped back to, so that
+  // going back doesn't turn around and push a brand-new entry fighting
+  // the very back button that triggered it. Skips the push entirely (but
+  // still re-renders) when already on this section, so double-tapping the
+  // same bottom-nav tab doesn't stack up extra back-button stops.
+  function goToSection(section, pushHistory) {
+    if (pushHistory === undefined) pushHistory = true;
+    if (pushHistory && currentSection !== section) {
+      history.pushState({ section: section }, '', '');
+    }
     currentSection = section;
     document.querySelectorAll('.bottom-nav-tab').forEach(b => {
       b.classList.toggle('active', b.dataset.section === section);
@@ -3096,7 +3291,7 @@
 
   function renderLedgers(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'ledgers')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
+      contentArea.innerHTML = loadingState('Loading ledgers…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3172,7 +3367,7 @@
 
   function renderDaybook(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'daybook')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading day book…</div>';
+      contentArea.innerHTML = loadingState('Loading day book…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3227,7 +3422,7 @@
 
   function renderStock(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading stock…</div>';
+      contentArea.innerHTML = loadingState('Loading stock…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3279,7 +3474,7 @@
     const body = document.getElementById('stock-item-detail-body');
 
     if (!readyStock || !readySales) {
-      body.innerHTML = '<div class="loading-state">Loading item history…</div>';
+      body.innerHTML = loadingState('Loading item history…');
       openOverlay('stock-item-detail-overlay');
       return;
     }
@@ -3423,7 +3618,7 @@
   function renderProfitAndLoss(data, contentArea, summaryStrip) {
     const custom = customReportState.pnl;
     if (custom.requesting) {
-      contentArea.innerHTML = '<div class="loading-state">Asking your PC to fetch this period from Tally… (make sure the sync app is running)</div>';
+      contentArea.innerHTML = loadingState('Asking your PC to fetch this period from Tally… (make sure the sync app is running)');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3435,7 +3630,7 @@
 
     const usingCustom = custom.result !== null;
     if (!usingCustom && !ensureSectionLoaded(currentCompany, 'profit_and_loss')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading P&amp;L…</div>';
+      contentArea.innerHTML = loadingState('Loading P&amp;L…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3471,7 +3666,7 @@
   function renderBalanceSheet(data, contentArea, summaryStrip) {
     const custom = customReportState.balancesheet;
     if (custom.requesting) {
-      contentArea.innerHTML = '<div class="loading-state">Asking your PC to fetch this period from Tally… (make sure the sync app is running)</div>';
+      contentArea.innerHTML = loadingState('Asking your PC to fetch this period from Tally… (make sure the sync app is running)');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3483,7 +3678,7 @@
 
     const usingCustom = custom.result !== null;
     if (!usingCustom && !ensureSectionLoaded(currentCompany, 'balance_sheet')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading Balance Sheet…</div>';
+      contentArea.innerHTML = loadingState('Loading Balance Sheet…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3517,7 +3712,7 @@
 
   function renderMonthlySales(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'sales_vouchers')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading sales data…</div>';
+      contentArea.innerHTML = loadingState('Loading sales data…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3693,7 +3888,7 @@
 
   function renderMonthlyPurchases(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'purchase_vouchers')) {
-      contentArea.innerHTML = '<div class="loading-state">Loading purchase data…</div>';
+      contentArea.innerHTML = loadingState('Loading purchase data…');
       summaryStrip.innerHTML = '';
       return;
     }
@@ -3876,7 +4071,7 @@
     const body = document.getElementById('group-detail-body');
 
     if (!ready) {
-      body.innerHTML = '<div class="loading-state">Loading ledgers…</div>';
+      body.innerHTML = loadingState('Loading ledgers…');
       openOverlay('group-detail-overlay');
       return;
     }
@@ -3933,6 +4128,17 @@
       <div class="title">${title}</div>
       <div class="desc">${desc}</div>
     </div>`;
+  }
+
+  // Sept 2026: same idea as emptyState() above -- a small shared helper so
+  // every genuine "still waiting on data" message gets the same spinner
+  // treatment (see the .spinner CSS) instead of sitting as plain gray
+  // text. Deliberately NOT used for the couple of .loading-state divs
+  // that are actually static notices rather than active loading (e.g.
+  // "Showing first 300 of N -- narrow your search...") -- a spinner next
+  // to those would wrongly suggest something's stuck.
+  function loadingState(msg) {
+    return `<div class="loading-state"><span class="spinner"></span>${msg}</div>`;
   }
 
   // ================= LEDGER DRILL-DOWN =================
@@ -4175,7 +4381,7 @@
     const body = document.getElementById('ledger-detail-body');
 
     if (!daybookReady) {
-      body.innerHTML = '<div class="loading-state">Loading transaction history…</div>';
+      body.innerHTML = loadingState('Loading transaction history…');
       openOverlay('ledger-detail-overlay');
       return;
     }
@@ -4703,7 +4909,7 @@
 
     const ready = ensureSectionLoaded(currentCompany, sectionKey);
     if (!ready) {
-      body.innerHTML = `<div class="loading-state">Loading ${isPurchase ? 'purchase voucher' : 'invoice'}…</div>`;
+      body.innerHTML = loadingState(`Loading ${isPurchase ? 'purchase voucher' : 'invoice'}…`);
       openOverlay('voucher-detail-overlay');
       return;
     }
@@ -6555,7 +6761,7 @@
     // allocation".
     const ready = ensureSectionLoaded(currentCompany, 'bank_related_vouchers');
     if (!ready) {
-      body.innerHTML = '<div class="loading-state">Loading…</div>';
+      body.innerHTML = loadingState('Loading…');
       return;
     }
 
@@ -6632,9 +6838,14 @@
       // category at all" -- reruns the same source list without the
       // date/type filter to tell those apart.
       const overallCount = rawList.length;
+      // Sept 2026: switched from a plain <div class="loading-state"> to
+      // the same emptyState() glyph+title+desc treatment already used
+      // everywhere else an empty list needs explaining (Ledgers, Stock,
+      // Day Book, P&L, Balance Sheet, ...) -- this was the one remaining
+      // spot still doing its own plain-text thing.
       body.innerHTML = overallCount === 0
-        ? `<div class="loading-state">${emptyMessage}</div>`
-        : '<div class="loading-state">No vouchers match this filter — try widening the date range or type.</div>';
+        ? emptyState('Nothing to show', emptyMessage)
+        : emptyState('No matches for this filter', 'Try widening the date range or type.');
       return;
     }
 
@@ -7330,7 +7541,7 @@
   });
 
   function renderReviewQueueLoading() {
-    document.getElementById('review-queue-body').innerHTML = '<div class="loading-state">Loading…</div>';
+    document.getElementById('review-queue-body').innerHTML = loadingState('Loading…');
   }
 
   function queueStatusMeta(status) {
@@ -7458,7 +7669,7 @@
     historyKind = kind;
     document.getElementById('history-tab-invoices').classList.toggle('active', kind === 'invoices');
     document.getElementById('history-tab-statements').classList.toggle('active', kind === 'bank_statements');
-    document.getElementById('history-body').innerHTML = '<div class="loading-state">Loading…</div>';
+    document.getElementById('history-body').innerHTML = loadingState('Loading…');
     if (historyUnsub) { historyUnsub(); historyUnsub = null; }
     historyUnsub = onValue(ref(db, `companies/${currentCompany}/history_${kind}`), snap => {
       renderHistoryList(kind, snap.val() || {});
