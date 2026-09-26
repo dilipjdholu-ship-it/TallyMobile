@@ -1407,8 +1407,26 @@
               <select class="map-field-input spaced" id="ledger-alloc-new-ledger-regtype">
                 <option value="Regular">Regular</option>
                 <option value="Composition">Composition</option>
-                <option value="Consumer">Consumer</option>
-                <option value="Unregistered">Unregistered</option>
+                <!-- Sept 2026: merged "Consumer" and "Unregistered" into one
+                     option, matching Tally Prime's own ledger screen (its
+                     GST Registration Types picker shows a single
+                     "Unregistered/Consumer" choice, not two -- see DJ's
+                     screenshot). DJ asked for the literal value
+                     "Unregistered/Consumer" to be sent, so this now DOES
+                     change what reaches Tally: build_ledger_create_xml in
+                     tally_firebase_sync_v2.py passes this straight through
+                     into <GSTREGISTRATIONTYPE> with no mapping of its own,
+                     so a new ledger created from this form will now get
+                     <GSTREGISTRATIONTYPE>Unregistered/Consumer</GSTREGISTRATIONTYPE>
+                     verbatim -- matching the label text exactly, unlike the
+                     plain "Regular"/"Composition" values which were already
+                     confirmed against a real "All Masters" export. This
+                     specific string has NOT been confirmed the same way yet
+                     -- worth creating one test ledger with it and checking
+                     it actually lands as "Unregistered/Consumer" (not
+                     rejected, not silently blanked) before trusting it for
+                     real parties. -->
+                <option value="Unregistered/Consumer">Unregistered/Consumer</option>
               </select>
               <div class="map-field-label">GSTIN/UIN</div>
               <input type="text" class="map-field-input spaced" id="ledger-alloc-new-ledger-gstin" placeholder="Optional">
