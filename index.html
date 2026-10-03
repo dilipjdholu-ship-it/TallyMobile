@@ -2145,6 +2145,35 @@
     }
     el.classList.add('open');
   }
+
+  // Oct 2026: swaps one open overlay directly for another, as ONE
+  // synchronous history update, instead of the goBackFromOverlay() +
+  // openOverlay() two-step some call sites used to use to go "back out of
+  // this overlay, then into that one" in a single tap (e.g. Review Queue
+  // row -> straight into that item's detail screen). That two-step was
+  // racy: goBackFromOverlay() calls the ASYNC history.back() to close the
+  // first overlay, but openOverlay() right after it closes/opens classes
+  // and calls the SYNCHRONOUS history.pushState() immediately -- so the
+  // new overlay was already on screen with its own history entry pushed
+  // on top, and only later did back()'s popstate handler fire. When it
+  // did, closeTopOverlay() (the popstate handler's generic fallback) just
+  // closes whichever overlay id it reaches FIRST in OVERLAY_IDS -- which,
+  // whenever the newly-opened overlay happens to be listed earlier than
+  // the one being left (true for 'invoice-upload-overlay' vs
+  // 'review-queue-overlay'), was the brand-new overlay, not the one the
+  // tap was meant to close. Net effect: the screen the user just tapped
+  // into (e.g. the invoice's "Posting failed / Edit & Retry" screen)
+  // closed itself out from under them a moment after opening -- reported
+  // as "nothing happens when I click Retry". replaceState (not
+  // pushState) keeps the history stack the same depth it was at before
+  // the swap, so the back button still returns to whatever was open
+  // before the FROM overlay, same as a single openOverlay() would have.
+  function swapOverlay(fromId, toId) {
+    const fromEl = document.getElementById(fromId);
+    if (fromEl) fromEl.classList.remove('open');
+    history.replaceState({ overlay: toId }, '', '');
+    document.getElementById(toId).classList.add('open');
+  }
   let appInitialized = false;
   let currentUnsubscribe = null;
 
@@ -7919,23 +7948,25 @@
         if (queueUnsubInv) { queueUnsubInv(); queueUnsubInv = null; }
         if (queueUnsubStmt) { queueUnsubStmt(); queueUnsubStmt = null; }
         if (queueUnsubVoucher) { queueUnsubVoucher(); queueUnsubVoucher = null; }
-        goBackFromOverlay(); // close the queue overlay
+        // swapOverlay (not goBackFromOverlay() + openOverlay()) -- see its
+        // definition for why the old two-step sequence could silently
+        // close this screen again right after opening it.
         if (kind === 'invoice') {
           resetScanFlow();
           scanCurrentInvoiceId = id;
-          openOverlay('invoice-upload-overlay');
+          swapOverlay('review-queue-overlay', 'invoice-upload-overlay');
           handleInvoiceStatusChange(queueInvoices[id]);
           listenForInvoiceUpdates(id);
         } else if (kind === 'voucher') {
           resetVoucherFlow();
           voucherCurrentId = id;
-          openOverlay('bank-voucher-review-overlay');
+          swapOverlay('review-queue-overlay', 'bank-voucher-review-overlay');
           handleVoucherStatusChange(queueVouchers[id]);
           listenForVoucherUpdates(id);
         } else {
           resetStatementFlow();
           stmtCurrentId = id;
-          openOverlay('statement-upload-overlay');
+          swapOverlay('review-queue-overlay', 'statement-upload-overlay');
           handleStatementStatusChange(queueStatements[id]);
           listenForStatementUpdates(id);
         }
