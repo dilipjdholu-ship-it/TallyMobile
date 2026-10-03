@@ -2946,6 +2946,11 @@
       // pending_* lines above (not cached, live status would go stale).
       cd.bank_statement_settings = val.bank_statement_settings;
       cd.pending_ledger_reallocations = val.pending_ledger_reallocations;
+      // Same "comes along for free" reasoning -- gst_settings is just the
+      // configured CGST/SGST ledger names (and rate maps), tiny, and the
+      // new GST / ITC report needs it on every render, same as
+      // bank_statement_settings above.
+      cd.gst_settings = val.gst_settings;
       saveToCache(currentCompany, 'company_info', val.company_info);
       saveToCache(currentCompany, 'outstanding_receivables', val.outstanding_receivables);
       document.getElementById('sync-text').textContent = 'Live';
@@ -3068,7 +3073,7 @@
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
 
-    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales' || currentSection === 'monthlypurchases') ? 'none' : 'flex';
+    searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales' || currentSection === 'monthlypurchases' || currentSection === 'gstitc') ? 'none' : 'flex';
     document.getElementById('report-date-bar').style.display = (currentSection === 'pnl' || currentSection === 'balancesheet') ? 'flex' : 'none';
 
     if (currentSection === 'home') renderHome(data, contentArea, summaryStrip);
@@ -3080,6 +3085,7 @@
     else if (currentSection === 'balancesheet') renderBalanceSheet(data, contentArea, summaryStrip);
     else if (currentSection === 'monthlysales') renderMonthlySales(data, contentArea, summaryStrip);
     else if (currentSection === 'monthlypurchases') renderMonthlyPurchases(data, contentArea, summaryStrip);
+    else if (currentSection === 'gstitc') renderGstItc(data, contentArea, summaryStrip);
   }
 
   // Sept 2026: `pushHistory` defaults to true for every normal caller
@@ -3225,6 +3231,10 @@
         <button class="dash-tile" data-goto="monthlypurchases">
           <span class="dt-icon" style="background:var(--rust-soft); color:var(--rust);">▁▃▅</span>
           <span class="dt-label">Monthly Purchases</span>
+        </button>
+        <button class="dash-tile" data-goto="gstitc">
+          <span class="dt-icon" style="background:var(--amber-soft); color:var(--amber);">%</span>
+          <span class="dt-label">GST / ITC</span>
         </button>
       </div>
     `;
@@ -4044,6 +4054,289 @@
         });
       });
     }
+
+    openOverlay('month-detail-overlay');
+  }
+
+  // ================= GST / INPUT TAX CREDIT =================
+  // Net GST payable, per month: Output GST (CGST/SGST/IGST posted on
+  // Sales vouchers) minus Input Tax Credit (the same tax ledgers posted
+  // on Purchase vouchers), computed straight from the already-synced
+  // itemized voucher data -- no separate report pulled from Tally.
+  // DJ asked for this to live alongside Monthly Sales/Purchases as its
+  // own report tile (Oct 2026), covering ITC only first then widened to
+  // the full net-payable figure he'd actually use for GSTR-3B.
+  //
+  // IMPORTANT CAVEATS (shown in the UI too, not just here):
+  // - Takes the GST amounts exactly as posted on each voucher's
+  //   ledger_lines -- it does NOT apply external ITC eligibility filters
+  //   (blocked credit u/s 17(5), the 180-day-payment reversal rule,
+  //   reverse charge, or matching against GSTR-2B). It answers "what did
+  //   Tally record", not "what the GST portal would currently allow".
+  // - CGST/SGST are matched against the exact ledger names configured in
+  //   GST & Ledger Settings (gst_settings.cgst_ledger/sgst_ledger) -- the
+  //   same names the app already trusts for posting, so this stays
+  //   correct even for a company with an unusually-named ledger. Falls
+  //   back to a plain "name contains CGST/SGST" match only if that
+  //   setting hasn't been filled in yet. IGST has no dedicated setting
+  //   (these are currently all intra-state ledgers, no configured IGST
+  //   name to match against) so it's always matched by a "contains
+  //   IGST" check, same convention openVoucherDetail's tax-invoice PDF
+  //   already uses (hasIGST, above).
+  // - Net is shown PER TAX HEAD (CGST net, SGST net, IGST net) as well
+  //   as a simple total, because that's what's actually payable per
+  //   head under GST law -- a CGST shortfall can't just be paid out of
+  //   an SGST credit. The "Total" row is a plain sum of the three heads
+  //   for a quick at-a-glance figure; it is NOT a substitute for GST's
+  //   real inter-head set-off order (IGST credit first against IGST,
+  //   then CGST, then SGST) if this company ever has interstate
+  //   purchases/sales with a real IGST balance.
+  // - Excludes Optional (draft) vouchers, same as Monthly Sales/Purchases
+  //   above and for the same reason (they aren't real Tally postings
+  //   yet).
+  function extractGstLineAmounts(ledgerLines, gstSettings) {
+    const cgstLedger = ((gstSettings || {}).cgst_ledger || '').trim();
+    const sgstLedger = ((gstSettings || {}).sgst_ledger || '').trim();
+    let cgst = 0, sgst = 0, igst = 0;
+    safeArray(ledgerLines).forEach(l => {
+      const name = (l.ledger_name || '').trim();
+      if (!name) return;
+      const upper = name.toUpperCase();
+      const amt = Math.abs(parseAmt(l.amount));
+      if (cgstLedger ? name === cgstLedger : upper.includes('CGST')) {
+        cgst += amt;
+      } else if (sgstLedger ? name === sgstLedger : upper.includes('SGST')) {
+        sgst += amt;
+      } else if (upper.includes('IGST')) {
+        igst += amt;
+      }
+    });
+    return { cgst, sgst, igst };
+  }
+
+  function gstItcMonthTotals(data, monthFilter) {
+    const gstSettings = data.gst_settings || {};
+    const salesVouchers = excludeOptionalVouchers(safeArray(Object.values(data.sales_vouchers || {})))
+      .filter(v => v.date && v.date.length >= 6 && (!monthFilter || v.date.slice(0, 6) === monthFilter));
+    const purchaseVouchers = excludeOptionalVouchers(safeArray(Object.values(data.purchase_vouchers || {})))
+      .filter(v => v.date && v.date.length >= 6 && (!monthFilter || v.date.slice(0, 6) === monthFilter));
+
+    const totals = { outputCgst: 0, outputSgst: 0, outputIgst: 0, inputCgst: 0, inputSgst: 0, inputIgst: 0 };
+    salesVouchers.forEach(v => {
+      const { cgst, sgst, igst } = extractGstLineAmounts(v.ledger_lines, gstSettings);
+      totals.outputCgst += cgst; totals.outputSgst += sgst; totals.outputIgst += igst;
+    });
+    purchaseVouchers.forEach(v => {
+      const { cgst, sgst, igst } = extractGstLineAmounts(v.ledger_lines, gstSettings);
+      totals.inputCgst += cgst; totals.inputSgst += sgst; totals.inputIgst += igst;
+    });
+    totals.salesCount = salesVouchers.length;
+    totals.purchaseCount = purchaseVouchers.length;
+    return totals;
+  }
+
+  function gstNetByHead(t) {
+    return {
+      cgst: t.outputCgst - t.inputCgst,
+      sgst: t.outputSgst - t.inputSgst,
+      igst: t.outputIgst - t.inputIgst,
+    };
+  }
+  function gstNetTotal(t) {
+    const n = gstNetByHead(t);
+    return n.cgst + n.sgst + n.igst;
+  }
+
+  const GST_MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function gstMonthLabel(key) {
+    const y = key.slice(2, 4);
+    const m = parseInt(key.slice(4, 6), 10) - 1;
+    return `${GST_MONTH_NAMES[m] || '?'} '${y}`;
+  }
+
+  function renderGstItc(data, contentArea, summaryStrip) {
+    if (!ensureSectionLoaded(currentCompany, 'sales_vouchers', 'purchase_vouchers')) {
+      contentArea.innerHTML = loadingState('Loading GST data…');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+    const gstSettings = data.gst_settings || {};
+    const allSales = excludeOptionalVouchers(safeArray(Object.values(data.sales_vouchers || {})));
+    const allPurchases = excludeOptionalVouchers(safeArray(Object.values(data.purchase_vouchers || {})));
+
+    if (allSales.length === 0 && allPurchases.length === 0) {
+      contentArea.innerHTML = emptyState('No sales/purchase data', 'Check back after the next sync.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const monthKeys = new Set();
+    allSales.concat(allPurchases).forEach(v => {
+      if (v.date && v.date.length >= 6) monthKeys.add(v.date.slice(0, 6));
+    });
+    const months = [...monthKeys].sort();
+
+    if (months.length === 0) {
+      contentArea.innerHTML = emptyState('No dated vouchers found', 'Nothing to calculate GST from yet.');
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const perMonth = months.map(key => ({ key, totals: gstItcMonthTotals(data, key) }));
+    const anyGstFound = perMonth.some(({ totals }) =>
+      totals.outputCgst || totals.outputSgst || totals.outputIgst || totals.inputCgst || totals.inputSgst || totals.inputIgst);
+
+    if (!anyGstFound) {
+      contentArea.innerHTML = emptyState(
+        'No GST found on synced vouchers',
+        gstSettings.cgst_ledger
+          ? `No ledger lines matching "${gstSettings.cgst_ledger}" / "${gstSettings.sgst_ledger}" (or containing IGST) were found on any synced Sales or Purchase voucher.`
+          : 'Set up your CGST/SGST ledger names first (gear icon → GST & Ledger Settings), then check back.'
+      );
+      summaryStrip.innerHTML = '';
+      return;
+    }
+
+    const latest = perMonth[perMonth.length - 1];
+    const latestNet = gstNetTotal(latest.totals);
+    const totalItc = perMonth.reduce((s, { totals }) => s + totals.inputCgst + totals.inputSgst + totals.inputIgst, 0);
+
+    summaryStrip.innerHTML = `
+      <div class="summary-chip ${latestNet < 0 ? 'forest' : 'rust'}">
+        <div class="label">${gstMonthLabel(latest.key)} Net</div>
+        <div class="value mono">${formatCurrency(Math.abs(latestNet))}${latestNet < 0 ? ' Cr' : ''}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">Total ITC (${months.length} mo)</div>
+        <div class="value mono">${formatCurrency(totalItc)}</div>
+      </div>
+    `;
+
+    const listHtml = `
+      <div class="list-card">${[...perMonth].reverse().map(({ key, totals }) => {
+        const net = gstNetTotal(totals);
+        const isCredit = net < 0;
+        return `
+        <div class="row clickable-row" data-month="${key}">
+          <div>
+            <div class="name">${gstMonthLabel(key)}</div>
+            <div class="sub">ITC ${formatCurrency(totals.inputCgst + totals.inputSgst + totals.inputIgst)}</div>
+          </div>
+          <div class="amount ${isCredit ? 'positive' : 'negative'} mono">${formatCurrency(Math.abs(net))}${isCredit ? ' Cr' : ''}</div>
+        </div>`;
+      }).join('')}</div>
+      <div class="sub" style="margin-top:10px; padding:0 2px;">
+        Net = Output GST (Sales) − Input Tax Credit (Purchases). "Cr" means ITC exceeded output that month (credit carried forward), shown in green. Tap a month for the CGST/SGST/IGST breakup. Excludes Optional (draft) vouchers.
+      </div>
+      <div style="margin-top:12px;">
+        <button class="export-btn" id="gst-itc-share-btn" style="width:100%;">Share GST / ITC Report</button>
+      </div>
+    `;
+
+    contentArea.innerHTML = listHtml;
+
+    contentArea.querySelectorAll('.clickable-row').forEach(row => {
+      row.addEventListener('click', () => openGstItcMonthDetail(row.dataset.month, gstMonthLabel(row.dataset.month)));
+    });
+
+    document.getElementById('gst-itc-share-btn').addEventListener('click', async () => {
+      if (!window.jspdf) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
+      let y = 16;
+      doc.setFontSize(14);
+      doc.text(`${companyLabel} — GST / Input Tax Credit Report`, 14, y);
+      y += 8;
+      doc.setFontSize(8.5);
+      doc.setFont(undefined, 'italic');
+      doc.text('Net = Output GST (Sales) minus Input Tax Credit (Purchases), per tax head. Figures are as posted in Tally -- not a substitute for GSTR-2B reconciliation or ITC eligibility rules.', 14, y, { maxWidth: 182 });
+      doc.setFont(undefined, 'normal');
+      y += 10;
+      doc.setFontSize(9.5);
+      doc.setFont(undefined, 'bold');
+      doc.text('Month', 14, y);
+      doc.text('Output GST', 95, y, { align: 'right' });
+      doc.text('Input GST (ITC)', 140, y, { align: 'right' });
+      doc.text('Net Payable', 195, y, { align: 'right' });
+      doc.setFont(undefined, 'normal');
+      y += 3;
+      doc.line(14, y, 195, y);
+      y += 7;
+      let grandOutput = 0, grandInput = 0;
+      perMonth.forEach(({ key, totals }) => {
+        if (y > 280) { doc.addPage(); y = 16; }
+        const output = totals.outputCgst + totals.outputSgst + totals.outputIgst;
+        const input = totals.inputCgst + totals.inputSgst + totals.inputIgst;
+        const net = gstNetTotal(totals);
+        grandOutput += output; grandInput += input;
+        doc.text(gstMonthLabel(key), 14, y);
+        doc.text(formatCurrencyPDF(output), 95, y, { align: 'right' });
+        doc.text(formatCurrencyPDF(input), 140, y, { align: 'right' });
+        doc.text(`${formatCurrencyPDF(Math.abs(net))}${net < 0 ? ' Cr' : ''}`, 195, y, { align: 'right' });
+        y += 6;
+      });
+      y += 2;
+      doc.line(14, y, 195, y);
+      y += 7;
+      doc.setFont(undefined, 'bold');
+      const grandNet = grandOutput - grandInput;
+      doc.text('Total', 14, y);
+      doc.text(formatCurrencyPDF(grandOutput), 95, y, { align: 'right' });
+      doc.text(formatCurrencyPDF(grandInput), 140, y, { align: 'right' });
+      doc.text(`${formatCurrencyPDF(Math.abs(grandNet))}${grandNet < 0 ? ' Cr' : ''}`, 195, y, { align: 'right' });
+      viewOrSharePdf(doc, `${currentCompany}_gst_itc_report.pdf`);
+    });
+  }
+
+  function openGstItcMonthDetail(monthKey, monthLabelStr) {
+    const data = companyData[currentCompany] || {};
+    const totals = gstItcMonthTotals(data, monthKey);
+    const net = gstNetByHead(totals);
+    const netTotal = net.cgst + net.sgst + net.igst;
+    const hasIgst = totals.outputIgst || totals.inputIgst;
+
+    document.getElementById('month-detail-title').textContent = `${monthLabelStr} — GST / ITC`;
+    const body = document.getElementById('month-detail-body');
+
+    function headRow(label, output, input, netAmt) {
+      const isCredit = netAmt < 0;
+      return `
+        <div class="row">
+          <div>
+            <div class="name">${label}</div>
+            <div class="sub">Output ${formatCurrency(output)} − Input ${formatCurrency(input)}</div>
+          </div>
+          <div class="amount ${isCredit ? 'positive' : 'negative'} mono">${formatCurrency(Math.abs(netAmt))}${isCredit ? ' Cr' : ''}</div>
+        </div>`;
+    }
+
+    body.innerHTML = `
+      <div class="summary-strip" style="margin-bottom:14px;">
+        <div class="summary-chip">
+          <div class="label">Sales Vouchers</div>
+          <div class="value mono">${totals.salesCount}</div>
+        </div>
+        <div class="summary-chip">
+          <div class="label">Purchase Vouchers</div>
+          <div class="value mono">${totals.purchaseCount}</div>
+        </div>
+      </div>
+      <div class="list-card">
+        ${headRow('CGST', totals.outputCgst, totals.inputCgst, net.cgst)}
+        ${headRow('SGST', totals.outputSgst, totals.inputSgst, net.sgst)}
+        ${hasIgst ? headRow('IGST', totals.outputIgst, totals.inputIgst, net.igst) : ''}
+        <div class="row" style="background: var(--paper-line);">
+          <div class="name" style="font-weight:700;">Net Payable (Total)</div>
+          <div class="amount ${netTotal < 0 ? 'positive' : 'negative'} mono" style="font-weight:700;">${formatCurrency(Math.abs(netTotal))}${netTotal < 0 ? ' Cr' : ''}</div>
+        </div>
+      </div>
+      <div class="sub" style="margin-top:10px; padding:0 2px;">
+        Based on ${totals.salesCount} sales and ${totals.purchaseCount} purchase voucher(s) synced for this month (Optional/draft vouchers excluded). "Total" is a plain sum of CGST/SGST/IGST nets for a quick figure -- GST law's real inter-head set-off order (IGST credit first, then CGST, then SGST) can differ slightly if this company has an interstate IGST balance. This reflects GST as posted in Tally, not a GSTR-2B reconciliation or ITC-eligibility check (blocked credits, 180-day rule, reverse charge aren't applied).
+      </div>
+    `;
 
     openOverlay('month-detail-overlay');
   }
