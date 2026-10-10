@@ -1593,6 +1593,11 @@
             <input type="file" accept=".csv,text/csv" id="gpay-csv-input" style="display:none;">
             <button class="scan-btn" id="gpay-csv-choose-btn">Choose CSV File</button>
           </div>
+          <!-- Imports only ever ADD to what's stored (see
+               importGpayTransactions), so a wrong file -- e.g. another
+               firm's export -- would otherwise stay mixed in for good. -->
+          <p id="gpay-stored-info" style="font-size:13px;color:#607d8b;margin:16px 0 6px;"></p>
+          <button class="scan-btn secondary" id="gpay-clear-btn">Clear stored GPay data for this company</button>
         </div>
 
         <div class="gpay-step" id="gpay-step-preview">
@@ -6661,8 +6666,21 @@
   // actually built and tested against (see the AskUserQuestion decision
   // logged in this feature's commit/session) -- other UPI apps' bank
   // narrations look different and this hasn't been checked against them.
+  //
+  // Oct 2026: compared with spaces/punctuation stripped. Shivam Hardware's
+  // bank shows GPay settlements as "IMPS:...:GOOGLEINDIADIGIT", but Shivam
+  // Traders' (Bank of India) shows "NEFT/AXNGG.../UTIB/GOOGLE INDIA DIGITAL
+  // SE" -- same Google payout, spaced out, so the old exact check never
+  // matched and no Shivam Traders voucher ever got a suggestion. Checked
+  // against DJ's real Sept 2026 Shivam Traders CSV: all 22 settlements
+  // matched their NEFT vouchers on the same date and amount, one NEFT per
+  // payment, no batching or next-day lag.
   function isGpayNarration(narration) {
-    return !!(narration && narration.toUpperCase().includes('GOOGLEINDIADIGIT'));
+    return !!(narration && narration.toUpperCase().replace(/[^A-Z]/g, '').includes('GOOGLEINDIADIGIT'));
+  }
+
+  async function clearGpayTransactions(companyKey) {
+    await remove(ref(db, `companies/${companyKey}/gpay_transactions`));
   }
 
   // ===== Party ledger narration matching (Sept 2026, DJ's request) =====
@@ -6877,9 +6895,50 @@
     document.getElementById('gpay-step-capture').classList.add('active');
     gpayCsvParsedRows = null;
     document.getElementById('gpay-csv-input').value = '';
+    renderGpayStoredInfo();
     openOverlay('gpay-upload-overlay');
   });
   document.getElementById('gpay-upload-back').addEventListener('click', () => goBackFromOverlay());
+
+  function renderGpayStoredInfo() {
+    const info = document.getElementById('gpay-stored-info');
+    const clearBtn = document.getElementById('gpay-clear-btn');
+    const label = (COMPANIES.find(c => c.key === currentCompany) || {}).label || currentCompany;
+    const ready = gpayCache && gpayCache.key === currentCompany && gpayCache.count !== null;
+    if (ready && gpayCache.count === 0) {
+      info.textContent = `Nothing stored yet for ${label}.`;
+      clearBtn.style.display = 'none';
+      return;
+    }
+    const range = ready && gpayCache.range ? ` (${gpayCache.range.from} to ${gpayCache.range.to})` : '';
+    info.textContent = ready
+      ? `Currently stored for ${label}: ${gpayCache.count} transaction${gpayCache.count === 1 ? '' : 's'}${range}.`
+      : `Stored GPay data for ${label}:`;
+    clearBtn.style.display = '';
+  }
+
+  document.getElementById('gpay-clear-btn').addEventListener('click', async () => {
+    const companyKey = currentCompany;
+    const label = (COMPANIES.find(c => c.key === companyKey) || {}).label || companyKey;
+    if (!confirm(`Delete ALL stored GPay transactions for ${label}? Suggestions will stop until you import a CSV again. Nothing in Tally is touched.`)) return;
+    const btn = document.getElementById('gpay-clear-btn');
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+    try {
+      await clearGpayTransactions(companyKey);
+      if (companyKey === currentCompany) {
+        gpayCache = { key: companyKey, index: new Map(), count: 0, range: null };
+      }
+      renderGpayStoredInfo();
+      document.getElementById('gpay-stored-info').textContent = `Cleared. Nothing stored for ${label} now -- choose the correct CSV above.`;
+    } catch (err) {
+      console.error('GPay clear failed:', err);
+      alert('Could not clear -- check your connection and try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Clear stored GPay data for this company';
+    }
+  });
 
   document.getElementById('gpay-csv-choose-btn').addEventListener('click', () => {
     document.getElementById('gpay-csv-input').click();
