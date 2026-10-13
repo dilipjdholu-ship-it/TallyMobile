@@ -1306,6 +1306,9 @@
   <div id="tally-status-banner" class="tally-status-banner" style="display:none;">
     Tally is closed on the PC — invoice posting and live lookups are paused until it's reopened.
   </div>
+  <!-- Written by gmail_bank_alert_sync.py's report_gmail_status() when the
+       Gmail login is rejected (Oct 2026: it expired silently for 9 days). -->
+  <div id="gmail-status-banner" class="tally-status-banner" style="display:none;"></div>
 
   <main>
     <div class="search-bar" id="search-bar-row">
@@ -2745,6 +2748,17 @@
   function listenToTallyStatus() {
     onValue(ref(db, 'sync_status'), snapshot => {
       const val = snapshot.val() || {};
+      const gmailBanner = document.getElementById('gmail-status-banner');
+      if (gmailBanner) {
+        const gm = val.gmail;
+        if (gm && gm.ok === false) {
+          const since = gm.since ? ` (since ${formatDateTime(gm.since)})` : '';
+          gmailBanner.textContent = `⚠ Bank alert emails are not being read${since}. ${gm.message || ''}`;
+          gmailBanner.style.display = '';
+        } else {
+          gmailBanner.style.display = 'none';
+        }
+      }
       const banner = document.getElementById('tally-status-banner');
       if (!banner) return;
       // Treat a status that hasn't been touched in a long while the same
