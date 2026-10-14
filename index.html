@@ -9053,16 +9053,41 @@
 
   async function confirmMapping() {
     const itemMatches = mappingData.item_matches || [];
+
+    // Oct 2026: a line whose quantity OCR couldn't read (Prashant Agency,
+    // "HEATX NF 5OOML", qty blank) used to go straight into set(), and
+    // Firebase rejected the whole save with "value argument contains
+    // undefined in property ...confirmed_items.4.quantity" -- an error
+    // screen with no way to tell which field on which line. Check every
+    // line first and keep the person on this screen with a plain message.
+    const missing = [];
+    itemMatches.forEach((item, idx) => {
+      const s = mappingState.items[idx];
+      const gaps = [];
+      if (!(parseFloat(s.quantity) > 0)) gaps.push('Quantity');
+      if (!(parseFloat(s.rate) > 0)) gaps.push('Rate');
+      if (!(parseFloat(s.amount) > 0)) gaps.push('Amount');
+      if (gaps.length) {
+        missing.push(`Line ${idx + 1} (${s.confirmed || item.ocr_description || 'item'}): enter ${gaps.join(', ')}`);
+      }
+    });
+    if (missing.length) {
+      alert('Please fill in before confirming:\n\n' + missing.join('\n'));
+      return;
+    }
+
+    // Firebase refuses `undefined` anywhere in a write -- send null instead.
+    const orNull = v => (v === undefined || (typeof v === 'number' && isNaN(v))) ? null : v;
     const confirmedItems = itemMatches.map((item, idx) => ({
-      ocr_description: item.ocr_description,
-      confirmed: mappingState.items[idx].confirmed,
-      quantity: mappingState.items[idx].quantity,
-      rate: mappingState.items[idx].rate,
-      amount: mappingState.items[idx].amount,
-      unit: mappingState.items[idx].unit,
-      hsn_guess: item.hsn_guess,
-      gst_rate: parseInt(mappingState.items[idx].gst_rate, 10),
-      discount_pct: mappingState.items[idx].discount_pct ?? null,
+      ocr_description: orNull(item.ocr_description),
+      confirmed: orNull(mappingState.items[idx].confirmed),
+      quantity: orNull(mappingState.items[idx].quantity),
+      rate: orNull(mappingState.items[idx].rate),
+      amount: orNull(mappingState.items[idx].amount),
+      unit: orNull(mappingState.items[idx].unit),
+      hsn_guess: orNull(item.hsn_guess),
+      gst_rate: orNull(parseInt(mappingState.items[idx].gst_rate, 10)),
+      discount_pct: orNull(mappingState.items[idx].discount_pct ?? null),
     }));
 
     const payload = {
