@@ -115,6 +115,12 @@ self.addEventListener('fetch', event => {
   // service worker didn't exist.
   if (url.origin !== self.location.origin) return;
 
+  // version.json is the app's "is there a newer version?" check (Oct
+  // 2026) -- it must always come from the network, never from this cache,
+  // or the check could never see a new version. Returning without
+  // respondWith lets the browser fetch it normally.
+  if (url.pathname.endsWith('/version.json')) return;
+
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
     const cached = await cache.match(req);

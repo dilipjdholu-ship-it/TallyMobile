@@ -541,6 +541,15 @@
     text-align: center;
     padding: 8px 16px;
   }
+  .update-banner {
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+    padding: 10px 16px;
+    cursor: pointer;
+  }
   .history-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
   .history-tab {
     flex: 1; padding: 9px; border-radius: 9px;
@@ -1309,6 +1318,10 @@
   <!-- Written by gmail_bank_alert_sync.py's report_gmail_status() when the
        Gmail login is rejected (Oct 2026: it expired silently for 9 days). -->
   <div id="gmail-status-banner" class="tally-status-banner" style="display:none;"></div>
+  <!-- Shown when version.json on GitHub is newer than this copy of the
+       app (see checkForAppUpdate). Tapping clears the phone's saved copy
+       and reloads, so a new upload takes effect on the first try. -->
+  <div id="update-banner" class="update-banner" style="display:none;" role="button">⟳ New version available — tap to update</div>
 
   <main>
     <div class="search-bar" id="search-bar-row">
@@ -1395,6 +1408,7 @@
       <span class="fc-icon">🌙</span><span class="settings-toggle-label">Dark Mode</span>
       <span class="switch"><input type="checkbox" id="dark-mode-toggle"><span class="switch-track"></span></span>
     </label>
+    <div id="app-version-label" style="text-align:center; font-size:12px; color:var(--ink-soft, #607d8b); margin:10px 0 4px;"></div>
     <button class="fab-chooser-cancel" id="settings-chooser-cancel">Cancel</button>
   </div>
 
@@ -6398,6 +6412,69 @@
       });
     });
   }
+
+  // ===== App version + update prompt (Oct 2026) =====
+  // The phone runs its saved copy of this file (sw.js), so a new upload
+  // used to need two full reopens -- and four times the phone was found
+  // running an old version without anyone knowing. Now: APP_VERSION is
+  // baked into this file, version.json on GitHub holds the latest one, and
+  // a newer version.json shows a banner that updates in one tap.
+  // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
+  // same new value, and upload both.
+  const APP_VERSION = '2026.10.15-2';
+  const UPDATE_TRIED_KEY = 'tm_update_tried_for';
+  let lastUpdateCheck = 0;
+
+  document.getElementById('app-version-label').textContent = `App version ${APP_VERSION}`;
+
+  async function checkForAppUpdate() {
+    if (Date.now() - lastUpdateCheck < 60 * 1000) return; // at most once a minute
+    lastUpdateCheck = Date.now();
+    try {
+      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const latest = String((await res.json()).version || '');
+      const banner = document.getElementById('update-banner');
+      if (!latest || latest === APP_VERSION) {
+        banner.style.display = 'none';
+        return;
+      }
+      let tried = null;
+      try { tried = localStorage.getItem(UPDATE_TRIED_KEY); } catch (e) { /* storage blocked -- just show the banner */ }
+      // Already updated for this version and still not on it: index.html
+      // on GitHub wasn't updated to match version.json. Don't loop.
+      banner.textContent = tried === latest
+        ? `⟳ Version ${latest} is announced but this app is still ${APP_VERSION} -- tap to try again`
+        : '⟳ New version available — tap to update';
+      banner.style.display = '';
+    } catch (err) {
+      // Offline or GitHub unreachable -- try again next time.
+    }
+  }
+
+  async function applyAppUpdate() {
+    const banner = document.getElementById('update-banner');
+    banner.textContent = 'Updating…';
+    try {
+      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      const latest = String((await res.json()).version || '');
+      try { localStorage.setItem(UPDATE_TRIED_KEY, latest); } catch (e) { /* best-effort */ }
+    } catch (e) { /* still update */ }
+    try {
+      // Drop the saved copy so the reload below comes straight from GitHub.
+      if (window.caches) {
+        const names = await caches.keys();
+        await Promise.all(names.filter(n => n.startsWith('tallymobile-shell')).map(n => caches.delete(n)));
+      }
+    } catch (e) { /* reload anyway */ }
+    location.reload();
+  }
+
+  document.getElementById('update-banner').addEventListener('click', applyAppUpdate);
+  checkForAppUpdate();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForAppUpdate();
+  });
 
   // ================= INVOICE SCAN / UPLOAD / REVIEW =================
   // Flow: capture photo -> upload to Firebase Storage -> write a
