@@ -1781,6 +1781,12 @@
           <div id="gst-sales-rate-selects"></div>
         </div>
 
+        <div class="map-section">
+          <div class="map-section-title">Bill Charges &amp; Discounts</div>
+          <p class="totals-card-hint" style="margin:-4px 0 10px;">Default Tally ledger for each kind of line printed under the items on a purchase bill. Leave blank to let the app guess (e.g. Transportation Charges, Loading Charges, Discount Received, Round Off). You can still change it on each bill.</p>
+          <div id="gst-adjustment-ledger-selects"></div>
+        </div>
+
         <div id="gst-settings-error" class="map-field-warn" style="display:none;"></div>
         <button class="map-confirm-btn" id="gst-settings-save-btn">Save Settings</button>
       </div>
@@ -2326,6 +2332,30 @@
     });
   }
 
+  // Bill-level purchase lines (Oct 2026) -- default ledger per kind,
+  // saved as gst_settings.adjustment_ledgers. Keys match the kinds
+  // extract_bill_adjustments() returns.
+  const ADJ_LEDGER_KINDS = [
+    ['packing', 'Packing & Forwarding'], ['freight', 'Freight / Transport'], ['loading', 'Loading / Hamali'],
+    ['insurance', 'Insurance'], ['other_charge', 'Other charges'], ['discount', 'In-bill discount'], ['round_off', 'Round off'],
+  ];
+  function renderAdjLedgerSelects(existingMap, names) {
+    const container = document.getElementById('gst-adjustment-ledger-selects');
+    container.innerHTML = ADJ_LEDGER_KINDS.map(([k, label]) => `
+      <div class="map-field-label">${label}</div>
+      <select class="stmt-ledger-select map-field-input spaced" id="gst-adj-${k}"></select>
+    `).join('');
+    ADJ_LEDGER_KINDS.forEach(([k]) => populateLedgerSelect(document.getElementById(`gst-adj-${k}`), names, (existingMap || {})[k]));
+  }
+  function readAdjLedgerSelects() {
+    const map = {};
+    ADJ_LEDGER_KINDS.forEach(([k]) => {
+      const val = document.getElementById(`gst-adj-${k}`).value;
+      if (val) map[k] = val;
+    });
+    return map;
+  }
+
   function readRateSelects(prefix) {
     const map = {};
     GST_RATES.forEach(r => {
@@ -2364,6 +2394,7 @@
     populateLedgerSelect(sgstSelect, names, existing?.sgst_ledger);
     renderRateSelects('gst-purchase-rate-selects', 'gst-purchase', existing?.purchase_by_rate, names);
     renderRateSelects('gst-sales-rate-selects', 'gst-sales', existing?.sales_by_rate, names);
+    renderAdjLedgerSelects(existing?.adjustment_ledgers, names);
   }
 
   document.getElementById('gst-settings-gear-btn').addEventListener('click', () => {
@@ -2430,6 +2461,7 @@
         sgst_ledger,
         purchase_by_rate: readRateSelects('gst-purchase'),
         sales_by_rate: readRateSelects('gst-sales'),
+        adjustment_ledgers: readAdjLedgerSelects(),
         updated_at: new Date().toISOString(),
       });
       document.getElementById('gst-settings-error').style.display = 'none';
@@ -8404,6 +8436,7 @@
           amount: item.amount,
           discount_pct: item.discount_pct,
         })),
+        adjustments: (data.bill_adjustments || []).map(adjFromExtracted),
       };
       renderMappingScreen();
       document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
@@ -8450,6 +8483,9 @@
           amount: item.amount,
           discount_pct: item.discount_pct,
         })),
+        adjustments: data.confirmed_adjustments
+          ? data.confirmed_adjustments.map(adjFromConfirmed)
+          : (data.bill_adjustments || []).map(adjFromExtracted),
       };
       showInvoiceResult(false, 'Posting failed', data.error || 'Unknown error', retryInvoice);
     }
@@ -8611,11 +8647,175 @@
       </div>`;
     });
 
+    html += `<div class="map-section" id="map-adjustments"></div>`;
+
     html += `<button class="map-confirm-btn" id="map-confirm-btn" disabled>Confirm &amp; Post</button>`;
     html += `<button type="button" class="map-discard-btn" id="map-discard-btn">Discard this scanned invoice</button>`;
 
     container.innerHTML = html;
     attachMappingHandlers();
+    // An item's GST rate feeds the "Same as items" rate of bill lines.
+    container.querySelectorAll('.map-gst-chip[data-item]').forEach(btn =>
+      btn.addEventListener('click', () => { renderAdjustmentsSection(); recalcTotalsSummary(); }));
+    renderAdjustmentsSection();
+    loadAdjustmentLedgers();
+  }
+
+  // ===== Bill-level lines: charges, discounts, round off (Oct 2026) =====
+  // Read off the bill by extract_bill_adjustments() on the PC; reviewed and
+  // edited here; posted by post_invoice_voucher() as their own ledger lines.
+  // State per line: type (charge = adds, GST applies / charge_nogst / discount
+  // = subtracts before GST / round_off), amount (positive, except round off
+  // which keeps its sign), gst_rate ('' = same as the items), ledger.
+  const ADJ_TYPES = [
+    ['charge', 'Charge (GST applies)'], ['charge_nogst', 'Charge (no GST)'],
+    ['discount', 'Discount (before GST)'], ['round_off', 'Round off'],
+  ];
+  let adjLedgerNames = null;
+  let adjLedgerDefaults = {};
+
+  function adjFromExtracted(e) {
+    const type = e.kind === 'discount' ? 'discount' : e.kind === 'round_off' ? 'round_off' : 'charge';
+    return {
+      kind: e.kind || 'other_charge', type, label: e.label || '',
+      amount: type === 'round_off' ? String(e.amount) : String(Math.abs(e.amount)),
+      gst_rate: e.gst_rate != null ? String(e.gst_rate) : '', ledger: '', needs_check: !!e.needs_check,
+    };
+  }
+  function adjFromConfirmed(c) {
+    const type = c.type || (c.kind === 'discount' ? 'discount' : c.kind === 'round_off' ? 'round_off' : 'charge');
+    return {
+      kind: c.kind || 'other_charge', type, label: c.label || '',
+      amount: type === 'round_off' ? String(c.amount) : String(Math.abs(c.amount)),
+      gst_rate: c.gst_rate != null ? String(c.gst_rate) : '', ledger: c.ledger || '', needs_check: false,
+    };
+  }
+  function adjSignedAmount(a) {
+    const v = parseFloat(a.amount);
+    if (isNaN(v)) return NaN;
+    if (a.type === 'discount') return -Math.abs(v);
+    if (a.type === 'round_off') return v;
+    return Math.abs(v);
+  }
+  function adjIsTaxable(a) { return a.type === 'charge' || a.type === 'discount'; }
+  function itemsCommonRate() {
+    const rates = [...new Set((mappingState.items || []).map(i => i.gst_rate).filter(r => r !== null && r !== undefined && r !== ''))];
+    return rates.length === 1 ? rates[0] : null;
+  }
+  function adjEffectiveRate(a) { return a.gst_rate ? a.gst_rate : itemsCommonRate(); }
+
+  function defaultAdjLedger(a) {
+    const key = a.type === 'discount' ? 'discount' : a.type === 'round_off' ? 'round_off'
+      : (['packing', 'freight', 'loading', 'insurance'].includes(a.kind) ? a.kind : 'other_charge');
+    if (adjLedgerDefaults[key]) return adjLedgerDefaults[key];
+    const names = adjLedgerNames || [];
+    if (key === 'packing' || key === 'freight') {
+      // "Transportation Charges" -- also matches the books' own spellings
+      // ("Trasnportation", "Transporatation"); the "@ 18%" version when
+      // one exists for the line's GST rate (Shivam Hardware has them).
+      const list = names.filter(n => /\btra\w*\s+charges\b/i.test(n));
+      const rate = adjEffectiveRate(a);
+      const exact = rate ? list.find(n => new RegExp(`@\\s*${rate}\\s*%`).test(n)) : null;
+      return exact || list.find(n => !/@/.test(n)) || list[0] || '';
+    }
+    if (key === 'loading') return names.find(n => /^loading charges$/i.test(n)) || names.find(n => /loading/i.test(n)) || '';
+    // Deliberately the general "Discount Received", never a supplier's own
+    // discount ledger (DJ, Oct 2026).
+    if (key === 'discount') return names.find(n => /^discount received$/i.test(n)) || '';
+    if (key === 'round_off') return names.find(n => /^round\s*off$/i.test(n)) || '';
+    return '';
+  }
+
+  async function loadAdjustmentLedgers() {
+    const company = currentCompany;
+    try {
+      const [names, snap] = await Promise.all([
+        fetchLedgerNames(),
+        get(ref(db, `companies/${company}/gst_settings/adjustment_ledgers`)),
+      ]);
+      if (company !== currentCompany) return;
+      adjLedgerNames = names;
+      adjLedgerDefaults = snap.val() || {};
+    } catch (err) {
+      console.error('Could not load ledgers for bill charges:', err);
+      adjLedgerNames = adjLedgerNames || [];
+    }
+    (mappingState.adjustments || []).forEach(a => { if (!a.ledger) a.ledger = defaultAdjLedger(a); });
+    renderAdjustmentsSection();
+    recalcTotalsSummary();
+  }
+
+  function renderAdjustmentsSection() {
+    const el = document.getElementById('map-adjustments');
+    if (!el) return;
+    const adjs = mappingState.adjustments || (mappingState.adjustments = []);
+    const common = itemsCommonRate();
+    let html = `<div class="map-section-title">Other Charges &amp; Discounts</div>
+      <p class="totals-card-hint" style="margin:-4px 0 10px;">Packing, freight, loading, in-bill discounts and round off printed on the bill. Each goes to its own Tally ledger; charges and discounts before GST also change the CGST/SGST.</p>`;
+    if (!adjs.length) html += `<div class="totals-card-hint">Nothing read off this bill -- add any charge or discount it shows.</div>`;
+    adjs.forEach((a, i) => {
+      const showRate = adjIsTaxable(a);
+      html += `<div class="map-adj-row" style="border-top:1px solid var(--border, #e3e7ee); padding-top:10px; margin-top:10px;">
+        <div class="map-section-title-row">
+          <input type="text" class="map-field-input" data-adj-label="${i}" value="${escapeHtml(a.label || '')}" placeholder="e.g. Packing &amp; Forwarding" style="flex:1;">
+          <button type="button" class="map-remove-item-btn" data-adj-remove="${i}" title="Remove this line">✕</button>
+        </div>
+        ${a.needs_check ? '<div class="map-item-meta warn">⚠ amount may be misread -- check it against the bill</div>' : ''}
+        <div class="map-rate-unit-row">
+          <div>
+            <div class="map-field-label">Type</div>
+            <select class="map-field-input" data-adj-type="${i}">${ADJ_TYPES.map(([v, l]) => `<option value="${v}"${v === a.type ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          </div>
+          <div>
+            <div class="map-field-label">Amount${a.type === 'round_off' ? ' (− if less)' : ''}</div>
+            <input type="text" inputmode="decimal" class="map-field-input" data-adj-amount="${i}" value="${escapeHtml(a.amount ?? '')}">
+          </div>
+        </div>
+        ${showRate ? `<div class="map-field-label">GST rate</div>
+        <div class="map-gst-row">${['', ...GST_RATES.map(String)].map(r => `<button type="button" class="map-gst-chip${(a.gst_rate || '') === r ? ' selected' : ''}" data-adj-rate="${i}" data-rate="${r}">${r === '' ? `Same as items${common != null ? ` (${common}%)` : ''}` : r + '%'}</button>`).join('')}</div>` : ''}
+        <div class="map-field-label">Tally ledger</div>
+        <select class="stmt-ledger-select map-field-input" data-adj-ledger="${i}"></select>
+      </div>`;
+    });
+    html += `<button type="button" class="map-discard-btn" id="map-adj-add-btn" style="margin-top:10px;">+ Add charge / discount</button>`;
+    el.innerHTML = html;
+
+    el.querySelectorAll('[data-adj-ledger]').forEach(sel => {
+      const i = parseInt(sel.dataset.adjLedger, 10);
+      if (adjLedgerNames) populateLedgerSelect(sel, adjLedgerNames, adjs[i].ledger);
+      else sel.innerHTML = '<option value="">Loading ledgers…</option>';
+      sel.addEventListener('change', () => { adjs[i].ledger = sel.value; });
+    });
+    el.querySelectorAll('[data-adj-label]').forEach(inp => inp.addEventListener('input', () => {
+      adjs[parseInt(inp.dataset.adjLabel, 10)].label = inp.value;
+    }));
+    el.querySelectorAll('[data-adj-amount]').forEach(inp => inp.addEventListener('input', () => {
+      adjs[parseInt(inp.dataset.adjAmount, 10)].amount = inp.value;
+      recalcTotalsSummary();
+    }));
+    el.querySelectorAll('[data-adj-type]').forEach(sel => sel.addEventListener('change', () => {
+      const a = adjs[parseInt(sel.dataset.adjType, 10)];
+      a.type = sel.value;
+      if (a.type !== 'round_off') a.amount = String(Math.abs(parseFloat(a.amount)) || '');
+      renderAdjustmentsSection();
+      recalcTotalsSummary();
+    }));
+    el.querySelectorAll('[data-adj-rate]').forEach(btn => btn.addEventListener('click', () => {
+      adjs[parseInt(btn.dataset.adjRate, 10)].gst_rate = btn.dataset.rate;
+      renderAdjustmentsSection();
+      recalcTotalsSummary();
+    }));
+    el.querySelectorAll('[data-adj-remove]').forEach(btn => btn.addEventListener('click', () => {
+      adjs.splice(parseInt(btn.dataset.adjRemove, 10), 1);
+      renderAdjustmentsSection();
+      recalcTotalsSummary();
+    }));
+    document.getElementById('map-adj-add-btn').addEventListener('click', () => {
+      const a = { kind: 'other_charge', type: 'charge', label: '', amount: '', gst_rate: '', ledger: '', needs_check: false };
+      a.ledger = defaultAdjLedger(a);
+      adjs.push(a);
+      renderAdjustmentsSection();
+    });
   }
 
   function renderPickerHtml(kind, idx, ocrText, remembered, suggestions) {
@@ -8955,9 +9155,31 @@
       }
     });
 
+    // Bill-level lines (Oct 2026): charges/discounts before GST change the
+    // taxable value and the tax; no-GST charges and round off only the total.
+    let appOther = 0;
+    (mappingState.adjustments || []).forEach(a => {
+      const amt = adjSignedAmount(a);
+      if (isNaN(amt)) return;
+      if (adjIsTaxable(a)) {
+        appTaxable += amt;
+        const rate = parseFloat(adjEffectiveRate(a));
+        if (!isNaN(rate)) {
+          appCgst += amt * (rate / 100) / 2;
+          appSgst += amt * (rate / 100) / 2;
+        } else {
+          anyGstMissing = true;
+        }
+      } else {
+        appOther += amt;
+      }
+    });
+
     const inv = mappingData.invoice_totals || {};
     const fmt = n => (n === null || n === undefined || isNaN(n)) ? '—' : `₹${n.toFixed(2)}`;
     const closeEnough = (a, b) => (a != null && b != null && !isNaN(a) && !isNaN(b) && Math.abs(a - b) < Math.max(1, Math.abs(b) * 0.02));
+    // Printed bill total, read off photos too (invoice_totals is PDF-only).
+    const printedTotal = parseFloat(String((mappingData.fields || {}).grand_total_guess || '').replace(/[^\d.]/g, ''));
 
     const rows = [
       { label: 'Taxable Value', app: appTaxable, inv: inv.taxable_value },
@@ -8967,9 +9189,18 @@
     if (inv.igst != null) {
       rows.push({ label: 'IGST', app: null, inv: inv.igst });
     }
+    rows.push({
+      label: 'Bill Total',
+      app: anyGstMissing ? null : appTaxable + appCgst + appSgst + appOther,
+      inv: isNaN(printedTotal) ? null : printedTotal,
+    });
 
-    const hasAnyInvoiceTotal = Object.values(inv).some(v => v !== null && v !== undefined);
-    const rowsWithMatch = rows.map(r => ({ ...r, match: r.app != null ? closeEnough(r.app, r.inv) : null }));
+    const hasAnyInvoiceTotal = Object.values(inv).some(v => v !== null && v !== undefined) || !isNaN(printedTotal);
+    const rowsWithMatch = rows.map(r => ({
+      ...r,
+      match: r.app == null || r.inv == null ? null
+        : r.label === 'Bill Total' ? Math.abs(r.app - r.inv) <= 1 : closeEnough(r.app, r.inv),
+    }));
     const anyMismatch = rowsWithMatch.some(r => r.match === false);
 
     el.className = 'map-section totals-card' + (anyMismatch ? ' mismatch' : '');
@@ -9071,6 +9302,23 @@
         missing.push(`Line ${idx + 1} (${s.confirmed || item.ocr_description || 'item'}): enter ${gaps.join(', ')}`);
       }
     });
+    // Bill-level lines (Oct 2026) -- each needs an amount and a ledger, and
+    // a taxable one needs a GST rate (its own, or one shared by all items).
+    const confirmedAdjustments = [];
+    (mappingState.adjustments || []).forEach((a, i) => {
+      const name = a.label || `Charge/discount line ${i + 1}`;
+      const amt = adjSignedAmount(a);
+      if (isNaN(amt) || amt === 0) { missing.push(`${name}: enter the amount (or remove the line)`); return; }
+      if (!a.ledger) missing.push(`${name}: choose a Tally ledger`);
+      const rate = adjIsTaxable(a) ? adjEffectiveRate(a) : null;
+      if (adjIsTaxable(a) && (rate === null || rate === '')) missing.push(`${name}: choose its GST rate (items have different rates)`);
+      confirmedAdjustments.push({
+        kind: a.kind || 'other_charge', type: a.type, label: a.label || '',
+        amount: Math.round(amt * 100) / 100, taxable: adjIsTaxable(a),
+        gst_rate: rate === null || rate === '' ? null : parseInt(rate, 10), ledger: a.ledger || '',
+      });
+    });
+
     if (missing.length) {
       alert('Please fill in before confirming:\n\n' + missing.join('\n'));
       return;
@@ -9094,6 +9342,7 @@
       status: 'confirmed',
       confirmed_party: mappingState.party,
       confirmed_items: confirmedItems,
+      confirmed_adjustments: confirmedAdjustments,
       confirmed_invoice_no: (mappingState.invoiceNo || '').trim(),
       confirmed_date_yyyymmdd: (mappingState.invoiceDate || '').replace(/-/g, ''),
     };
