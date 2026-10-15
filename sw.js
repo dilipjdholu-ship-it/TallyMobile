@@ -125,7 +125,14 @@ self.addEventListener('fetch', event => {
     const cache = await caches.open(CACHE_NAME);
     const cached = await cache.match(req);
 
-    const networkFetch = fetch(req).then(res => {
+    // cache: 'no-cache' -- always check with GitHub (a tiny "304 not
+    // modified" when nothing changed). Oct 2026: GitHub Pages sends
+    // "Cache-Control: max-age=600", so a plain fetch() here was answered
+    // from the browser's own HTTP cache for up to 10 minutes after the
+    // last load -- this background refresh then re-saved the OLD
+    // index.html, and reopening the app "twice" did nothing. That's why
+    // the phone kept turning out to be on an old version.
+    const networkFetch = fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then(res => {
       // Only cache successful, same-origin (non-opaque) responses --
       // an error page or a redirected/opaque response is never worth
       // caching as if it were the real asset.

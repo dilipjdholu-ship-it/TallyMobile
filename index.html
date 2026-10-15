@@ -6421,7 +6421,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.15-2';
+  const APP_VERSION = '2026.10.15-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -6460,6 +6460,12 @@
       const latest = String((await res.json()).version || '');
       try { localStorage.setItem(UPDATE_TRIED_KEY, latest); } catch (e) { /* best-effort */ }
     } catch (e) { /* still update */ }
+    try {
+      // Refresh the browser's own copy too -- GitHub Pages lets it be
+      // reused for 10 minutes (max-age=600), which would otherwise hand
+      // the reload below the old file.
+      await Promise.all(['index.html', './', 'sw.js'].map(u => fetch(u, { cache: 'reload' }).catch(() => null)));
+    } catch (e) { /* reload anyway */ }
     try {
       // Drop the saved copy so the reload below comes straight from GitHub.
       if (window.caches) {
