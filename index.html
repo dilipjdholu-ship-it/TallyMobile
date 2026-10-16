@@ -3010,49 +3010,49 @@
       document.getElementById('sync-text').textContent = 'Loading…';
     }
 
-    // Lightweight, always-live: company_info, outstanding_receivables, last_synced
-    const companyRef = ref(db, `companies/${currentCompany}`);
-    currentUnsubscribe = onValue(companyRef, snapshot => {
-      const val = snapshot.val() || {};
-      const cd = companyData[currentCompany];
-      cd.company_info = val.company_info;
-      cd.outstanding_receivables = val.outstanding_receivables;
-      cd.last_synced = val.last_synced;
-      // Riding the same always-live root listener rather than opening a
-      // separate one -- pending_invoices/pending_bank_statements are
-      // themselves small (queue items, not the heavy synced lists), so
-      // reading them off the same snapshot costs nothing extra now that
-      // the heavy sections no longer live on this same node (see the
-      // schema-split note in tally_firebase_sync_v2.py's sync_company()).
-      // Not cached to localStorage: these are queue/live-status data,
-      // stale counts here would be actively misleading (unlike reports).
-      cd.pending_invoices = val.pending_invoices;
-      cd.pending_bank_statements = val.pending_bank_statements;
-      // Same "comes along for free" reasoning -- queued by
-      // gmail_bank_alert_sync.py (a separate PC-side poller, not this
-      // app), reviewed here, posted by tally_firebase_sync_v2.py's
-      // handle_confirmed_bank_voucher once confirmed.
-      cd.pending_bank_vouchers = val.pending_bank_vouchers;
-      // Same "comes along for free" reasoning -- bank_statement_settings
-      // is what names the contra ledger (usually "Suspense") the Ledger
-      // Allocation screen watches for, and pending_ledger_reallocations
-      // is its own live queue/status data, same treatment as the two
-      // pending_* lines above (not cached, live status would go stale).
-      cd.bank_statement_settings = val.bank_statement_settings;
-      cd.pending_ledger_reallocations = val.pending_ledger_reallocations;
-      // Same "comes along for free" reasoning -- gst_settings is just the
-      // configured CGST/SGST ledger names (and rate maps), tiny, and the
-      // new GST / ITC report needs it on every render, same as
-      // bank_statement_settings above.
-      cd.gst_settings = val.gst_settings;
-      saveToCache(currentCompany, 'company_info', val.company_info);
-      saveToCache(currentCompany, 'outstanding_receivables', val.outstanding_receivables);
-      document.getElementById('sync-text').textContent = 'Live';
-      render();
+    // Always-live, one small listener per field the app actually uses.
+    //
+    // Oct 2026: this used to be ONE onValue() on the whole company node
+    // (companies/{key}), and a listener on a node downloads EVERYTHING
+    // under it -- the heavy synced lists (ledgers, daybook, stock, sales/
+    // bank vouchers), the shadow sync's own copies (_shadow_*), invoice
+    // photos and statement PDFs. Measured on 2026-10-15: 24.8 MB for
+    // Shivam Hardware (47 MB for all three firms) on every open/switch,
+    // to show ~0.3 MB worth of fields -- and re-sent while open whenever
+    // the PC sync rewrote a big list. The heavy sections are still loaded
+    // on demand by ensureSectionLoaded() (from the phone's cache first).
+    // Queue/status fields aren't cached: stale counts would mislead.
+    const LIVE_FIELDS = [
+      'company_info', 'outstanding_receivables', 'last_synced',
+      'pending_invoices', 'pending_bank_statements', 'pending_bank_vouchers',
+      'bank_statement_settings', 'pending_ledger_reallocations', 'gst_settings',
+    ];
+    const company = currentCompany;
+    const cd = companyData[company];
+    const arrived = new Set();
+    let renderQueued = false;
+    const queueRender = () => {
+      // The 9 first callbacks land together -- render once, not 9 times.
+      if (renderQueued) return;
+      renderQueued = true;
+      setTimeout(() => {
+        renderQueued = false;
+        if (company !== currentCompany) return;
+        if (arrived.size === LIVE_FIELDS.length) document.getElementById('sync-text').textContent = 'Live';
+        render();
+      }, 0);
+    };
+    const unsubscribers = LIVE_FIELDS.map(field => onValue(ref(db, `companies/${company}/${field}`), snapshot => {
+      const val = snapshot.val();
+      cd[field] = val === null ? undefined : val;
+      if (field === 'company_info' || field === 'outstanding_receivables') saveToCache(company, field, cd[field]);
+      arrived.add(field);
+      queueRender();
     }, error => {
-      document.getElementById('sync-text').textContent = 'Connection error';
-      console.error(error);
-    });
+      if (company === currentCompany) document.getElementById('sync-text').textContent = 'Connection error';
+      console.error(`Live listener failed for ${field}:`, error);
+    }));
+    currentUnsubscribe = () => unsubscribers.forEach(unsub => unsub());
   }
 
   // Ensures a heavy section is loaded before a section that needs it
@@ -6421,7 +6421,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.15-3';
+  const APP_VERSION = '2026.10.16-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
