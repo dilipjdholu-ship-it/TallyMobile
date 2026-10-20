@@ -6428,7 +6428,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.16-2';
+  const APP_VERSION = '2026.10.20-2';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -8517,7 +8517,31 @@
       document.getElementById('scan-progress-text').textContent =
         'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
     } else if (status === 'ready_for_review') {
+      if (document.getElementById('scan-step-review').classList.contains('active')
+          && reviewRenderedFor === scanCurrentInvoiceId
+          && mappingData && mappingData.processed_at === data.processed_at) {
+        // Our own "Save draft" write echoing back through the listener --
+        // keep the screen as it is (re-rendering would jump to the top).
+        mappingData.review_draft = data.review_draft;
+        return;
+      }
       mappingData = data;
+      const draft = data.review_draft;
+      if (draft && draft.state && (draft.processed_at || null) === (data.processed_at || null)) {
+        // Reopen a half-reviewed bill exactly as it was saved. Firebase
+        // drops empty arrays and nulls, so fill those back in.
+        mappingData = Object.assign({}, data, { item_matches: draft.item_matches || [] });
+        mappingState = Object.assign({ party: null, partyGstin: '', updatePartyGstin: true,
+                                       invoiceNo: '', invoiceDate: '', adjustments: [] }, draft.state);
+        mappingState.items = mappingData.item_matches.map((_, i) => Object.assign(
+          { confirmed: null, gst_rate: null }, (draft.state.items || [])[i] || {}));
+        mappingState.adjustments = (draft.state.adjustments || []).filter(Boolean);
+        renderMappingScreen();
+        document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+        document.getElementById('scan-step-review').classList.add('active');
+        document.getElementById('invoice-upload-title').textContent = 'Review Invoice';
+        return;
+      }
       const extractedDate = (data.fields || {}).date_yyyymmdd;
       mappingState = {
         party: null,
@@ -8680,6 +8704,7 @@
   }
 
   function renderMappingScreen() {
+    reviewRenderedFor = scanCurrentInvoiceId;
     const container = document.getElementById('invoice-mapping-body');
     const partyResult = mappingData.party_result || {};
     const itemMatches = mappingData.item_matches || [];
@@ -8766,6 +8791,10 @@
     html += `<div class="map-section" id="map-adjustments"></div>`;
 
     html += `<button class="map-confirm-btn" id="map-confirm-btn" disabled>Confirm &amp; Post</button>`;
+    html += `<div class="map-field-warn" id="map-confirm-hint" style="display:none; white-space:pre-line;"></div>`;
+    html += `<button type="button" class="map-discard-btn" id="map-save-draft-btn" style="color:var(--primary); border-color:var(--primary);">Save draft (finish later)</button>`;
+    html += `<div class="totals-card-hint" id="map-draft-status" style="text-align:center; margin-top:4px;">${
+      mappingData.review_draft?.saved_at ? 'Draft saved ' + new Date(mappingData.review_draft.saved_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</div>`;
     html += `<button type="button" class="map-discard-btn" id="map-discard-btn">Discard this scanned invoice</button>`;
 
     container.innerHTML = html;
@@ -8775,6 +8804,7 @@
       btn.addEventListener('click', () => { renderAdjustmentsSection(); recalcTotalsSummary(); }));
     renderAdjustmentsSection();
     loadAdjustmentLedgers();
+    updateConfirmButtonState();  // a restored draft may already be complete
   }
 
   // ===== Bill-level lines: charges, discounts, round off (Oct 2026) =====
@@ -8936,14 +8966,23 @@
 
   function renderPickerHtml(kind, idx, ocrText, remembered, suggestions) {
     const rememberedList = Array.isArray(remembered) ? remembered : (remembered ? [{ candidate: remembered, confidence: null }] : []);
+    // Already-made choice (saved draft / Edit & Retry) -- shown selected.
+    const chosen = kind === 'party' ? mappingState.party : (mappingState.items[idx] || {}).confirmed;
+    const sel = v => chosen && chosen.value === v ? ' selected' : '';
     let optionsHtml = '';
+    const listed = new Set([...rememberedList.map(r => r.candidate), ...(suggestions || []).map(s => s.candidate)]);
+    if (chosen && chosen.value && !listed.has(chosen.value)) {
+      optionsHtml += `<button class="map-option selected" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(chosen.value)}" data-isnew="${chosen.is_new ? 'true' : 'false'}">
+        ${escapeHtml(chosen.value)}<div class="conf">${chosen.is_new ? 'new · chosen' : 'chosen'}</div>
+      </button>`;
+    }
     rememberedList.forEach(r => {
-      optionsHtml += `<button class="map-option remembered" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(r.candidate)}" data-isnew="false">
+      optionsHtml += `<button class="map-option remembered${sel(r.candidate)}" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(r.candidate)}" data-isnew="false">
         ${escapeHtml(r.candidate)}<div class="conf">${r.confidence != null ? `remembered · ${r.confidence}%` : 'remembered'}</div>
       </button>`;
     });
     (suggestions || []).forEach(s => {
-      optionsHtml += `<button class="map-option" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(s.candidate)}" data-isnew="false">
+      optionsHtml += `<button class="map-option${sel(s.candidate)}" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(s.candidate)}" data-isnew="false">
         ${escapeHtml(s.candidate)}<div class="conf">${s.confidence}%</div>
       </button>`;
     });
@@ -9160,7 +9199,7 @@
       });
     });
 
-    document.querySelectorAll('.map-gst-chip').forEach(btn => {
+    document.querySelectorAll('.map-gst-chip[data-item]').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.item, 10);
         mappingState.items[idx].gst_rate = btn.dataset.rate;
@@ -9261,6 +9300,7 @@
     document.getElementById('map-discard-btn').addEventListener('click', discardInvoice);
 
     document.getElementById('map-confirm-btn').addEventListener('click', confirmMapping);
+    document.getElementById('map-save-draft-btn').addEventListener('click', saveReviewDraft);
 
     recalcTotalsSummary();
   }
@@ -9409,6 +9449,39 @@
     updateConfirmButtonState();
   }
 
+  // Save draft (Oct 2026): keeps a half-reviewed bill -- party, item picks,
+  // GST %, edited qty/rate/amount, charges, removed lines -- under
+  // pending_invoices/{id}/review_draft so it reopens as left. Only the
+  // draft is written; status stays ready_for_review, so the PC ignores it.
+  let reviewRenderedFor = null;  // invoice id the review screen was last drawn for
+
+  async function saveReviewDraft() {
+    const btn = document.getElementById('map-save-draft-btn');
+    const status = document.getElementById('map-draft-status');
+    // JSON round trip: Firebase rejects undefined/NaN anywhere in a write.
+    const draft = JSON.parse(JSON.stringify({
+      state: mappingState,
+      item_matches: mappingData.item_matches || [],
+      saved_at: new Date().toISOString(),
+      // Ties the draft to this reading -- if the bill is sent back to be
+      // read again, processed_at changes and the old draft is ignored.
+      processed_at: mappingData.processed_at || null,
+    }));
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      await set(ref(db, `companies/${currentCompany}/pending_invoices/${scanCurrentInvoiceId}/review_draft`), draft);
+      mappingData.review_draft = draft;
+      status.textContent = 'Draft saved ' + new Date(draft.saved_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (err) {
+      console.error('Failed to save draft:', err);
+      status.textContent = 'Could not save the draft -- check your connection and try again.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save draft (finish later)';
+    }
+  }
+
   function updateConfirmButtonState() {
     const btn = document.getElementById('map-confirm-btn');
     if (!btn) return;
@@ -9416,6 +9489,22 @@
     const itemsOk = mappingState.items.length > 0 &&
       mappingState.items.every(i => i.confirmed && i.gst_rate !== null);
     btn.disabled = !(partyOk && itemsOk);
+    // Say WHY it's disabled -- on a long bill one missed line was invisible.
+    const hint = document.getElementById('map-confirm-hint');
+    if (hint) {
+      const needs = [];
+      if (!partyOk) needs.push('Party: pick the supplier');
+      if (!mappingState.items.length) needs.push('No items left on this invoice');
+      const noItem = [], noGst = [];
+      mappingState.items.forEach((it, idx) => {
+        if (!it.confirmed) noItem.push(idx + 1);
+        if (it.gst_rate === null || it.gst_rate === undefined) noGst.push(idx + 1);
+      });
+      if (noItem.length) needs.push(`Pick the Tally item for line${noItem.length > 1 ? 's' : ''} ${noItem.join(', ')}`);
+      if (noGst.length) needs.push(`Choose GST % for line${noGst.length > 1 ? 's' : ''} ${noGst.join(', ')}`);
+      hint.textContent = needs.length ? 'To enable Confirm & Post:\n' + needs.join('\n') : '';
+      hint.style.display = needs.length ? 'block' : 'none';
+    }
   }
 
   async function confirmMapping() {
@@ -9480,6 +9569,7 @@
 
     const payload = {
       status: 'confirmed',
+      review_draft: null,  // done with the draft once confirmed
       confirmed_party: mappingState.party,
       confirmed_party_gstin: (mappingState.partyGstin || '').trim().toUpperCase(),
       update_party_gstin: mappingState.updatePartyGstin !== false,
