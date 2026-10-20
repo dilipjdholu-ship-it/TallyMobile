@@ -1049,6 +1049,9 @@
   .totals-row span { width: 80px; text-align: right; }
   .totals-row span:first-child { flex: 1; width: auto; text-align: left; }
   .totals-row.mismatch { color: var(--rust); font-weight: 700; }
+  /* Review screen: what still blocks Confirm & Post */
+  .map-section.map-missing { box-shadow: inset 4px 0 0 var(--rust); }
+  .map-options.map-missing, .map-gst-row.map-missing { outline: 2px dashed var(--rust); outline-offset: 3px; border-radius: 8px; }
   .map-remove-item-btn {
     padding: 5px 10px;
     border-radius: 7px;
@@ -6428,7 +6431,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.20-2';
+  const APP_VERSION = '2026.10.20-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -8791,7 +8794,6 @@
     html += `<div class="map-section" id="map-adjustments"></div>`;
 
     html += `<button class="map-confirm-btn" id="map-confirm-btn" disabled>Confirm &amp; Post</button>`;
-    html += `<div class="map-field-warn" id="map-confirm-hint" style="display:none; white-space:pre-line;"></div>`;
     html += `<button type="button" class="map-discard-btn" id="map-save-draft-btn" style="color:var(--primary); border-color:var(--primary);">Save draft (finish later)</button>`;
     html += `<div class="totals-card-hint" id="map-draft-status" style="text-align:center; margin-top:4px;">${
       mappingData.review_draft?.saved_at ? 'Draft saved ' + new Date(mappingData.review_draft.saved_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</div>`;
@@ -9489,22 +9491,21 @@
     const itemsOk = mappingState.items.length > 0 &&
       mappingState.items.every(i => i.confirmed && i.gst_rate !== null);
     btn.disabled = !(partyOk && itemsOk);
-    // Say WHY it's disabled -- on a long bill one missed line was invisible.
-    const hint = document.getElementById('map-confirm-hint');
-    if (hint) {
-      const needs = [];
-      if (!partyOk) needs.push('Party: pick the supplier');
-      if (!mappingState.items.length) needs.push('No items left on this invoice');
-      const noItem = [], noGst = [];
-      mappingState.items.forEach((it, idx) => {
-        if (!it.confirmed) noItem.push(idx + 1);
-        if (it.gst_rate === null || it.gst_rate === undefined) noGst.push(idx + 1);
-      });
-      if (noItem.length) needs.push(`Pick the Tally item for line${noItem.length > 1 ? 's' : ''} ${noItem.join(', ')}`);
-      if (noGst.length) needs.push(`Choose GST % for line${noGst.length > 1 ? 's' : ''} ${noGst.join(', ')}`);
-      hint.textContent = needs.length ? 'To enable Confirm & Post:\n' + needs.join('\n') : '';
-      hint.style.display = needs.length ? 'block' : 'none';
-    }
+    // Highlight whatever still blocks it -- on a 25-line bill (SAR
+    // Marketing) one missed line was impossible to find.
+    const mark = (el, on) => { if (el) el.classList.toggle('map-missing', !!on); };
+    const partyPicker = document.querySelector('[data-options-for="party--1"]');
+    mark(partyPicker, !partyOk);
+    mark(partyPicker && partyPicker.closest('.map-section'), !partyOk);
+    mappingState.items.forEach((it, idx) => {
+      const noItem = !it.confirmed;
+      const noGst = it.gst_rate === null || it.gst_rate === undefined;
+      const picker = document.querySelector(`[data-options-for="item-${idx}"]`);
+      const gstRow = document.querySelector(`[data-gst-row="${idx}"]`);
+      mark(picker, noItem);
+      mark(gstRow, noGst);
+      mark(gstRow && gstRow.closest('.map-section'), noItem || noGst);
+    });
   }
 
   async function confirmMapping() {
