@@ -6431,7 +6431,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-1';
+  const APP_VERSION = '2026.10.23-2';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -6814,8 +6814,16 @@
   // against DJ's real Sept 2026 Shivam Traders CSV: all 22 settlements
   // matched their NEFT vouchers on the same date and amount, one NEFT per
   // payment, no batching or next-day lag.
+  //
+  // Oct 2026: entries posted from a Gmail bank alert carry the bank's text
+  // cut to 30 characters -- "IMPS:628715129425:918020110872" -- so the
+  // GOOGLEINDIADIGIT part is gone and none of Shivam Hardware's 65
+  // October GPay settlements got a suggestion. Google's paying account
+  // (91802011087...) is still there, so that is recognised too.
   function isGpayNarration(narration) {
-    return !!(narration && narration.toUpperCase().replace(/[^A-Z]/g, '').includes('GOOGLEINDIADIGIT'));
+    if (!narration) return false;
+    if (narration.toUpperCase().replace(/[^A-Z]/g, '').includes('GOOGLEINDIADIGIT')) return true;
+    return /^IMPS:\d+:91802011/.test(String(narration).replace(/\s/g, ''));
   }
 
   async function clearGpayTransactions(companyKey) {
