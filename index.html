@@ -2499,14 +2499,29 @@
         'Could not load your ledger list (Tally may not have synced yet). You can still type exact ledger names below once options appear, or try again shortly.';
       document.getElementById('gst-settings-error').style.display = 'block';
     }
-    populateLedgerSelect(cgstSelect, names, existing?.cgst_ledger);
-    populateLedgerSelect(sgstSelect, names, existing?.sgst_ledger);
+    // Oct 2026: a firm with nothing saved yet (Shivam Hardware -- its
+    // purchases post with the PC's built-in names) showed every box empty,
+    // which looked like lost settings. Fill them from the real Tally ledger
+    // names instead, matched ignoring spaces the way Tally itself does
+    // ("18% Purchase" = "18 % Purchase"), and say they still need saving.
+    const squish = s => String(s || '').toUpperCase().replace(/[^A-Z0-9%]/g, '');
+    const findName = target => names.find(n => squish(n) === squish(target)) || '';
+    const guessByRate = kind => Object.fromEntries(GST_RATES.map(r =>
+      [String(r), findName(r === 0 ? `Tax Free ${kind}` : `${r}% ${kind}`)]));
+    const unsaved = !(existing && existing.cgst_ledger);
+    if (unsaved && names.length) {
+      const errEl = document.getElementById('gst-settings-error');
+      errEl.textContent = 'Nothing is saved for this firm yet -- the boxes below are filled from your Tally ledger names. Check them and tap Save Settings.';
+      errEl.style.display = 'block';
+    }
+    populateLedgerSelect(cgstSelect, names, existing?.cgst_ledger || (unsaved ? findName('CGST') : ''));
+    populateLedgerSelect(sgstSelect, names, existing?.sgst_ledger || (unsaved ? findName('SGST') : ''));
     // Pre-selects a ledger literally named "IGST" when nothing is saved
     // yet -- all three firms have one.
     populateLedgerSelect(document.getElementById('gst-igst-select'), names,
       existing?.igst_ledger || (names.includes('IGST') ? 'IGST' : ''));
-    renderRateSelects('gst-purchase-rate-selects', 'gst-purchase', existing?.purchase_by_rate, names);
-    renderRateSelects('gst-sales-rate-selects', 'gst-sales', existing?.sales_by_rate, names);
+    renderRateSelects('gst-purchase-rate-selects', 'gst-purchase', existing?.purchase_by_rate || (unsaved ? guessByRate('Purchase') : null), names);
+    renderRateSelects('gst-sales-rate-selects', 'gst-sales', existing?.sales_by_rate || (unsaved ? guessByRate('Sales') : null), names);
     renderAdjLedgerSelects(existing?.adjustment_ledgers, names);
 
     // New Ledger Defaults -- see fillNewLedgerForm for where they're used.
@@ -6558,7 +6573,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-7';
+  const APP_VERSION = '2026.10.23-8';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
