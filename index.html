@@ -6431,7 +6431,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-2';
+  const APP_VERSION = '2026.10.23-4';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -6557,6 +6557,7 @@
   // current step. This is what replaced the FAB's old auto-resume. ----
   let queueUnsubInv = null, queueUnsubStmt = null, queueUnsubVoucher = null;
   let queueInvoices = {}, queueStatements = {}, queueVouchers = {};
+  const queueSelected = new Set(); // Gmail bank entries ticked for "Post selected"
 
   // ================= LEDGER ALLOCATION OVERLAY =================
   // See getVouchersNeedingAllocation / findReallocationRequest above and
@@ -7221,28 +7222,6 @@
       history.back(); // popstate handler above calls returnToLedgerAllocList()
     } else {
       returnToLedgerAllocList();
-    }
-  }
-
-  // Sept 2026: picks the next voucher from the Pending-view list snapshot
-  // that was on screen when this review session started (see
-  // ledgerAllocLastPendingVouchers), skipping the one just handled and
-  // anything that already picked up an in-flight request since that
-  // snapshot was taken -- the always-live pending_ledger_reallocations
-  // listener (see listenToCurrentCompany) can beat this to it for a
-  // voucher DJ handled moments ago. Falls back to the ordinary "return to
-  // list" behavior once nothing's left.
-  async function advanceToNextReallocationOrExit(justHandledVoucherId) {
-    const data = companyData[currentCompany] || {};
-    const remaining = ledgerAllocLastPendingVouchers.filter(v => {
-      if (v.voucher_id === justHandledVoucherId) return false;
-      const req = findReallocationRequest(data, v.voucher_id);
-      return !(req && (req.status === 'requested' || req.status === 'posted' || req.status === 'waiting_for_tally'));
-    });
-    if (remaining.length > 0) {
-      await openLedgerAllocPick(remaining[0], { replaceHistory: true, remainingCount: remaining.length });
-    } else {
-      goBackFromLedgerAllocPick();
     }
   }
 
@@ -8040,14 +8019,12 @@
         if (pan) payload.new_ledger_pan = pan;
       }
       await set(reqRef, payload);
-      // Sept 2026: the decision is saved the instant this write succeeds
-      // -- posting to Tally happens separately in the background (works
-      // whether or not Tally's even reachable right now, see
-      // handle_ledger_reallocation_request in tally_firebase_sync_v2.py)
-      // -- so jump straight to the next voucher still needing a ledger
-      // instead of always bouncing back to the list, letting DJ clear a
-      // whole backlog in one sitting.
-      await advanceToNextReallocationOrExit(voucher.voucher_id);
+      // The decision is saved the instant this write succeeds -- posting
+      // to Tally happens separately in the background (see
+      // handle_ledger_reallocation_request in tally_firebase_sync_v2.py).
+      // Oct 2026, DJ's choice: back to the list after every save (it used
+      // to jump straight to the next voucher, which was confusing).
+      goBackFromLedgerAllocPick();
     } catch (err) {
       console.error('Could not submit ledger reallocation:', err);
       document.getElementById('ledger-alloc-pick-error').textContent =
@@ -8097,6 +8074,34 @@
     return { label: status || 'Pending', cls: 'st-wait' };
   }
 
+  async function postSelectedQueueVouchers() {
+    const ids = [...queueSelected].filter(id => queueVouchers[id] && queueVouchers[id].status === 'pending_review');
+    if (!ids.length) return;
+    const total = ids.reduce((s, id) => s + Math.abs(parseAmt(queueVouchers[id].amount)), 0);
+    const toSuspense = ids.filter(id => {
+      const d = queueVouchers[id];
+      return (d.voucher_type === 'Receipt' ? d.cr_ledger : d.dr_ledger) === 'Suspense';
+    }).length;
+    if (!confirm(`Post ${ids.length} bank entr${ids.length === 1 ? 'y' : 'ies'} (${formatCurrency(total)}) to Tally?` +
+        (toSuspense ? `\n\n${toSuspense} go to Suspense -- name them afterwards in Ledger Allocation (GPay sheet suggestions).` : ''))) return;
+    const btn = document.getElementById('queue-post-selected');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        // Same 'confirmed' hand-off as the single-entry Confirm & Post;
+        // every other field stays as queued.
+        await update(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${id}`), { status: 'confirmed' });
+        queueSelected.delete(id);
+      } catch (err) {
+        console.error('Could not confirm bank entry', id, err);
+        failed++;
+      }
+    }
+    if (failed) alert(`${failed} entr${failed === 1 ? 'y' : 'ies'} could not be sent -- check your connection and try again.`);
+    renderReviewQueue();
+  }
+
   function renderReviewQueue() {
     // Only ACTIONABLE items belong in this queue -- something already
     // 'posted' should have graduated to history server-side. If one is
@@ -8141,7 +8146,31 @@
       return;
     }
 
-    let html = '<div class="list-card">';
+    // Oct 2026, DJ's request: tick several Gmail bank entries (mostly GPay
+    // settlements -- no name in the bank text, they all go to Suspense and
+    // get named later from the GPay sheet in Ledger Allocation) and post
+    // them in one go. Each is posted exactly as queued; the PC posts them
+    // in the bank's own time order (check_and_handle_bank_voucher_requests).
+    const selectable = id => queueVouchers[id] && queueVouchers[id].status === 'pending_review';
+    [...queueSelected].forEach(id => { if (!selectable(id)) queueSelected.delete(id); });
+    const selectableIds = voucherItems.filter(v => selectable(v.id)).map(v => v.id);
+    const gpayIds = selectableIds.filter(id => isGpayNarration(queueVouchers[id].narration));
+
+    let html = '';
+    if (selectableIds.length > 1) {
+      const selTotal = [...queueSelected].reduce((s, id) => s + Math.abs(parseAmt(queueVouchers[id].amount)), 0);
+      html += `<div class="map-section" style="margin-bottom:10px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          ${gpayIds.length ? `<button type="button" class="filter-chip" id="queue-select-gpay">Select all GPay (${gpayIds.length})</button>` : ''}
+          <button type="button" class="filter-chip" id="queue-select-all">Select all (${selectableIds.length})</button>
+          ${queueSelected.size ? '<button type="button" class="filter-chip" id="queue-select-none">Clear</button>' : ''}
+        </div>
+        <button type="button" class="map-confirm-btn" id="queue-post-selected" style="margin-top:10px;" ${queueSelected.size ? '' : 'disabled'}>
+          Post selected (${queueSelected.size}${queueSelected.size ? ' · ' + formatCurrency(selTotal) : ''}) to Tally</button>
+      </div>`;
+    }
+
+    html += '<div class="list-card">';
     all.forEach(({ id, d, kind }) => {
       const meta = queueStatusMeta(d.status);
       const icon = kind === 'invoice' ? '🧾' : (kind === 'voucher' ? '📧' : '🏦');
@@ -8152,16 +8181,32 @@
         : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
       const sub = d.uploaded_at ? formatDateTime(d.uploaded_at)
         : (d.txn_datetime ? formatDateTime(d.txn_datetime) : (d.detected_at ? formatDateTime(d.detected_at) : ''));
+      const canTick = kind === 'voucher' && selectableIds.length > 1 && selectable(id);
       html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
-        <div>
+        ${canTick ? `<input type="checkbox" class="queue-tick" data-tick="${escapeHtml(id)}" ${queueSelected.has(id) ? 'checked' : ''}
+          style="width:22px; height:22px; margin-right:10px; flex-shrink:0;">` : ''}
+        <div style="flex:1; min-width:0;">
           <div class="name">${icon} ${escapeHtml(title)}</div>
-          <div class="sub">${escapeHtml(sub)}</div>
+          <div class="sub">${escapeHtml(sub)}${kind === 'voucher' && d.narration ? ' · ' + escapeHtml(String(d.narration).slice(0, 30)) : ''}</div>
         </div>
         <span class="queue-row-status ${meta.cls}">${escapeHtml(meta.label)}</span>
       </div>`;
     });
     html += '</div>';
     body.innerHTML = html;
+
+    body.querySelectorAll('.queue-tick').forEach(cb => {
+      cb.addEventListener('click', ev => ev.stopPropagation()); // ticking isn't opening
+      cb.addEventListener('change', () => {
+        if (cb.checked) queueSelected.add(cb.dataset.tick); else queueSelected.delete(cb.dataset.tick);
+        renderReviewQueue();
+      });
+    });
+    const selectIds = ids => { ids.forEach(i => queueSelected.add(i)); renderReviewQueue(); };
+    document.getElementById('queue-select-gpay')?.addEventListener('click', () => selectIds(gpayIds));
+    document.getElementById('queue-select-all')?.addEventListener('click', () => selectIds(selectableIds));
+    document.getElementById('queue-select-none')?.addEventListener('click', () => { queueSelected.clear(); renderReviewQueue(); });
+    document.getElementById('queue-post-selected')?.addEventListener('click', postSelectedQueueVouchers);
 
     body.querySelectorAll('.queue-item').forEach(row => {
       row.addEventListener('click', () => {
