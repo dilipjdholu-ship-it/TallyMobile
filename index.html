@@ -6431,7 +6431,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.20-3';
+  const APP_VERSION = '2026.10.23-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -7894,6 +7894,22 @@
       // way GPay's applyGpaySuggestedName has, since a party guess with
       // no real ledger to back it isn't something worth creating
       // unattended.
+      // Oct 2026: the ledger DJ used for this payer before wins over name
+      // matching -- see historyLedgerFor. The bank ledger is this
+      // voucher's other line (the one that isn't Suspense).
+      const bankLine = (voucher.ledger_lines || []).find(l => l && l.ledger_name && l.ledger_name !== contraName);
+      const learned = bankLine
+        ? historyLedgerFor(voucher.narration, bankLine.ledger_name, (companyData[currentCompany] || {}).bank_related_vouchers)
+        : null;
+      const learnedExisting = learned && filteredNames.find(n => _bankNorm(n) === _bankNorm(learned.name));
+      if (learnedExisting) {
+        setLedgerAllocCreateMode(false);
+        populateLedgerSelect(select, filteredNames, learnedExisting);
+        updateLedgerAllocSaveState();
+        suggestLabel.textContent = `💡 You used this ledger for this payer before (${learned.count} of ${learned.total} times) -- check before saving.`;
+        suggestBox.style.display = 'block';
+        return;
+      }
       const partyLedgerNames = voucher.voucher_type === 'Receipt' ? getDebtorLedgerNames() : getCreditorLedgerNames();
       const partyMatch = guessPartyLedger(voucher.narration, partyLedgerNames);
       if (partyMatch) {
@@ -10786,6 +10802,87 @@
     return `${s.slice(6, 8)}-${s.slice(4, 6)}-${s.slice(0, 4)}`;
   }
 
+  // ===== Learned bank-entry ledgers (Oct 2026) =====
+  // A Gmail bank alert's narration ("UPI/082150885150/SWAPNIL SU/IC",
+  // "-RATNA PLYWOOD INDUSTRIES 8698", "IB/NEFT/SRCB0262.../ASI AN PAI/...")
+  // is reduced to a short "who is this" key, and the ledger DJ actually
+  // used for that key on earlier bank vouchers (bank_related_vouchers,
+  // already synced) is suggested. Measured on Shivam Hardware's FY26-27
+  // bank entries: 64% get a suggestion, 96.6% of those right. GPay
+  // settlements (IMPS from Google's account) are skipped -- every one is a
+  // different customer behind the same narration; the GPay CSV covers those.
+  const BANK_MEMORY_MIN_SHARE = 0.75;
+  const _bankNorm = s => String(s || '').toUpperCase().split(/\s+/).filter(Boolean).join(' ');
+
+  function bankNarrationKey(narration) {
+    let t = _bankNorm(narration);
+    if (!t) return null;
+    const squashed = t.replace(/\s/g, '');
+    if (/^IMPS:\d+:91802011/.test(squashed) || squashed.includes('GOOGLEINDIA')) return 'GPAY';
+    t = t.replace(/(\d)\s+(?=\d)/g, '$1');      // statement imports break lines inside numbers
+    t = t.replace(/^-+/, '').trim();
+    if (/^UPI\/QR\/MDR/.test(t)) return 'UPI-MDR-CHARGES';
+    let m = t.match(/^UPI\/\d+\/([^/]+)/);
+    if (m) return 'UPI:' + m[1].trim();
+    m = t.match(/^IMPS:\d+:(\d{8,})/);
+    if (m) return 'IMPS:' + m[1].slice(0, 11);
+    m = t.match(/^IB\/(?:NEFT|RTGS|TRF|IMPS)\/(?:[A-Z0-9]+\/)?([^/]+)/);
+    if (m) return 'IB:' + m[1].replace(/\s+/g, '').slice(0, 10);
+    m = t.match(/^(?:NEFT|RTGS)\/[A-Z0-9]+\/\s*([^/]+)/);
+    if (m) return 'NEFT:' + m[1].replace(/\s+/g, '').slice(0, 10);
+    if (/^ACH CREDIT/.test(t)) return 'ACH:' + t.slice(0, 20);
+    // Cheques and the rest: "RATNA PLYWOOD INDUSTRIES 8698" -> the name
+    const t2 = t.replace(/\s+\d{3,}$/, '').replace(/[0-9/:.-]+/g, ' ');
+    return 'TXT:' + t2.split(/\s+/).filter(Boolean).join(' ').slice(0, 24);
+  }
+
+  let _bankMemoryCache = null; // { src, bank, map }
+
+  // key -> Map(normalised ledger -> { name, n }) from posted vouchers whose
+  // only other ledger is the real party (not Suspense, not a split voucher).
+  function buildBankLedgerMemory(vouchers, bankLedger) {
+    const bank = _bankNorm(bankLedger);
+    if (_bankMemoryCache && _bankMemoryCache.src === vouchers && _bankMemoryCache.bank === bank) return _bankMemoryCache.map;
+    const map = new Map();
+    const list = Array.isArray(vouchers) ? vouchers : Object.values(vouchers || {});
+    for (const v of list) {
+      if (!v || v.is_optional === 'Yes') continue;
+      const lines = v.ledger_lines || [];
+      if (!lines.some(l => _bankNorm(l && l.ledger_name) === bank)) continue;
+      const others = lines.filter(l => l && l.ledger_name && _bankNorm(l.ledger_name) !== bank);
+      if (others.length !== 1) continue;
+      const ledger = others[0].ledger_name;
+      if (_bankNorm(ledger) === 'SUSPENSE') continue;
+      const key = bankNarrationKey(v.narration);
+      if (!key || key === 'GPAY') continue;
+      if (!map.has(key)) map.set(key, new Map());
+      const byLedger = map.get(key);
+      const ln = _bankNorm(ledger);
+      const cur = byLedger.get(ln) || { name: ledger.trim(), n: 0 };
+      cur.n += 1;
+      byLedger.set(ln, cur);
+    }
+    _bankMemoryCache = { src: vouchers, bank, map };
+    return map;
+  }
+
+  // { name, count, total, key } when one ledger has had this payer at
+  // least BANK_MEMORY_MIN_SHARE of the time, else null (never a guess
+  // between two people whose names the bank cuts to the same 10 letters).
+  function historyLedgerFor(narration, bankLedger, vouchers) {
+    const key = bankNarrationKey(narration);
+    if (!key || key === 'GPAY' || !vouchers) return null;
+    const byLedger = buildBankLedgerMemory(vouchers, bankLedger).get(key);
+    if (!byLedger) return null;
+    let total = 0, best = null;
+    for (const e of byLedger.values()) {
+      total += e.n;
+      if (!best || e.n > best.n) best = e;
+    }
+    if (!best || best.n / total < BANK_MEMORY_MIN_SHARE) return null;
+    return { name: best.name, count: best.n, total, key };
+  }
+
   // Sept 2026, DJ's request ("consolidate to client-side only"): suggest
   // the real party ledger for a voucher's contra leg from its narration,
   // the same guessPartyLedger used by the bank-statement and Ledger
@@ -10807,6 +10904,21 @@
     if (!isReceipt && !isPayment) return;
     const contraField = isReceipt ? 'cr_ledger' : 'dr_ledger';
     if (editRef[contraField] !== 'Suspense') return;
+    // Oct 2026: what DJ used for this payer before comes first -- it also
+    // covers ledgers whose names look nothing like the narration ("SHIVAM
+    // TRA" -> Dilip Dholu, Sandeep S's NEFT -> TAX). Name matching below is
+    // the fallback for a payer seen for the first time.
+    const bankLedger = isReceipt ? editRef.dr_ledger : editRef.cr_ledger;
+    if (ensureSectionLoaded(currentCompany, 'bank_related_vouchers')) {
+      const h = historyLedgerFor(editRef.narration, bankLedger, (companyData[currentCompany] || {}).bank_related_vouchers);
+      if (h) {
+        editRef[contraField] = h.name;
+        editRef._suggested = true;
+        editRef._suggestedFrom = { count: h.count, total: h.total };
+        renderVoucherReviewScreen();
+        return;
+      }
+    }
     const names = await (isReceipt ? fetchDebtorLedgerNames() : fetchCreditorLedgerNames());
     if (voucherEdit !== editRef || editRef[contraField] !== 'Suspense') return;
     const match = guessPartyLedger(editRef.narration, names);
@@ -10865,7 +10977,9 @@
     html += `<div class="map-section">
       <div class="map-field-label">Other Ledger (contra)</div>
       <select id="voucher-contra-ledger-select" class="map-field-input"><option>Loading ledgers…</option></select>
-      ${e._suggested ? '<div class="totals-card-hint" style="margin-top:4px;">💡 Suggested from narration -- check before confirming</div>' :
+      ${e._suggested ? `<div class="totals-card-hint" style="margin-top:4px;">${e._suggestedFrom
+          ? `💡 You used this ledger for this payer before (${e._suggestedFrom.count} of ${e._suggestedFrom.total} times) -- check before confirming`
+          : '💡 Suggested from narration -- check before confirming'}</div>` :
         '<p class="totals-card-hint" style="margin-top:6px;">Usually "Suspense" -- correct it here to the real party/expense ledger if you already know it, or leave it as Suspense and reallocate later from Ledger Allocation.</p>'}
     </div>`;
 
@@ -10932,6 +11046,7 @@
         // A manual pick isn't "the suggestion" anymore -- drop the 💡
         // hint next to a value DJ chose himself.
         e._suggested = false;
+        e._suggestedFrom = null;
         renderVoucherReviewScreen();
       };
     });
