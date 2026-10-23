@@ -1049,6 +1049,13 @@
   .totals-row span { width: 80px; text-align: right; }
   .totals-row span:first-child { flex: 1; width: auto; text-align: left; }
   .totals-row.mismatch { color: var(--rust); font-weight: 700; }
+  #app-toast {
+    position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%) translateY(20px);
+    background: rgba(32, 33, 36, 0.92); color: #fff; padding: 10px 18px; border-radius: 22px;
+    font-size: 14px; z-index: 10000; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+    white-space: nowrap;
+  }
+  #app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   /* Review screen: what still blocks Confirm & Post */
   .map-section.map-missing { box-shadow: inset 4px 0 0 var(--rust); }
   .map-options.map-missing, .map-gst-row.map-missing { outline: 2px dashed var(--rust); outline-offset: 3px; border-radius: 8px; }
@@ -1806,6 +1813,30 @@
           <div id="gst-adjustment-ledger-selects"></div>
         </div>
 
+        <div class="map-section">
+          <div class="map-section-title">New Ledger Defaults</div>
+          <p class="totals-card-hint" style="margin:-4px 0 10px;">Pre-filled when you tap "+ Create new ledger" in Ledger Allocation. You can still change them on each ledger.</p>
+          <div class="map-field-label">Group for money received (Receipts)</div>
+          <select class="stmt-ledger-select map-field-input spaced" id="gst-newled-receipt-group"></select>
+          <div class="map-field-label">Group for money paid (Payments)</div>
+          <select class="stmt-ledger-select map-field-input spaced" id="gst-newled-payment-group"></select>
+          <div class="map-field-label">State</div>
+          <input type="text" class="map-field-input spaced" id="gst-newled-state" placeholder="e.g. Maharashtra">
+          <div class="map-field-label">Country</div>
+          <input type="text" class="map-field-input spaced" id="gst-newled-country" placeholder="India">
+          <div class="map-field-label">Registration Type</div>
+          <select class="map-field-input spaced" id="gst-newled-regtype">
+            <option value="Regular">Regular</option>
+            <option value="Composition">Composition</option>
+            <option value="Unregistered/Consumer">Unregistered/Consumer</option>
+          </select>
+          <div class="map-field-label">Maintain balances bill-by-bill</div>
+          <select class="map-field-input" id="gst-newled-billwise">
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+          </select>
+        </div>
+
         <div id="gst-settings-error" class="map-field-warn" style="display:none;"></div>
         <button class="map-confirm-btn" id="gst-settings-save-btn">Save Settings</button>
       </div>
@@ -2105,7 +2136,9 @@
   // closes whichever id it reaches FIRST in this array, so a nested
   // overlay must always be listed earlier than the overlay it can stack on
   // (same convention as voucher-detail-overlay vs ledger-detail-overlay).
-  const OVERLAY_IDS = ['voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'gpay-upload-overlay', 'ledger-allocation-overlay', 'bank-voucher-review-overlay'];
+  // Oct 2026: GST Settings and Company Details were missing, so back on
+  // them used up the history step but left the screen open.
+  const OVERLAY_IDS = ['gst-settings-overlay', 'company-details-overlay', 'voucher-detail-overlay', 'stock-item-detail-overlay', 'month-detail-overlay', 'group-detail-overlay', 'ledger-detail-overlay', 'invoice-upload-overlay', 'review-queue-overlay', 'history-overlay', 'statement-upload-overlay', 'gpay-upload-overlay', 'ledger-allocation-overlay', 'bank-voucher-review-overlay'];
 
   function pushOverlayState(name) {
     history.pushState({ overlay: name }, '', '');
@@ -2140,7 +2173,30 @@
       returnToLedgerAllocList();
       return;
     }
-    if (closeTopOverlay()) return;
+    if (closeTopOverlay()) {
+      // Back from an item opened out of the Review Queue lands on the
+      // queue's own entry again -- reopen it (see swapOverlay).
+      const st = history.state;
+      if (st && st.overlay && REOPEN_OVERLAY[st.overlay]) {
+        const el = document.getElementById(st.overlay);
+        if (el && !el.classList.contains('open')) REOPEN_OVERLAY[st.overlay]();
+      }
+      if (st && st.root) pushExitGuard();
+      return;
+    }
+    // Oct 2026, DJ's request: double back to exit. Popping down to the
+    // app's root entry means back was pressed on the Home screen -- warn
+    // instead of leaving. A second back within 2 s finds nothing left to
+    // pop, so Android closes the app; otherwise the guard step comes back.
+    if (history.state && history.state.root) {
+      goToSection('home', false);
+      showToast('Press back again to exit');
+      clearTimeout(exitGuardTimer);
+      exitGuardTimer = setTimeout(() => {
+        if (history.state && history.state.root) pushExitGuard();
+      }, 2000);
+      return;
+    }
     // Sept 2026: nothing was open to close, so this pop is a top-level
     // section change (a bottom-nav tab, or a Home report tile like P&L /
     // Balance Sheet / Monthly Sales / Purchases -- see goToSection).
@@ -2201,11 +2257,45 @@
   // pushState) keeps the history stack the same depth it was at before
   // the swap, so the back button still returns to whatever was open
   // before the FROM overlay, same as a single openOverlay() would have.
+  //
+  // Oct 2026: pushState now (still one synchronous step, so the race above
+  // can't come back) -- with replaceState, back from the item skipped the
+  // Review Queue and went straight to Home. The queue's own entry stays
+  // underneath, and the popstate handler reopens it (REOPEN_OVERLAY).
   function swapOverlay(fromId, toId) {
     const fromEl = document.getElementById(fromId);
     if (fromEl) fromEl.classList.remove('open');
-    history.replaceState({ overlay: toId }, '', '');
+    history.pushState({ overlay: toId }, '', '');
     document.getElementById(toId).classList.add('open');
+  }
+
+  // Overlays that can be returned to after a swapOverlay -- each re-opens
+  // its screen without adding a history step (already marked open first,
+  // so openOverlay inside won't push).
+  const REOPEN_OVERLAY = {
+    'review-queue-overlay': () => {
+      document.getElementById('review-queue-overlay').classList.add('open');
+      openReviewQueue();
+    },
+  };
+
+  let exitGuardTimer = null;
+  function pushExitGuard() {
+    history.pushState({ section: currentSection, guard: true }, '', '');
+  }
+
+  let toastTimer = null;
+  function showToast(message, ms = 2000) {
+    let el = document.getElementById('app-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'app-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
   let appInitialized = false;
   let currentUnsubscribe = null;
@@ -2418,6 +2508,18 @@
     renderRateSelects('gst-purchase-rate-selects', 'gst-purchase', existing?.purchase_by_rate, names);
     renderRateSelects('gst-sales-rate-selects', 'gst-sales', existing?.sales_by_rate, names);
     renderAdjLedgerSelects(existing?.adjustment_ledgers, names);
+
+    // New Ledger Defaults -- see fillNewLedgerForm for where they're used.
+    const nd = existing?.new_ledger_defaults || {};
+    const ownState = ((companyData[currentCompany] || {}).company_info || {}).state || '';
+    document.getElementById('gst-newled-state').value = nd.state ?? ownState;
+    document.getElementById('gst-newled-country').value = nd.country || 'India';
+    document.getElementById('gst-newled-regtype').value = nd.regtype || 'Regular';
+    document.getElementById('gst-newled-billwise').value = nd.billwise || 'No';
+    const groups = await fetchGroupNames();
+    const pickGroup = (saved, fallback) => saved || groups.find(g => _bankNorm(g) === _bankNorm(fallback)) || '';
+    populateLedgerSelect(document.getElementById('gst-newled-receipt-group'), groups, pickGroup(nd.receipt_group, 'Sundry Debtors'));
+    populateLedgerSelect(document.getElementById('gst-newled-payment-group'), groups, pickGroup(nd.payment_group, 'Sundry Creditors'));
   }
 
   document.getElementById('gst-settings-gear-btn').addEventListener('click', () => {
@@ -2486,6 +2588,14 @@
         purchase_by_rate: readRateSelects('gst-purchase'),
         sales_by_rate: readRateSelects('gst-sales'),
         adjustment_ledgers: readAdjLedgerSelects(),
+        new_ledger_defaults: {
+          receipt_group: document.getElementById('gst-newled-receipt-group').value || null,
+          payment_group: document.getElementById('gst-newled-payment-group').value || null,
+          state: document.getElementById('gst-newled-state').value.trim(),
+          country: document.getElementById('gst-newled-country').value.trim() || 'India',
+          regtype: document.getElementById('gst-newled-regtype').value,
+          billwise: document.getElementById('gst-newled-billwise').value,
+        },
         updated_at: new Date().toISOString(),
       });
       document.getElementById('gst-settings-error').style.display = 'none';
@@ -2781,7 +2891,11 @@
     // app"). replaceState (not pushState) so this doesn't add an extra
     // back-stop of its own -- it just labels the entry that's already
     // there when the app opens.
-    history.replaceState({ section: currentSection }, '', '');
+    history.replaceState({ section: currentSection, root: true }, '', '');
+    // Oct 2026: one extra step on top of the root, so the first back on
+    // Home can say "Press back again to exit" instead of closing the app
+    // (see the popstate handler's root branch).
+    pushExitGuard();
   }
 
   // Single top-level node, not per-company -- there's one local Tally
@@ -6431,7 +6545,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-4';
+  const APP_VERSION = '2026.10.23-6';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -6888,9 +7002,14 @@
     // and nothing gets suggested. Guarded on starting AND ending with
     // "UPI" (not just starting) so this doesn't misfire on some other
     // narration that merely mentions UPI in passing.
-    if (upper.startsWith('UPI/') && upper.endsWith('/UPI') && narration.includes('/')) {
+    //
+    // Oct 2026: no longer requires the trailing "/UPI" -- entries posted
+    // from a Gmail alert carry the bank text cut to 30 characters
+    // ("UPI/628769737791/AMIT KRISH/BK"), so no name was ever read from
+    // them. UPI/QR/MDR (the bank's own QR charges) is still skipped.
+    if (upper.startsWith('UPI/') && !upper.startsWith('UPI/QR/')) {
       const parts = narration.split('/').map(p => p.trim()).filter(Boolean);
-      if (parts.length >= 4) return parts[2];
+      if (parts.length >= 3 && /[A-Za-z]/.test(parts[2])) return parts[2];
       return null;
     }
 
@@ -7727,24 +7846,10 @@
   document.getElementById('ledger-alloc-new-ledger-toggle').addEventListener('click', async () => {
     const turningOn = !ledgerAllocInCreateMode();
     if (turningOn) {
-      const groupSelect = document.getElementById('ledger-alloc-new-ledger-group');
-      groupSelect.innerHTML = '<option>Loading groups…</option>';
-      document.getElementById('ledger-alloc-new-ledger-name').value = '';
-      // Reset the optional fields to their defaults each time the form
-      // opens -- otherwise a previous voucher's typed address/GSTIN
-      // would silently carry over to the next one.
-      document.getElementById('ledger-alloc-new-ledger-billwise').value = 'No';
-      document.getElementById('ledger-alloc-new-ledger-address').value = '';
-      document.getElementById('ledger-alloc-new-ledger-state').value = '';
-      document.getElementById('ledger-alloc-new-ledger-country').value = 'India';
-      document.getElementById('ledger-alloc-new-ledger-pincode').value = '';
-      document.getElementById('ledger-alloc-new-ledger-regtype').value = 'Regular';
-      document.getElementById('ledger-alloc-new-ledger-gstin').value = '';
-      document.getElementById('ledger-alloc-new-ledger-pan').value = '';
-      setLedgerAllocCreateMode(true);
-      const groupNames = await fetchGroupNames();
-      populateLedgerSelect(groupSelect, groupNames, null);
-      groupSelect.onchange = updateLedgerAllocSaveState;
+      // Oct 2026, DJ's request: name pre-filled from the narration
+      // ("UPI/628769737791/AMIT KRISH/BK" -> "Amit Krish"), still editable.
+      const voucher = ledgerAllocPickVoucher || {};
+      await fillNewLedgerForm(newLedgerNameFromNarration(voucher.narration), voucher);
     } else {
       // Carry whatever name is currently in the "create new ledger" form
       // over to the existing-ledger search box when backing out of create
@@ -7923,24 +8028,59 @@
       updateLedgerAllocSaveState();
       return;
     }
+    // Every name suggested here is a GPay collection -- money coming IN --
+    // so the "money received" group default applies (Sundry Debtors
+    // unless changed in settings).
+    await fillNewLedgerForm(name, { voucher_type: 'Receipt' });
+  }
+
+  // ===== New ledger form: name from narration + settings defaults (Oct 2026) =====
+  const NEW_LEDGER_SKIP_NAMES = /^(BY CASH|CASH|INT\.?\s*COLL|SMS|ACCOUNT MAINTENANCE|ACH |CHARGES?)\b/i;
+
+  // A readable starting name for a new party ledger, or '' when the
+  // narration carries none (GPay settlements, bank charges, cash).
+  function newLedgerNameFromNarration(narration) {
+    if (!narration || isGpayNarration(narration)) return '';
+    let t = String(narration).replace(/\s+/g, ' ').trim();
+    let name = '';
+    const imps = t.match(/^IMPS:[^:]*:[^:]*:\s*(.*[A-Za-z].*)$/i);
+    if (imps) name = imps[1];
+    else name = extractPartyCandidateName(t) || '';
+    name = name.replace(/^-+/, '').replace(/\s+\d{3,}$/, '').trim(); // cheque "-RATNA PLYWOOD 8698"
+    if (!name || NEW_LEDGER_SKIP_NAMES.test(name) || !/[A-Za-z]{2}/.test(name)) return '';
+    // "AMIT KRISH" -> "Amit Krish"; dotted initials like "S.N.R." kept as typed
+    return name.split(' ').map(w => /\./.test(w) ? w.toUpperCase()
+      : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+
+  async function getNewLedgerDefaults() {
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/gst_settings/new_ledger_defaults`));
+      return snap.val() || {};
+    } catch (err) {
+      console.error('Could not load new-ledger defaults:', err);
+      return {};
+    }
+  }
+
+  // Resets the "create new ledger" form (a previous voucher's typed
+  // address/GSTIN must never carry over) and applies the defaults chosen
+  // in GST & Ledger Settings -> New Ledger Defaults.
+  async function fillNewLedgerForm(name, voucher) {
     const groupSelect = document.getElementById('ledger-alloc-new-ledger-group');
     groupSelect.innerHTML = '<option>Loading groups…</option>';
-    document.getElementById('ledger-alloc-new-ledger-name').value = name;
-    document.getElementById('ledger-alloc-new-ledger-billwise').value = 'No';
-    document.getElementById('ledger-alloc-new-ledger-address').value = '';
-    document.getElementById('ledger-alloc-new-ledger-state').value = '';
-    document.getElementById('ledger-alloc-new-ledger-country').value = 'India';
-    document.getElementById('ledger-alloc-new-ledger-pincode').value = '';
-    document.getElementById('ledger-alloc-new-ledger-regtype').value = 'Regular';
-    document.getElementById('ledger-alloc-new-ledger-gstin').value = '';
-    document.getElementById('ledger-alloc-new-ledger-pan').value = '';
+    document.getElementById('ledger-alloc-new-ledger-name').value = name || '';
+    ['address', 'pincode', 'gstin', 'pan'].forEach(f => { document.getElementById(`ledger-alloc-new-ledger-${f}`).value = ''; });
     setLedgerAllocCreateMode(true);
+    const d = await getNewLedgerDefaults();
+    document.getElementById('ledger-alloc-new-ledger-billwise').value = d.billwise || 'No';
+    document.getElementById('ledger-alloc-new-ledger-state').value = d.state || '';
+    document.getElementById('ledger-alloc-new-ledger-country').value = d.country || 'India';
+    document.getElementById('ledger-alloc-new-ledger-regtype').value = d.regtype || 'Regular';
     const groupNames = await fetchGroupNames();
-    // Every name suggested here is a GPay collection -- money coming IN
-    // from a customer -- so default the group to "Sundry Debtors" when it
-    // exists, same convention Tally itself uses for a new customer.
-    // Still fully overridable; this is a default, not a decision.
-    const defaultGroup = groupNames.find(g => g.trim().toLowerCase() === 'sundry debtors') || null;
+    const isReceipt = (voucher || {}).voucher_type === 'Receipt';
+    const wanted = (isReceipt ? d.receipt_group : d.payment_group) || (isReceipt ? 'Sundry Debtors' : 'Sundry Creditors');
+    const defaultGroup = groupNames.find(g => _bankNorm(g) === _bankNorm(wanted)) || null;
     populateLedgerSelect(groupSelect, groupNames, defaultGroup);
     groupSelect.onchange = updateLedgerAllocSaveState;
     updateLedgerAllocSaveState();
