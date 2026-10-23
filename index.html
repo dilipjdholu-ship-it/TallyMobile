@@ -1053,7 +1053,7 @@
     position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%) translateY(20px);
     background: rgba(32, 33, 36, 0.92); color: #fff; padding: 10px 18px; border-radius: 22px;
     font-size: 14px; z-index: 10000; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
-    white-space: nowrap;
+    width: max-content; max-width: calc(100vw - 32px); text-align: center;
   }
   #app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   /* Review screen: what still blocks Confirm & Post */
@@ -2905,6 +2905,16 @@
   // once at app init rather than per-company, since switching companies
   // shouldn't re-subscribe to something that isn't company-scoped.
   let tallyUnreachableSince = null; // Date | null -- tracked client-side, resets on app reload
+  let tallyOffline = null; // 'closed' (Tally shut) | 'pc' (sync app silent) | null
+
+  // Oct 2026, DJ's request: say plainly after a save that nothing is lost
+  // while Tally (or the PC) is off -- the PC holds it as waiting_for_tally
+  // and posts on its own once Tally is back.
+  function savedToast(what) {
+    showToast(tallyOffline === 'closed' ? `${what} saved — Tally is closed, it will post when Tally opens`
+      : tallyOffline === 'pc' ? `${what} saved — will post when the PC sync app is running`
+      : `${what} saved — sending to Tally`, 3500);
+  }
 
   function formatRelativeDuration(fromDate) {
     const mins = Math.floor((Date.now() - fromDate.getTime()) / 60000);
@@ -2940,12 +2950,15 @@
       const isStale = staleMs > 20 * 60 * 1000; // no update in 20+ min
       if (val.tally_reachable === false) {
         if (!tallyUnreachableSince) tallyUnreachableSince = new Date();
-        banner.textContent = `Tally is closed on the PC (${formatRelativeDuration(tallyUnreachableSince)}) — invoice posting and live lookups are paused until it's reopened.`;
+        tallyOffline = 'closed';
+        banner.textContent = `Tally is closed on the PC (${formatRelativeDuration(tallyUnreachableSince)}) — keep working: whatever you save is kept and sent to Tally automatically when it's reopened.`;
         banner.style.display = '';
       } else if (isStale) {
-        banner.textContent = 'Haven\'t heard from the sync app on the PC in a while — make sure it\'s running.';
+        tallyOffline = 'pc';
+        banner.textContent = 'Haven\'t heard from the sync app on the PC in a while — make sure it\'s running. Whatever you save is kept and sent once it is.';
         banner.style.display = '';
       } else {
+        tallyOffline = null;
         tallyUnreachableSince = null;
         banner.style.display = 'none';
       }
@@ -6545,7 +6558,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-6';
+  const APP_VERSION = '2026.10.23-7';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -8165,6 +8178,7 @@
       // Oct 2026, DJ's choice: back to the list after every save (it used
       // to jump straight to the next voucher, which was confusing).
       goBackFromLedgerAllocPick();
+      savedToast('Ledger');
     } catch (err) {
       console.error('Could not submit ledger reallocation:', err);
       document.getElementById('ledger-alloc-pick-error').textContent =
@@ -8239,6 +8253,7 @@
       }
     }
     if (failed) alert(`${failed} entr${failed === 1 ? 'y' : 'ies'} could not be sent -- check your connection and try again.`);
+    else savedToast(`${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}`);
     renderReviewQueue();
   }
 
@@ -11268,6 +11283,7 @@
     try {
       await set(ref(db, `companies/${currentCompany}/pending_bank_vouchers/${savedId}`),
         Object.assign({}, voucherReviewData, payload));
+      savedToast('Entry');
       // Sept 2026: the decision is saved the instant this write succeeds
       // -- posting to Tally happens separately in the background (see
       // tally_firebase_sync_v2.py's poller) and works whether or not
