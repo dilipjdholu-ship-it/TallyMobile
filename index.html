@@ -6573,7 +6573,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.23-8';
+  const APP_VERSION = '2026.10.24-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -6648,6 +6648,7 @@
   let mappingState = { party: null, items: [] };
 
   function resetScanFlow() {
+    invoiceRetryPending = false;
     scanCurrentFile = null;
     scanCurrentInvoiceId = null;
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
@@ -8751,6 +8752,10 @@
 
   function handleInvoiceStatusChange(data) {
     const status = data.status;
+    if (invoiceRetryPending) {
+      if (status === 'post_failed' || status === 'failed') return; // the failure being edited right now
+      invoiceRetryPending = false;
+    }
     if (status === 'uploaded') {
       document.getElementById('scan-progress-text').textContent = 'Processing invoice (this can take a minute)…';
     } else if (status === 'waiting_for_tally') {
@@ -8822,7 +8827,9 @@
     } else if (status === 'confirmed' || status === 'confirmed_pending_post') {
       document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
       document.getElementById('scan-step-progress').classList.add('active');
-      document.getElementById('scan-progress-text').textContent = 'Posting to Tally…';
+      document.getElementById('scan-progress-text').textContent = data.waiting_reason
+        ? `Waiting — ${data.waiting_reason}. It will post automatically once it is.`
+        : 'Posting to Tally…';
     } else if (status === 'posted') {
       showInvoiceResult(true, 'Posted as Optional Voucher',
         "Nothing has affected your books yet — open it in Tally to review and confirm."
@@ -8910,8 +8917,14 @@
     // the error first showed; without it, tapping Confirm again would
     // write 'confirmed' but nothing would be watching for the PC's
     // response.
+    // Oct 2026: the new listener fires at once with the record as it is --
+    // still 'post_failed' -- which bounced straight back to the error
+    // screen, so "Edit & Retry" looked dead. Ignore that old failure until
+    // the record moves on (DJ confirms again).
+    invoiceRetryPending = true;
     listenForInvoiceUpdates(scanCurrentInvoiceId);
   }
+  let invoiceRetryPending = false;
 
   // ---- Mapping / picker rendering ----
 
@@ -9810,6 +9823,8 @@
     const payload = {
       status: 'confirmed',
       review_draft: null,  // done with the draft once confirmed
+      error: null,          // a retry after a failed post starts clean
+      waiting_reason: null,
       confirmed_party: mappingState.party,
       confirmed_party_gstin: (mappingState.partyGstin || '').trim().toUpperCase(),
       update_party_gstin: mappingState.updatePartyGstin !== false,
@@ -10811,6 +10826,7 @@
   let voucherEdit = null;       // editable copy shown on screen; null until first seeded from voucherReviewData
 
   function resetVoucherFlow() {
+    voucherRetryPending = false;
     voucherCurrentId = null;
     if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
     voucherReviewData = null;
@@ -10840,6 +10856,10 @@
 
   function handleVoucherStatusChange(data) {
     const status = data.status;
+    if (voucherRetryPending) {
+      if (status === 'post_failed') return;
+      voucherRetryPending = false;
+    }
     if (status === 'pending_review') {
       voucherReviewData = data;
       if (!voucherEdit) {
@@ -10873,8 +10893,9 @@
       // every few seconds and this same listener will pick up 'posted'
       // or 'post_failed' whenever that happens.
       voucherActivateStep('voucher-step-progress');
-      document.getElementById('voucher-progress-text').textContent =
-        'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
+      document.getElementById('voucher-progress-text').textContent = data.waiting_reason
+        ? `Waiting — ${data.waiting_reason}. It will post automatically once it is.`
+        : 'Tally is closed on the PC — this will continue automatically once it\'s reopened.';
     } else if (status === 'posted') {
       showVoucherResult(true, 'Posted to Tally', data.post_message || 'Voucher was created in Tally.');
     } else if (status === 'post_failed') {
@@ -10927,11 +10948,15 @@
     // listener down when the error first showed; without it, tapping
     // Confirm again would write 'confirmed' but nothing would be
     // watching for the PC's response.
+    // Same fix as retryInvoice: ignore the record's current 'post_failed'
+    // (the new listener fires with it at once) until DJ confirms again.
+    voucherRetryPending = true;
     listenForVoucherUpdates(voucherCurrentId);
     renderVoucherReviewScreen();
     voucherActivateStep('voucher-step-review');
     document.getElementById('bank-voucher-review-title').textContent = 'Review Bank Transaction';
   }
+  let voucherRetryPending = false;
 
   // Sept 2026: lets DJ tap through several queued vouchers back-to-back
   // (Confirm or Discard one, land straight on the next one needing
@@ -11286,6 +11311,8 @@
     }
     const payload = {
       status: 'confirmed',
+      error: null,          // a retry after a failed post starts clean
+      waiting_reason: null,
       voucher_type: e.voucher_type,
       amount: e.amount,
       dr_ledger: e.dr_ledger,
