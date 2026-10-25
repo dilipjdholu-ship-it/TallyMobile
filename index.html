@@ -1107,6 +1107,24 @@
     display: block;
     box-shadow: var(--shadow);
   }
+  .scan-pages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 auto 16px; max-width: 360px; }
+  .scan-page { position: relative; border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); background: var(--paper-card); aspect-ratio: 3 / 4; }
+  .scan-page img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .scan-page .sp-num {
+    position: absolute; left: 6px; bottom: 6px; font-size: 11px; font-weight: 700;
+    background: rgba(0,0,0,0.6); color: #fff; border-radius: 10px; padding: 1px 7px;
+  }
+  .scan-page .sp-remove {
+    position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 15px; line-height: 1; padding: 0;
+  }
+  .map-split-note {
+    background: var(--primary-soft); color: var(--ink); border-radius: 10px;
+    padding: 10px 12px; font-size: 13px; margin-bottom: 12px;
+  }
+  .scan-pages-hint { font-size: 12.5px; color: var(--ink-soft); text-align: center; margin: 4px auto 10px; max-width: 320px; }
+  .scan-btn-row { display: flex; gap: 10px; max-width: 320px; margin: 0 auto; }
+  .scan-btn-row .scan-btn { margin: 0 0 12px; padding: 12px 8px; font-size: 14px; }
   .scan-pdf-preview {
     text-align: center;
     padding: 40px 20px;
@@ -2056,7 +2074,7 @@
             <div class="glyph">🧾</div>
             <p>Photograph a supplier invoice, or upload a PDF, to pull it into Tally as a draft (Optional Voucher) for review.</p>
             <input type="file" accept="image/*" capture="environment" id="scan-camera-input" style="display:none;">
-            <input type="file" accept="image/*" id="scan-gallery-input" style="display:none;">
+            <input type="file" accept="image/*" id="scan-gallery-input" multiple style="display:none;">
             <input type="file" accept="application/pdf" id="scan-pdf-input" style="display:none;">
             <button class="scan-btn" id="scan-camera-btn">Take Photo</button>
             <button class="scan-btn secondary" id="scan-gallery-btn">Choose from Gallery</button>
@@ -2066,11 +2084,22 @@
 
         <div class="scan-step" id="scan-step-preview">
           <img class="scan-preview" id="scan-preview-img" alt="Invoice preview">
+          <!-- Oct 2026: a bill photographed page by page -- thumbnails of
+               every page; they go up together as ONE invoice. -->
+          <div class="scan-pages" id="scan-pages" style="display:none;"></div>
           <div class="scan-pdf-preview" id="scan-pdf-preview" style="display:none;">
             <div class="glyph">📄</div>
             <div id="scan-pdf-filename"></div>
+            <div class="scan-pages-hint">If this PDF holds several bills, or Original / Duplicate copies, each bill is read separately and extra copies are skipped.</div>
           </div>
           <button class="scan-btn" id="scan-upload-btn">Upload &amp; Process</button>
+          <div class="scan-add-page" id="scan-add-page">
+            <div class="scan-pages-hint">Bill has more pages? Add each one — all pages go up as one invoice.</div>
+            <div class="scan-btn-row">
+              <button class="scan-btn secondary" id="scan-add-camera-btn">+ Page (camera)</button>
+              <button class="scan-btn secondary" id="scan-add-gallery-btn">+ Page (gallery)</button>
+            </div>
+          </div>
           <button class="scan-btn secondary" id="scan-retake-btn">Retake</button>
         </div>
 
@@ -7092,7 +7121,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-7';
+  const APP_VERSION = '2026.10.25-8';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -7161,6 +7190,8 @@
   // Voucher -> show the result.
 
   let scanCurrentFile = null;
+  let scanPages = [];          // photos of one bill, page by page (Oct 2026)
+  let scanAddingPage = false;  // the next picked photo is an extra page
   let scanCurrentInvoiceId = null;
   let scanUnsub = null;
   let mappingData = null;       // the ready_for_review payload from the PC
@@ -7169,6 +7200,8 @@
   function resetScanFlow() {
     invoiceRetryPending = false;
     scanCurrentFile = null;
+    scanPages = [];
+    scanAddingPage = false;
     scanCurrentInvoiceId = null;
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
     mappingData = null;
@@ -8870,8 +8903,10 @@
         : kind === 'voucher'
         ? `${d.voucher_type || 'Bank'} · ${formatCurrency(parseAmt(d.amount))}`
         : `Bank Statement${d.transactions ? ` (${d.transactions.length} txns)` : ''}`;
-      const sub = d.uploaded_at ? formatDateTime(d.uploaded_at)
-        : (d.txn_datetime ? formatDateTime(d.txn_datetime) : (d.detected_at ? formatDateTime(d.detected_at) : ''));
+      const sub = (d.uploaded_at ? formatDateTime(d.uploaded_at)
+        : (d.txn_datetime ? formatDateTime(d.txn_datetime) : (d.detected_at ? formatDateTime(d.detected_at) : '')))
+        + (kind === 'invoice' && d.split_note ? ' · ' + d.split_note.replace(/ from one PDF.*$/, '') : '')
+        + (kind === 'invoice' && d.fields?.invoice_no ? ' · No. ' + d.fields.invoice_no : '');
       const canTick = kind === 'voucher' && selectableIds.length > 1 && selectable(id);
       html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
         ${canTick ? `<input type="checkbox" class="queue-tick" data-tick="${escapeHtml(id)}" ${queueSelected.has(id) ? 'checked' : ''}
@@ -9032,21 +9067,98 @@
     document.getElementById('scan-pdf-input').click();
   });
 
+  document.getElementById('scan-add-camera-btn').addEventListener('click', () => {
+    scanAddingPage = true;
+    document.getElementById('scan-camera-input').click();
+  });
+  document.getElementById('scan-add-gallery-btn').addEventListener('click', () => {
+    scanAddingPage = true;
+    document.getElementById('scan-gallery-input').click();
+  });
+
   function onFilePicked(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    scanCurrentFile = file;
-    const isPdf = file.type === 'application/pdf';
-    document.getElementById('scan-preview-img').style.display = isPdf ? 'none' : '';
-    document.getElementById('scan-pdf-preview').style.display = isPdf ? '' : 'none';
+    const files = [...(e.target.files || [])];
+    e.target.value = ''; // so the same photo can be picked again after removing it
+    const adding = scanAddingPage;
+    scanAddingPage = false;
+    if (!files.length) return;
+    const isPdf = files[0].type === 'application/pdf';
     if (isPdf) {
-      document.getElementById('scan-pdf-filename').textContent = file.name;
+      scanPages = [];
+      scanCurrentFile = files[0];
     } else {
-      const url = URL.createObjectURL(file);
-      document.getElementById('scan-preview-img').src = url;
+      scanPages = adding ? scanPages.concat(files) : files;
+      scanCurrentFile = scanPages[0];
     }
+    renderScanPreview();
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-preview').classList.add('active');
+  }
+
+  function renderScanPreview() {
+    const isPdf = !!scanCurrentFile && scanCurrentFile.type === 'application/pdf';
+    const img = document.getElementById('scan-preview-img');
+    const grid = document.getElementById('scan-pages');
+    document.getElementById('scan-pdf-preview').style.display = isPdf ? '' : 'none';
+    document.getElementById('scan-add-page').style.display = isPdf ? 'none' : '';
+    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    grid.querySelectorAll('img').forEach(i => URL.revokeObjectURL(i.src));
+    img.style.display = !isPdf && scanPages.length === 1 ? '' : 'none';
+    grid.style.display = !isPdf && scanPages.length > 1 ? '' : 'none';
+    grid.innerHTML = '';
+    if (isPdf) {
+      document.getElementById('scan-pdf-filename').textContent = scanCurrentFile.name;
+    } else if (scanPages.length === 1) {
+      img.src = URL.createObjectURL(scanPages[0]);
+    } else {
+      grid.innerHTML = scanPages.map((f, i) => `
+        <div class="scan-page">
+          <img src="${URL.createObjectURL(f)}" alt="Page ${i + 1}">
+          <span class="sp-num">Page ${i + 1}</span>
+          <button type="button" class="sp-remove" data-remove-page="${i}" aria-label="Remove page ${i + 1}">×</button>
+        </div>`).join('');
+    }
+    document.getElementById('scan-upload-btn').textContent =
+      !isPdf && scanPages.length > 1 ? `Upload ${scanPages.length} pages as one invoice` : 'Upload & Process';
+  }
+
+  document.getElementById('scan-pages').addEventListener('click', e => {
+    const btn = e.target.closest('[data-remove-page]');
+    if (!btn) return;
+    scanPages.splice(Number(btn.dataset.removePage), 1);
+    scanCurrentFile = scanPages[0] || null;
+    if (!scanCurrentFile) {
+      document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('scan-step-capture').classList.add('active');
+      return;
+    }
+    renderScanPreview();
+  });
+
+  // Several photos of one bill go up as ONE image-only PDF (a page per
+  // photo), which the PC already reads through its scanned-PDF path. Each
+  // page is sized so the PC's 300-dpi render gives back the photo's own
+  // pixels -- the same resolution a single photo upload is read at.
+  async function buildPdfFromPages(files, onProgress) {
+    if (!window.jspdf) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    const { jsPDF } = window.jspdf;
+    let doc = null;
+    for (let i = 0; i < files.length; i++) {
+      const b64 = await resizeAndEncodeToBase64(files[i]);
+      const size = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+        im.onerror = () => reject(new Error(`Could not read page ${i + 1}`));
+        im.src = 'data:image/jpeg;base64,' + b64;
+      });
+      const pw = size.w * 72 / 300, ph = size.h * 72 / 300;
+      const orientation = pw > ph ? 'l' : 'p';
+      if (!doc) doc = new jsPDF({ unit: 'pt', format: [pw, ph], orientation });
+      else doc.addPage([pw, ph], orientation);
+      doc.addImage(b64, 'JPEG', 0, 0, pw, ph);
+      if (onProgress) onProgress((i + 1) / files.length);
+    }
+    return doc.output('datauristring').split(',')[1];
   }
 
   // Reads a PDF as base64 directly -- no resizing/recompression, unlike
@@ -9183,6 +9295,7 @@
 
   document.getElementById('scan-retake-btn').addEventListener('click', () => {
     scanCurrentFile = null;
+    scanPages = [];
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-capture').classList.add('active');
   });
@@ -9192,10 +9305,12 @@
 
   async function uploadInvoicePhoto() {
     if (!scanCurrentFile) return;
-    const isPdf = scanCurrentFile.type === 'application/pdf';
+    const multiPage = scanCurrentFile.type !== 'application/pdf' && scanPages.length > 1;
+    const isPdf = scanCurrentFile.type === 'application/pdf' || multiPage;
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-progress').classList.add('active');
-    document.getElementById('scan-progress-text').textContent = isPdf ? 'Uploading PDF…' : 'Uploading photo…';
+    document.getElementById('scan-progress-text').textContent =
+      multiPage ? `Uploading ${scanPages.length} pages…` : isPdf ? 'Uploading PDF…' : 'Uploading photo…';
     const progress = startUploadProgress('scan');
 
     const invoiceId = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -9207,9 +9322,14 @@
       // first, which has no meaningful "percent done" of its own (it's
       // effectively instant), so that path skips straight to the
       // write-phase bar once encoding finishes.
-      const fileBase64 = isPdf
+      const fileBase64 = multiPage
+        ? await buildPdfFromPages(scanPages, (frac) => progress.readProgress(frac))
+        : isPdf
         ? await readPdfAsBase64(scanCurrentFile, (frac) => progress.readProgress(frac))
         : await resizeAndEncodeToBase64(scanCurrentFile);
+      if (multiPage && fileBase64.length > 9 * 1024 * 1024) {
+        throw new Error(`${scanPages.length} pages make too large an upload -- remove a page or two, or upload them as separate bills.`);
+      }
 
       progress.startWritePhase();
 
@@ -9230,10 +9350,11 @@
       );
 
       await withTimeout(
-        set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), {
+        set(ref(db, `companies/${currentCompany}/pending_invoices/${invoiceId}`), Object.assign({
           status: 'uploaded',
           uploaded_at: new Date().toISOString(),
-        }),
+        // Pages of ONE bill: the PC must not try to split them into bills.
+        }, multiPage ? { single_invoice: true, pages: scanPages.length } : {})),
         UPLOAD_WRITE_TIMEOUT_MS,
         'Upload is taking too long -- check your connection and try again.'
       );
@@ -9514,6 +9635,12 @@
 
     const fields = mappingData.fields || {};
     let html = '';
+    if (mappingData.split_note) {
+      // Set by the PC when one uploaded PDF held several bills / copies.
+      const others = /^Bill 1 of (\d+)/.exec(mappingData.split_note);
+      html += `<div class="map-split-note">📑 ${escapeHtml(mappingData.split_note)}${others
+        ? ` — the other ${Number(others[1]) - 1} bill${others[1] === '2' ? ' is' : 's are'} in the Review Queue` : ''}.</div>`;
+    }
     html += `<div class="map-section">
       <div class="map-section-title">Invoice Details</div>
       <div class="map-rate-unit-row">
