@@ -502,23 +502,13 @@
   .ic-amber { background: var(--amber-soft); color: var(--amber); }
   .ic-red { background: var(--rust-soft); color: var(--rust); }
   .home-health-wrap .health-card { margin: 2px 0 8px; }
-  .report-list {
-    background: var(--paper-card); border: 1px solid var(--border); border-radius: 16px;
-    box-shadow: var(--shadow); overflow: hidden; margin-bottom: 20px;
-  }
-  .report-list .report-row {
-    width: 100%; display: flex; flex-direction: row; align-items: center; gap: 12px; text-align: left;
-    background: none; border: none; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--paper-line);
-    padding: 11px 14px; color: var(--ink);
-  }
-  .report-row:last-child { border-bottom: none; }
-  .report-row:active { background: var(--paper); }
-  .report-row .ht-icon { width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-  .report-row svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-  .report-row .rr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .report-row .rr-label { font-size: 14.5px; font-weight: 600; }
-  .report-row .rr-hint { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
-  .report-row .rr-chev { color: var(--ink-soft); flex-shrink: 0; display: flex; }
+  /* Reports: two wide cards (P&L, Balance Sheet) over three tiles */
+  .home-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .home-grid.grid-tight { margin-bottom: 10px; }
+  .home-tile.home-tile-wide { align-items: flex-start; gap: 4px; padding: 14px 14px 13px; text-align: left; }
+  .home-tile-wide .ht-icon { margin-bottom: 6px; }
+  .home-tile-wide .ht-label { font-size: 14px; text-align: left; }
+  .home-tile-wide .ht-hint { font-size: 11.5px; color: var(--ink-soft); line-height: 1.3; }
 
   /* ===== Review queue alert on Home ===== */
   .queue-alert {
@@ -3761,11 +3751,11 @@
         </button>`;
     // Outstanding / Ledgers / Day Book / Stock live in the bottom bar, so
     // Home lists only the reports that have no tab of their own.
-    const reportRow = (goto, icon, tone, label, hint) => `
-        <button class="report-row dash-tile" data-goto="${goto}">
+    const wideTile = (goto, icon, tone, label, hint) => `
+        <button class="home-tile home-tile-wide dash-tile" data-goto="${goto}">
           <span class="ht-icon ${tone}">${ICON[icon]}</span>
-          <span class="rr-text"><span class="rr-label">${label}</span><span class="rr-hint">${hint}</span></span>
-          <span class="rr-chev">${ICON.chev}</span>
+          <span class="ht-label">${label}</span>
+          <span class="ht-hint">${hint}</span>
         </button>`;
     contentArea.innerHTML = `
       <div class="home-hero">
@@ -3798,12 +3788,14 @@
       </div>
 
       <div class="home-section-title">Reports</div>
-      <div class="report-list">
-        ${reportRow('pnl', 'trend', 'ic-blue', 'Profit &amp; Loss', 'Income, expenses and net profit')}
-        ${reportRow('balancesheet', 'scale', 'ic-amber', 'Balance Sheet', 'Assets and liabilities on a date')}
-        ${reportRow('gstitc', 'percent', 'ic-red', 'GST / ITC', 'Input credit vs output tax')}
-        ${reportRow('monthlysales', 'bars', 'ic-green', 'Monthly Sales', 'Sales month by month')}
-        ${reportRow('monthlypurchases', 'cart', 'ic-blue', 'Monthly Purchases', 'Purchases month by month')}
+      <div class="home-grid cols-2 grid-tight">
+        ${wideTile('pnl', 'trend', 'ic-blue', 'Profit &amp; Loss', 'Income &amp; expenses')}
+        ${wideTile('balancesheet', 'scale', 'ic-amber', 'Balance Sheet', 'Assets &amp; liabilities')}
+      </div>
+      <div class="home-grid cols-3">
+        ${tile('monthlysales', 'bars', 'ic-green', 'Monthly Sales', 0)}
+        ${tile('monthlypurchases', 'cart', 'ic-red', 'Monthly Purchases', 0)}
+        ${tile('gstitc', 'percent', 'ic-amber', 'GST / ITC', 0)}
       </div>
 
       <div class="home-health-wrap"><div class="health-card" id="health-card"></div></div>
@@ -7061,7 +7053,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-5';
+  const APP_VERSION = '2026.10.25-6';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
