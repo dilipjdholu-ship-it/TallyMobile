@@ -391,6 +391,25 @@
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
     margin-bottom: 20px;
   }
+  /* System health card (Oct 2026) -- same card look as the dashboard tiles */
+  .health-card {
+    background: var(--paper-card); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 11px 14px; margin: 12px 0 14px;
+  }
+  .health-card:empty { display: none; }
+  .health-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .health-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); }
+  .health-pill { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+  .health-pill.ok { background: var(--forest-soft); color: var(--forest); }
+  .health-pill.warn { background: var(--amber-soft); color: var(--amber); }
+  .health-chips { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
+  .health-chip { display: inline-flex; align-items: center; gap: 5px; }
+  .health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--forest); flex-shrink: 0; }
+  .health-dot.warn { background: var(--amber); }
+  .health-problem { font-size: 12.5px; color: var(--ink); margin-top: 7px; padding-left: 12px; position: relative; line-height: 1.35; }
+  .health-problem::before { content: ''; position: absolute; left: 0; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+  .health-problem a { color: var(--primary); font-weight: 600; text-decoration: none; }
+  .health-note { font-size: 11px; color: var(--ink-soft); margin-top: 7px; }
   .dash-tile {
     background: var(--paper-card);
     border: 1px solid var(--border);
@@ -2976,26 +2995,38 @@
     const firmOpen = firm.tally && open.includes(firm.tally.toUpperCase());
     const data = companyData[currentCompany] || {};
     let attention = 0, waiting = 0;
-    ['pending_invoices', 'pending_bank_vouchers', 'pending_bank_statements', 'pending_ledger_reallocations'].forEach(node => {
+    // Only what the Review Queue shows -- Ledger Allocation keeps its own
+    // log (and its own badge), including old failures like Sept's.
+    ['pending_invoices', 'pending_bank_vouchers', 'pending_bank_statements'].forEach(node => {
       Object.values(data[node] || {}).forEach(r => {
         if (!r) return;
         if (['needs_attention', 'post_failed', 'failed'].includes(r.status)) attention++;
         else if (r.status === 'waiting_for_tally' || r.waiting_reason) waiting++;
       });
     });
-    const row = (ok, text) => `<div style="display:flex; gap:8px; padding:3px 0;"><span>${ok ? '✅' : '⚠️'}</span><span>${text}</span></div>`;
     const lastErr = s.last_error && (Date.now() - new Date(s.last_error.at).getTime()) < 24 * 3600 * 1000 ? s.last_error : null;
+    const tallyOk = s.tally_reachable && firmOpen;
+    const gmailOk = !(s.gmail && s.gmail.ok === false);
+    const problems = [];
+    if (!pcOk) problems.push(`PC sync app not heard from${ago !== null ? ` for ${ago} min` : ''} — check the PC`);
+    if (!s.tally_reachable) problems.push('Tally is closed — posting waits until it opens');
+    else if (!firmOpen) problems.push(`${escapeHtml(firm.label || 'This firm')} is not open in Tally${open.length ? ` (open: ${escapeHtml(open.join(', '))})` : ''} — posting waits`);
+    if (!gmailOk) problems.push('Bank alert emails are not being read');
+    if (attention) problems.push(`<a href="#" id="health-open-queue">${attention} item${attention === 1 ? '' : 's'} need${attention === 1 ? 's' : ''} your attention →</a>`);
+    if (waiting) problems.push(`${waiting} waiting to post — will go automatically`);
+    const chip = (ok, label) => `<span class="health-chip"><span class="health-dot${ok ? '' : ' warn'}"></span>${label}</span>`;
     el.innerHTML = `
-      <div class="map-section-title">System health</div>
-      ${row(pcOk, pcOk ? 'PC sync app is running' : `PC sync app not heard from${ago !== null ? ` for ${ago} min` : ''} — check the PC`)}
-      ${row(s.tally_reachable && firmOpen,
-        !s.tally_reachable ? 'Tally is closed'
-        : firmOpen ? `Tally is open with ${escapeHtml(firm.label || '')}`
-        : `${escapeHtml(firm.label || 'This firm')} is not open in Tally${open.length ? ` (open: ${escapeHtml(open.join(', '))})` : ''} — posting waits`)}
-      ${row(!(s.gmail && s.gmail.ok === false), s.gmail && s.gmail.ok === false ? 'Bank alert emails are not being read' : 'Bank alert emails OK')}
-      ${row(attention === 0, attention ? `<a href="#" id="health-open-queue">${attention} item${attention === 1 ? '' : 's'} need${attention === 1 ? 's' : ''} your attention</a>` : 'Nothing needs your attention')}
-      ${waiting ? row(false, `${waiting} waiting to post (will go automatically)`) : ''}
-      ${lastErr ? `<div class="totals-card-hint" style="margin-top:6px;">Last PC error ${escapeHtml(formatDateTime(lastErr.at))}: ${escapeHtml(lastErr.message)}</div>` : ''}`;
+      <div class="health-head">
+        <span class="health-title">System</span>
+        <span class="health-pill ${problems.length ? 'warn' : 'ok'}">${problems.length ? `${problems.length} to check` : 'All OK'}</span>
+      </div>
+      <div class="health-chips">
+        ${chip(pcOk, 'PC sync')}
+        ${chip(tallyOk, `Tally${firmOpen ? ' · ' + escapeHtml(firm.label || '') : ''}`)}
+        ${chip(gmailOk, 'Bank emails')}
+      </div>
+      ${problems.map(p => `<div class="health-problem">${p}</div>`).join('')}
+      ${lastErr ? `<div class="health-note">Last PC error ${escapeHtml(formatDateTime(lastErr.at))}: ${escapeHtml(lastErr.message)}</div>` : ''}`;
     const link = document.getElementById('health-open-queue');
     if (link) link.addEventListener('click', e => { e.preventDefault(); openReviewQueue(); });
   }
@@ -3588,8 +3619,7 @@
     contentArea.innerHTML = `
       <div class="dash-greeting">Welcome back</div>
       <div class="dash-company-name">${escapeHtml(companyLabel)}</div>
-      <div class="map-section" id="health-card" style="margin:10px 0;"></div>
-      <button type="button" class="map-discard-btn" id="home-reconcile-btn" style="margin:0 0 10px;">🏦 Check bank statement</button>
+      <div class="health-card" id="health-card"></div>
 
       ${pendingTotal > 0 ? `
       <button class="queue-alert" id="home-queue-alert" style="width:100%; border:1px solid var(--amber); cursor:pointer;">
@@ -3634,6 +3664,10 @@
           <span class="dt-icon" style="background:var(--rust-soft); color:var(--rust);">⇄</span>
           <span class="dt-label">Ledger Allocation</span>
           ${needsAllocationCount > 0 ? `<span class="dt-count-badge">${needsAllocationCount}</span>` : ''}
+        </button>
+        <button class="dash-tile" data-goto="__reconcile">
+          <span class="dt-icon" style="background:var(--forest-soft); color:var(--forest);">🏦</span>
+          <span class="dt-label">Check Statement</span>
         </button>
       </div>
 
@@ -3686,14 +3720,14 @@
         tile.addEventListener('click', openHistoryOverlay);
       } else if (goto === '__ledger_allocation') {
         tile.addEventListener('click', openLedgerAllocationOverlay);
+      } else if (goto === '__reconcile') {
+        tile.addEventListener('click', openReconcileOverlay);
       } else {
         tile.addEventListener('click', () => goToSection(goto));
       }
     });
     const alertBtn = document.getElementById('home-queue-alert');
     if (alertBtn) alertBtn.addEventListener('click', openReviewQueue);
-    const reconBtn = document.getElementById('home-reconcile-btn');
-    if (reconBtn) reconBtn.addEventListener('click', openReconcileOverlay);
   }
 
   function renderOutstanding(data, contentArea, summaryStrip) {
@@ -6768,7 +6802,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-1';
+  const APP_VERSION = '2026.10.25-2';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
