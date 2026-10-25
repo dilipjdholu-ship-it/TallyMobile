@@ -102,6 +102,10 @@
      those inner scrollable strips at all.
   */
   html, body { overflow-x: hidden; }
+  /* Oct 2026: hidden turns <body> into its own scroll box, which quietly
+     broke every position:sticky inside it (the blue app header scrolled
+     away). clip stops the sideways drag the same way without that. */
+  @supports (overflow-x: clip) { html, body { overflow-x: clip; } }
 
   body {
     background: var(--paper);
@@ -245,6 +249,7 @@
     padding: 0;
   }
   .refresh-btn:active { background: rgba(255,255,255,0.25); }
+  .refresh-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .refresh-btn.spinning { animation: refresh-spin 0.8s linear infinite; }
   @keyframes refresh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .top-row .sync-dot {
@@ -259,7 +264,12 @@
     width: 100%; text-align: left;
   }
   .company-switcher .cs-name { font-size: 15px; font-weight: 600; }
-  .company-switcher .cs-change { font-size: 11.5px; color: #9fb0d6; text-decoration: underline; }
+  .company-switcher .cs-change {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 12px; font-weight: 600; color: #fff;
+    background: rgba(255,255,255,0.14); border-radius: 20px; padding: 4px 8px 4px 11px;
+  }
+  .company-switcher .cs-change svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 
   nav.section-nav {
     display: none; /* replaced by bottom-nav */
@@ -492,6 +502,23 @@
   .ic-amber { background: var(--amber-soft); color: var(--amber); }
   .ic-red { background: var(--rust-soft); color: var(--rust); }
   .home-health-wrap .health-card { margin: 2px 0 8px; }
+  .report-list {
+    background: var(--paper-card); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: var(--shadow); overflow: hidden; margin-bottom: 20px;
+  }
+  .report-list .report-row {
+    width: 100%; display: flex; flex-direction: row; align-items: center; gap: 12px; text-align: left;
+    background: none; border: none; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--paper-line);
+    padding: 11px 14px; color: var(--ink);
+  }
+  .report-row:last-child { border-bottom: none; }
+  .report-row:active { background: var(--paper); }
+  .report-row .ht-icon { width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .report-row svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .report-row .rr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .report-row .rr-label { font-size: 14.5px; font-weight: 600; }
+  .report-row .rr-hint { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .report-row .rr-chev { color: var(--ink-soft); flex-shrink: 0; display: flex; }
 
   /* ===== Review queue alert on Home ===== */
   .queue-alert {
@@ -808,6 +835,36 @@
   .amount.positive { color: var(--forest); }
   .amount.negative { color: var(--rust); }
   .amount.neutral { color: var(--ink-soft); }
+  .amount.plain { color: var(--ink); }
+  .row .row-main { flex: 1; min-width: 0; }
+  .row .row-main .name { overflow-wrap: anywhere; }
+  .row .row-end { text-align: right; flex-shrink: 0; }
+  .row .narration { font-style: italic; margin-top: 3px; overflow-wrap: anywhere; }
+  .list-sentinel { height: 1px; }
+
+  /* Day Book: date groups with sticky headers (no overflow:hidden here,
+     which would stop position:sticky from working) */
+  .day-list {
+    background: var(--paper-card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+  .day-head {
+    position: sticky; top: var(--header-h, 0px); z-index: 3;
+    display: flex; justify-content: space-between; gap: 10px;
+    padding: 8px 14px; background: var(--paper); border-bottom: 1px solid var(--paper-line);
+    font-size: 12.5px; font-weight: 700; color: var(--ink);
+  }
+  .day-list > .day-head:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+  .day-head .day-head-sum { color: var(--ink-soft); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .day-list .row:last-child { border-bottom: none; }
+  .vtag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 7px;
+    border-radius: 20px; margin-right: 2px;
+  }
+  .vtag.tone-green { background: var(--forest-soft); color: var(--forest); }
+  .vtag.tone-red { background: var(--rust-soft); color: var(--rust); }
+  .vtag.tone-blue { background: var(--primary-soft); color: var(--primary); }
+  .vtag.tone-grey { background: var(--paper-line); color: var(--ink-soft); }
 
   .badge {
     display: inline-block;
@@ -1388,14 +1445,14 @@
       <div class="brand">TallyMobile</div>
       <div class="top-row-right">
         <div class="sync-status"><span class="sync-dot"></span><span id="sync-text">Loading…</span></div>
-        <button class="refresh-btn" id="manual-refresh-btn" title="Refresh data" aria-label="Refresh data">&#8635;</button>
-        <button class="refresh-btn" id="gst-settings-gear-btn" title="GST & Ledger Settings" aria-label="GST & Ledger Settings">&#9881;</button>
-        <button class="refresh-btn" id="logout-btn" title="Sign out" aria-label="Sign out">&#9211;</button>
+        <button class="refresh-btn" id="manual-refresh-btn" title="Refresh data" aria-label="Refresh data"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+        <button class="refresh-btn" id="gst-settings-gear-btn" title="GST & Ledger Settings" aria-label="GST & Ledger Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.830-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.650 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        <button class="refresh-btn" id="logout-btn" title="Sign out" aria-label="Sign out"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg></button>
       </div>
     </div>
     <button class="company-switcher" id="company-switcher-btn">
       <span class="cs-name" id="company-switcher-name"></span>
-      <span class="cs-change">Switch company</span>
+      <span class="cs-change">Switch <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>
     </button>
   </header>
 
@@ -3597,6 +3654,9 @@
     }
 
     footer.textContent = data.last_synced ? `Last synced: ${formatDateTime(data.last_synced)}` : '';
+    lastRenderedRows = null; // the list renderers below set it again
+    // Day Book's sticky date headers sit just under the (sticky) app header.
+    document.documentElement.style.setProperty('--header-h', document.querySelector('header.top').offsetHeight + 'px');
 
     searchBarRow.style.display = (currentSection === 'home' || currentSection === 'pnl' || currentSection === 'balancesheet' || currentSection === 'monthlysales' || currentSection === 'monthlypurchases' || currentSection === 'gstitc') ? 'none' : 'flex';
     document.getElementById('report-date-bar').style.display = (currentSection === 'pnl' || currentSection === 'balancesheet') ? 'flex' : 'none';
@@ -3699,12 +3759,20 @@
           <span class="ht-label">${label}</span>
           ${badge > 0 ? `<span class="dt-count-badge">${badge}</span>` : ''}
         </button>`;
+    // Outstanding / Ledgers / Day Book / Stock live in the bottom bar, so
+    // Home lists only the reports that have no tab of their own.
+    const reportRow = (goto, icon, tone, label, hint) => `
+        <button class="report-row dash-tile" data-goto="${goto}">
+          <span class="ht-icon ${tone}">${ICON[icon]}</span>
+          <span class="rr-text"><span class="rr-label">${label}</span><span class="rr-hint">${hint}</span></span>
+          <span class="rr-chev">${ICON.chev}</span>
+        </button>`;
     contentArea.innerHTML = `
       <div class="home-hero">
         <div class="hero-greet">Welcome back</div>
         <div class="hero-firm">${escapeHtml(companyLabel)}</div>
         <div class="hero-label">Total Outstanding</div>
-        <div class="hero-value">${formatCurrency(totalOutstanding)}</div>
+        <div class="hero-value">${drCrText(totalOutstanding)}</div>
         <div class="hero-stats">
           <div class="hero-stat"><div class="hs-label">Stock value</div><div class="hs-value">${stockValue}</div></div>
           <div class="hero-stat"><div class="hs-label">Ledgers</div><div class="hs-value">${ledgerCount}</div></div>
@@ -3730,16 +3798,12 @@
       </div>
 
       <div class="home-section-title">Reports</div>
-      <div class="home-grid cols-3">
-        ${tile('outstanding', 'rupee', 'ic-red', 'Outstanding', 0)}
-        ${tile('ledgers', 'book', 'ic-blue', 'Ledgers', 0)}
-        ${tile('daybook', 'calendar', 'ic-amber', 'Day Book', 0)}
-        ${tile('stock', 'box', 'ic-green', 'Stock', 0)}
-        ${tile('pnl', 'trend', 'ic-blue', 'P&amp;L', 0)}
-        ${tile('balancesheet', 'scale', 'ic-amber', 'Balance Sheet', 0)}
-        ${tile('monthlysales', 'bars', 'ic-green', 'Monthly Sales', 0)}
-        ${tile('monthlypurchases', 'cart', 'ic-red', 'Monthly Purchases', 0)}
-        ${tile('gstitc', 'percent', 'ic-amber', 'GST / ITC', 0)}
+      <div class="report-list">
+        ${reportRow('pnl', 'trend', 'ic-blue', 'Profit &amp; Loss', 'Income, expenses and net profit')}
+        ${reportRow('balancesheet', 'scale', 'ic-amber', 'Balance Sheet', 'Assets and liabilities on a date')}
+        ${reportRow('gstitc', 'percent', 'ic-red', 'GST / ITC', 'Input credit vs output tax')}
+        ${reportRow('monthlysales', 'bars', 'ic-green', 'Monthly Sales', 'Sales month by month')}
+        ${reportRow('monthlypurchases', 'cart', 'ic-blue', 'Monthly Purchases', 'Purchases month by month')}
       </div>
 
       <div class="home-health-wrap"><div class="health-card" id="health-card"></div></div>
@@ -3763,38 +3827,133 @@
     if (alertBtn) alertBtn.addEventListener('click', openReviewQueue);
   }
 
-  function renderOutstanding(data, contentArea, summaryStrip) {
-    let rows = safeArray(data.outstanding_receivables);
-    rows = rows.filter(r => (r.party || '').toLowerCase().includes(searchTerm));
-    rows = [...rows].sort((a, b) => parseAmt(b.outstanding) - parseAmt(a.outstanding));
+  // ---- Shared list helpers (Oct 2026 list-page refresh) ----
 
-    const total = rows.reduce((sum, r) => sum + parseAmt(r.outstanding), 0);
+  // Tally exports ledger balances signed: Dr comes back negative, Cr
+  // positive (openLedgerDetail flips the same sign). Shown the way an
+  // accountant reads them -- "₹1,234.00 Dr" -- with one colour rule
+  // everywhere: Dr (receivable / money in hand) green, Cr (payable) red.
+  function drCrText(n) {
+    if (!n) return formatCurrency(0);
+    return `${formatCurrency(Math.abs(n))} ${n < 0 ? 'Dr' : 'Cr'}`;
+  }
+  function drCrClass(n) {
+    return n < 0 ? 'positive' : n > 0 ? 'negative' : 'neutral';
+  }
+
+  // Text search plus amount search: typing "19914" or "19,914.50" also
+  // finds rows whose amount contains those digits.
+  function matchesSearch(texts, amounts) {
+    const t = searchTerm.trim();
+    if (!t) return true;
+    if (texts.some(s => String(s || '').toLowerCase().includes(t))) return true;
+    const num = t.replace(/[,₹\s]/g, '');
+    if (!/^\d+(\.\d+)?$/.test(num)) return false;
+    return (amounts || []).some(a => {
+      const v = Math.abs(parseAmt(a));
+      return v > 0 && (v.toFixed(2).includes(num) || String(Math.round(v)).includes(num));
+    });
+  }
+
+  // Replaces the old hard 300-row cap: renders the first page, then
+  // appends the next one whenever the sentinel under the list comes near
+  // the screen. rowHtml(row, previousRow) -- the previous row lets Day
+  // Book start a new date header.
+  const LIST_PAGE = 100;
+  function renderPagedRows(container, rows, rowHtml) {
+    let shown = 0;
+    const sentinel = document.createElement('div');
+    sentinel.className = 'list-sentinel';
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) more();
+    }, { rootMargin: '600px' });
+    function more() {
+      const next = rows.slice(shown, shown + LIST_PAGE);
+      container.insertAdjacentHTML('beforeend', next.map((r, i) => rowHtml(r, rows[shown + i - 1])).join(''));
+      shown += next.length;
+      if (shown >= rows.length) { observer.disconnect(); sentinel.remove(); }
+    }
+    more();
+    if (shown < rows.length) { container.after(sentinel); observer.observe(sentinel); }
+  }
+
+  // What's on screen right now (after search + filter chips) -- the
+  // XLSX / PDF export uses this so it matches the list being looked at.
+  var lastRenderedRows = null; // var: render() resets it, and render() is defined above this line
+
+  function filterChipsHtml(current, chips) {
+    return `<div class="filter-chips">${chips.map(([key, label]) =>
+      `<button class="filter-chip ${current === key ? 'active' : ''}" data-filter="${escapeHtml(key)}">${label}</button>`).join('')}</div>`;
+  }
+
+  function attachFilterChipHandlers(container, setFilter) {
+    container.querySelectorAll('.filter-chip[data-filter]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        setFilter(chip.dataset.filter);
+        render();
+      });
+    });
+  }
+
+  // Delegated, so rows appended later by renderPagedRows are clickable too.
+  function attachPartyRowClicks(list) {
+    list.addEventListener('click', e => {
+      const row = e.target.closest('.clickable-row');
+      if (row && row.dataset.party) openLedgerDetail(row.dataset.party);
+    });
+  }
+
+  let outstandingFilter = 'all'; // 'all' | 'receivable' | 'payable'
+
+  function renderOutstanding(data, contentArea, summaryStrip) {
+    const searched = safeArray(data.outstanding_receivables)
+      .filter(r => matchesSearch([r.party, r.group], [r.outstanding]));
+    const receivable = searched.filter(r => parseAmt(r.outstanding) < 0);
+    const payable = searched.filter(r => parseAmt(r.outstanding) > 0);
+    let rows = outstandingFilter === 'receivable' ? receivable
+             : outstandingFilter === 'payable' ? payable : searched;
+    rows = [...rows].sort((a, b) => Math.abs(parseAmt(b.outstanding)) - Math.abs(parseAmt(a.outstanding)));
+    lastRenderedRows = rows;
+
+    const sum = list => list.reduce((s, r) => s + Math.abs(parseAmt(r.outstanding)), 0);
     summaryStrip.innerHTML = `
-      <div class="summary-chip rust">
-        <div class="label">Total Outstanding</div>
-        <div class="value mono">${formatCurrency(total)}</div>
+      <div class="summary-chip forest">
+        <div class="label">To receive</div>
+        <div class="value mono">${formatCurrency(sum(receivable))}</div>
       </div>
-      <div class="summary-chip">
-        <div class="label">Parties</div>
-        <div class="value mono">${rows.length}</div>
+      <div class="summary-chip rust">
+        <div class="label">To pay</div>
+        <div class="value mono">${formatCurrency(sum(payable))}</div>
       </div>
     `;
 
+    const chips = filterChipsHtml(outstandingFilter, [
+      ['all', `All (${searched.length})`],
+      ['receivable', `To receive (${receivable.length})`],
+      ['payable', `To pay (${payable.length})`],
+    ]);
+
     if (rows.length === 0) {
-      contentArea.innerHTML = emptyState('No outstanding dues', 'Everything is settled — or no data matches your search.');
+      contentArea.innerHTML = chips + emptyState('No outstanding dues', 'Everything is settled — or no data matches your search.');
+      attachFilterChipHandlers(contentArea, f => { outstandingFilter = f; });
       return;
     }
 
-    contentArea.innerHTML = `<div class="list-card">${rows.map(r => `
+    contentArea.innerHTML = chips + '<div class="list-card"></div>';
+    const list = contentArea.querySelector('.list-card');
+    renderPagedRows(list, rows, r => {
+      const n = parseAmt(r.outstanding);
+      return `
       <div class="row clickable-row" data-party="${escapeHtml(r.party || '')}">
-        <div>
+        <div class="row-main">
           <div class="name">${escapeHtml(r.party || '—')}</div>
           <div class="sub">${escapeHtml(r.group || '')}</div>
         </div>
-        <div class="amount negative mono">${formatCurrency(parseAmt(r.outstanding))}</div>
-      </div>
-    `).join('')}</div>`;
-    attachRowClickHandlers(contentArea);
+        <div class="amount ${drCrClass(n)} mono">${drCrText(n)}</div>
+      </div>`;
+    });
+    attachPartyRowClicks(list);
+    attachFilterChipHandlers(contentArea, f => { outstandingFilter = f; });
   }
 
   let ledgerFilter = 'debtors'; // 'debtors' | 'creditors' | 'bank' | 'other'
@@ -3813,75 +3972,76 @@
       summaryStrip.innerHTML = '';
       return;
     }
-    let rows = safeArray(data.ledgers);
-    rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
-    rows = rows.filter(r => classifyLedger(r.group) === ledgerFilter);
+    const searched = safeArray(data.ledgers).filter(r => matchesSearch([r.name, r.group], [r.closing_balance]));
+    const count = kind => searched.filter(r => classifyLedger(r.group) === kind).length;
+    let rows = searched.filter(r => classifyLedger(r.group) === ledgerFilter);
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    lastRenderedRows = rows;
 
-    const allRows = safeArray(data.ledgers);
-    const debtorCount = allRows.filter(r => classifyLedger(r.group) === 'debtors').length;
-    const creditorCount = allRows.filter(r => classifyLedger(r.group) === 'creditors').length;
-    const bankCount = allRows.filter(r => classifyLedger(r.group) === 'bank').length;
-
+    // Net balance of the ledgers in the chosen filter, e.g. total owed by
+    // all debtors -- more useful than three chips of plain counts.
+    const net = rows.reduce((s, r) => s + parseAmt(r.closing_balance), 0);
+    const netLabel = { debtors: 'Debtors total', creditors: 'Creditors total', bank: 'Bank balance', other: 'Net balance' }[ledgerFilter];
     summaryStrip.innerHTML = `
       <div class="summary-chip">
-        <div class="label">Total Ledgers</div>
-        <div class="value mono">${allRows.length}</div>
+        <div class="label">${netLabel}</div>
+        <div class="value mono amount ${ledgerFilter === 'other' ? '' : drCrClass(net)}">${drCrText(net)}</div>
       </div>
       <div class="summary-chip">
-        <div class="label">Debtors</div>
-        <div class="value mono">${debtorCount}</div>
-      </div>
-      <div class="summary-chip">
-        <div class="label">Creditors</div>
-        <div class="value mono">${creditorCount}</div>
+        <div class="label">Ledgers</div>
+        <div class="value mono">${rows.length}</div>
       </div>
     `;
 
-    const filterChipsHtml = `
-      <div class="filter-chips">
-        <button class="filter-chip ${ledgerFilter === 'debtors' ? 'active' : ''}" data-filter="debtors">Sundry Debtors</button>
-        <button class="filter-chip ${ledgerFilter === 'creditors' ? 'active' : ''}" data-filter="creditors">Sundry Creditors</button>
-        <button class="filter-chip ${ledgerFilter === 'bank' ? 'active' : ''}" data-filter="bank">Bank Accounts (${bankCount})</button>
-        <button class="filter-chip ${ledgerFilter === 'other' ? 'active' : ''}" data-filter="other">Other</button>
-      </div>
-    `;
+    const chips = filterChipsHtml(ledgerFilter, [
+      ['debtors', `Debtors (${count('debtors')})`],
+      ['creditors', `Creditors (${count('creditors')})`],
+      ['bank', `Bank (${count('bank')})`],
+      ['other', `Other (${count('other')})`],
+    ]);
 
     if (rows.length === 0) {
-      contentArea.innerHTML = filterChipsHtml + emptyState('No ledgers found', 'Try a different search term or filter.');
-      attachFilterChipHandlers(contentArea);
+      contentArea.innerHTML = chips + emptyState('No ledgers found', 'Try a different search term or filter.');
+      attachFilterChipHandlers(contentArea, f => { ledgerFilter = f; });
       return;
     }
 
-    contentArea.innerHTML = filterChipsHtml + `<div class="list-card">${rows.slice(0, 300).map(r => {
+    contentArea.innerHTML = chips + '<div class="list-card"></div>';
+    const list = contentArea.querySelector('.list-card');
+    renderPagedRows(list, rows, r => {
       const bal = parseAmt(r.closing_balance);
-      const cls = bal > 0 ? 'positive' : bal < 0 ? 'negative' : 'neutral';
-      const kind = classifyLedger(r.group);
-      const badge = kind === 'debtors' ? '<span class="badge badge-debtor">Debtor</span>' :
-                    kind === 'creditors' ? '<span class="badge badge-creditor">Creditor</span>' :
-                    kind === 'bank' ? '<span class="badge badge-bank">Bank</span>' : '';
+      // "Other" ledgers (sales, expenses, duties...) aren't owed to or by
+      // anyone, so green/red would mislead -- plain ink there.
+      const cls = ledgerFilter === 'other' ? 'plain' : drCrClass(bal);
       return `
       <div class="row clickable-row" data-party="${escapeHtml(r.name || '')}">
-        <div>
+        <div class="row-main">
           <div class="name">${escapeHtml(r.name || '—')}</div>
-          <div class="sub">${escapeHtml(r.group || '')} ${badge}</div>
+          ${ledgerFilter === 'other' || ledgerFilter === 'bank' ? `<div class="sub">${escapeHtml(r.group || '')}</div>` : ''}
         </div>
-        <div class="amount ${cls} mono">${formatCurrency(bal)}</div>
+        <div class="amount ${cls} mono">${drCrText(bal)}</div>
       </div>`;
-    }).join('')}</div>
-    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
-    attachRowClickHandlers(contentArea);
-    attachFilterChipHandlers(contentArea);
+    });
+    attachPartyRowClicks(list);
+    attachFilterChipHandlers(contentArea, f => { ledgerFilter = f; });
   }
 
-  function attachFilterChipHandlers(container) {
-    container.querySelectorAll('.filter-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        ledgerFilter = chip.dataset.filter;
-        render();
-      });
-    });
+  // Day Book type tags: [css tone, short label] by voucher type.
+  function voucherTone(type) {
+    const t = (type || '').toLowerCase();
+    if (t.includes('sales') || t.includes('receipt') || t.includes('credit note')) return 'tone-green';
+    if (t.includes('purchase') || t.includes('payment') || t.includes('debit note')) return 'tone-red';
+    if (t.includes('contra') || t.includes('journal')) return 'tone-blue';
+    return 'tone-grey';
   }
+
+  function daybookDateHeading(d) {
+    if (!/^\d{8}$/.test(d || '')) return d || 'No date';
+    const dt = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+    return dt.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  let daybookFilter = 'all'; // 'all' or a lower-cased voucher type
 
   function renderDaybook(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'daybook')) {
@@ -3889,54 +4049,101 @@
       summaryStrip.innerHTML = '';
       return;
     }
-    let rows = safeArray(data.daybook);
-    rows = rows.filter(r =>
-      (r.party || '').toLowerCase().includes(searchTerm) ||
-      (r.voucher_type || '').toLowerCase().includes(searchTerm) ||
-      (r.narration || '').toLowerCase().includes(searchTerm)
-    );
+    const searched = safeArray(data.daybook).filter(r =>
+      matchesSearch([r.party, r.voucher_type, r.narration, r.voucher_number], [r.amount]));
 
+    // One chip per voucher type actually present, busiest first.
+    const typeCounts = {};
+    searched.forEach(r => {
+      const t = (r.voucher_type || 'Other').trim();
+      typeCounts[t] = (typeCounts[t] || 0) + 1;
+    });
+    const types = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
+    if (daybookFilter !== 'all' && !types.some(t => t.toLowerCase() === daybookFilter)) daybookFilter = 'all';
+
+    let rows = daybookFilter === 'all' ? searched
+      : searched.filter(r => (r.voucher_type || 'Other').trim().toLowerCase() === daybookFilter);
+    // Newest day first; within a day keep Tally's own order.
+    rows = rows.map((r, i) => [r, i])
+      .sort((a, b) => String(b[0].date || '').localeCompare(String(a[0].date || '')) || a[1] - b[1])
+      .map(x => x[0]);
+    lastRenderedRows = rows;
+
+    const total = rows.reduce((s, r) => s + Math.abs(parseAmt(r.amount)), 0);
+    const days = new Set(rows.map(r => r.date)).size;
     summaryStrip.innerHTML = `
       <div class="summary-chip">
         <div class="label">Vouchers</div>
         <div class="value mono">${rows.length}</div>
       </div>
+      <div class="summary-chip">
+        <div class="label">${daybookFilter === 'all' ? 'Days' : 'Total'}</div>
+        <div class="value mono">${daybookFilter === 'all' ? days : formatCurrency(total)}</div>
+      </div>
     `;
 
+    const chips = filterChipsHtml(daybookFilter, [['all', `All (${searched.length})`],
+      ...types.map(t => [t.toLowerCase(), `${escapeHtml(t)} (${typeCounts[t]})`])]);
+
     if (rows.length === 0) {
-      contentArea.innerHTML = emptyState('No vouchers found', 'Try a different search term, or check back after the next sync.');
+      contentArea.innerHTML = chips + emptyState('No vouchers found', 'Try a different search term, or check back after the next sync.');
+      attachFilterChipHandlers(contentArea, f => { daybookFilter = f; });
       return;
     }
 
-    // PERFORMANCE FIX (Sept 2026): this used to .map() every filtered row
-    // into one giant innerHTML string with no cap -- with thousands of
-    // vouchers in a company's daybook, that's a large synchronous DOM
-    // build every time Daybook opens or the search term changes. Capped
-    // at 300 to match renderLedgers/renderStock's existing convention
-    // (same "narrow your search to see more" hint below).
-    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => {
-      const isSales = (r.voucher_type || '').toLowerCase() === 'sales';
-      const isPurchase = (r.voucher_type || '').toLowerCase() === 'purchase';
-      const isClickable = isSales || isPurchase;
-      return `
-      <div class="row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
-        <div>
-          <div class="name">${escapeHtml(r.party || r.voucher_type || '—')}</div>
-          <div class="sub">${escapeHtml(r.voucher_type || '')} ${r.voucher_number ? '#' + escapeHtml(r.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(r.date))}${isClickable ? ' · tap to view' : ''}</div>
-          ${r.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(r.narration)}</div>` : ''}
-        </div>
-        <div class="amount neutral mono">${formatCurrency(parseAmt(r.amount))}</div>
-      </div>`;
-    }).join('')}</div>
-    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
-    contentArea.querySelectorAll('.clickable-row').forEach(row => {
-      row.addEventListener('click', () => {
-        const kind = row.dataset.vkind || 'sales';
-        ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
-        openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
-      });
+    // Per-day voucher count and value for the sticky date headers.
+    const dayStats = {};
+    rows.forEach(r => {
+      const s = dayStats[r.date] || (dayStats[r.date] = { n: 0, amt: 0 });
+      s.n++; s.amt += Math.abs(parseAmt(r.amount));
     });
+
+    contentArea.innerHTML = chips + '<div class="day-list"></div>';
+    const list = contentArea.querySelector('.day-list');
+    renderPagedRows(list, rows, (r, prev) => {
+      const type = r.voucher_type || '';
+      const isSales = type.toLowerCase() === 'sales';
+      const isPurchase = type.toLowerCase() === 'purchase';
+      const isClickable = isSales || isPurchase;
+      const header = (!prev || prev.date !== r.date) ? `
+        <div class="day-head">
+          <span>${escapeHtml(daybookDateHeading(r.date))}</span>
+          <span class="day-head-sum">${dayStats[r.date].n} · ${formatCurrency(dayStats[r.date].amt)}</span>
+        </div>` : '';
+      return `${header}
+      <div class="row day-row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
+        <div class="row-main">
+          <div class="name">${escapeHtml(r.party || type || '—')}</div>
+          <div class="sub"><span class="vtag ${voucherTone(type)}">${escapeHtml(type || 'Voucher')}</span>${r.voucher_number ? ' #' + escapeHtml(r.voucher_number) : ''}</div>
+          ${r.narration ? `<div class="sub narration">${escapeHtml(r.narration)}</div>` : ''}
+        </div>
+        <div class="amount plain mono">${formatCurrency(Math.abs(parseAmt(r.amount)))}</div>
+      </div>`;
+    });
+    list.addEventListener('click', e => {
+      const row = e.target.closest('.clickable-row');
+      if (!row) return;
+      const kind = row.dataset.vkind || 'sales';
+      ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
+      openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
+    });
+    attachFilterChipHandlers(contentArea, f => { daybookFilter = f; });
   }
+
+  // Tally's CLOSINGBALANCE for a stock item may come with or without its
+  // unit ("663" or "663 Kgs") -- numeric part for filtering, unit added
+  // from BASEUNITS when it's missing.
+  function stockQtyNumber(r) {
+    const m = String(r.closing_qty || '').replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+    return m ? parseFloat(m[0]) : 0;
+  }
+  function stockQtyText(r) {
+    const raw = String(r.closing_qty || '0').trim();
+    if (/[a-z]/i.test(raw) || !r.unit) return raw;
+    return `${raw} ${r.unit}`;
+  }
+
+  let stockFilter = 'all'; // 'all' | 'instock' | 'zero' | 'negative'
 
   function renderStock(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'stock_items')) {
@@ -3944,9 +4151,12 @@
       summaryStrip.innerHTML = '';
       return;
     }
-    let rows = safeArray(data.stock_items);
-    rows = rows.filter(r => (r.name || '').toLowerCase().includes(searchTerm));
+    const searched = safeArray(data.stock_items).filter(r => matchesSearch([r.name, r.group, r.hsn_code], [r.closing_value]));
+    const kindOf = r => { const q = stockQtyNumber(r); return q < 0 ? 'negative' : q === 0 ? 'zero' : 'instock'; };
+    const count = k => searched.filter(r => kindOf(r) === k).length;
+    let rows = stockFilter === 'all' ? searched : searched.filter(r => kindOf(r) === stockFilter);
     rows = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    lastRenderedRows = rows;
 
     const totalValue = rows.reduce((sum, r) => sum + parseAmt(r.closing_value), 0);
     summaryStrip.innerHTML = `
@@ -3960,27 +4170,42 @@
       </div>
     `;
 
+    const negatives = count('negative');
+    const chips = filterChipsHtml(stockFilter, [
+      ['all', `All (${searched.length})`],
+      ['instock', `In stock (${count('instock')})`],
+      ['zero', `Out of stock (${count('zero')})`],
+      ['negative', `Negative (${negatives})`],
+    ]);
+
     if (rows.length === 0) {
-      contentArea.innerHTML = emptyState('No stock items found', 'Try a different search term.');
+      contentArea.innerHTML = chips + emptyState('No stock items found', 'Try a different search term or filter.');
+      attachFilterChipHandlers(contentArea, f => { stockFilter = f; });
       return;
     }
 
-    contentArea.innerHTML = `<div class="list-card">${rows.slice(0, 300).map(r => `
+    contentArea.innerHTML = chips + '<div class="list-card"></div>';
+    const list = contentArea.querySelector('.list-card');
+    renderPagedRows(list, rows, r => {
+      const q = stockQtyNumber(r);
+      const qtyCls = q < 0 ? 'negative' : q === 0 ? 'neutral' : 'plain';
+      return `
       <div class="row clickable-row" data-item="${escapeHtml(r.name || '')}">
-        <div>
+        <div class="row-main">
           <div class="name">${escapeHtml(r.name || '—')}</div>
           <div class="sub">${escapeHtml(r.group || '')}</div>
         </div>
-        <div>
-          <div class="amount neutral mono" style="text-align:right">${r.closing_qty || '0'}</div>
-          <div class="sub" style="text-align:right">${formatCurrency(parseAmt(r.closing_value))}</div>
+        <div class="row-end">
+          <div class="amount ${qtyCls} mono">${escapeHtml(stockQtyText(r))}</div>
+          <div class="sub">${formatCurrency(parseAmt(r.closing_value))}</div>
         </div>
-      </div>
-    `).join('')}</div>
-    ${rows.length > 300 ? `<div class="loading-state">Showing first 300 of ${rows.length} — narrow your search to see more.</div>` : ''}`;
-    contentArea.querySelectorAll('.clickable-row').forEach(row => {
-      row.addEventListener('click', () => openStockItemDetail(row.dataset.item));
+      </div>`;
     });
+    list.addEventListener('click', e => {
+      const row = e.target.closest('.clickable-row');
+      if (row) openStockItemDetail(row.dataset.item);
+    });
+    attachFilterChipHandlers(contentArea, f => { stockFilter = f; });
   }
 
   function openStockItemDetail(itemName) {
@@ -6704,6 +6929,7 @@
   function getCurrentRows() {
     const data = companyData[currentCompany] || {};
     let key = { outstanding: 'outstanding_receivables', ledgers: 'ledgers', daybook: 'daybook', stock: 'stock_items' }[currentSection];
+    if (lastRenderedRows) return lastRenderedRows;
     let rows = safeArray(data[key]);
     if (searchTerm) {
       rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(searchTerm));
@@ -6835,7 +7061,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-4';
+  const APP_VERSION = '2026.10.25-5';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
