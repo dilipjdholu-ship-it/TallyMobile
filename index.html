@@ -978,7 +978,20 @@
     font-size: 24px;
     display: flex; align-items: center; justify-content: center;
   }
+  .scan-fab svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   .scan-step { display: none; }
+  /* Balance Sheet: Tally-style Liabilities / Assets blocks */
+  .bs-side-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; font-weight: 700; color: var(--ink-soft);
+    text-transform: uppercase; letter-spacing: 0.05em; margin: 4px 4px 8px;
+  }
+  .bs-side-head .mono { color: var(--ink); font-size: 14px; letter-spacing: 0; text-transform: none; }
+  .bs-card { margin-bottom: 18px; }
+  .bs-card .row .amount.neutral { color: var(--ink); }
+  .bs-diff-row .name { font-style: italic; color: var(--ink-soft); }
+  .bs-diff-row .amount.neutral { color: var(--ink-soft); }
+  .bs-note { font-size: 12px; color: var(--ink-soft); text-align: center; padding: 0 12px 8px; }
   .scan-step.active { display: block; }
 
   /* Ledger Allocation overlay's own step class -- deliberately NOT
@@ -1507,7 +1520,7 @@
     </button>
   </nav>
 
-  <button class="scan-fab" id="scan-invoice-fab" title="Upload document" aria-label="Upload document">📷</button>
+  <button class="scan-fab" id="scan-invoice-fab" title="Upload document" aria-label="Upload document"><svg viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
 
   <!-- FAB upload chooser -- always starts a FRESH capture. Resuming an
        in-progress invoice/statement now happens from the Review Queue
@@ -4425,20 +4438,46 @@
       return;
     }
 
+    // Oct 2026: the export's sign IS the side of Tally's own screen --
+    // checked against DJ's Shivam Hardware Balance Sheet: every positive
+    // group sits in Tally's left (Liabilities) column, every negative one
+    // in the right (Assets) column, and the gap between the two sums is
+    // exactly Tally's "Difference in opening balances" line.
+    const left = groups.filter(g => parseAmt(g.amount) > 0);
+    const right = groups.filter(g => parseAmt(g.amount) <= 0);
+    const leftSum = left.reduce((s, g) => s + Math.abs(parseAmt(g.amount)), 0);
+    const rightSum = right.reduce((s, g) => s + Math.abs(parseAmt(g.amount)), 0);
+    const diff = Math.round((leftSum - rightSum) * 100) / 100;
+    const total = Math.max(leftSum, rightSum);
+    const diffRow = `
+      <div class="row bs-diff-row">
+        <div class="name">Difference in opening balances</div>
+        <div class="amount neutral mono">${formatCurrency(Math.abs(diff))}</div>
+      </div>`;
+    const side = (title, list, withDiff) => `
+      <div class="bs-side-head"><span>${title}</span><span class="mono">${formatCurrency(total)}</span></div>
+      <div class="list-card bs-card">
+        ${list.map(g => renderGroupRow(g, 0, true)).join('')}
+        ${withDiff ? diffRow : ''}
+      </div>`;
+
+    const asAt = usingCustom ? formatTallyDate(custom.result.to_date)
+      : (data.last_synced ? new Date(data.last_synced).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
     summaryStrip.innerHTML = `
       <div class="summary-chip">
-        <div class="label">Groups</div>
-        <div class="value mono">${groups.length}</div>
+        <div class="label">Balance Sheet total</div>
+        <div class="value mono">${formatCurrency(total)}</div>
+      </div>
+      <div class="summary-chip">
+        <div class="label">As at</div>
+        <div class="value">${escapeHtml(asAt || '—')}</div>
       </div>
     `;
 
     contentArea.innerHTML = `
-      <div class="loading-state" style="text-align:left; padding: 10px 4px; font-size:12px;">
-        ${usingCustom
-          ? `Showing a live fetch from Tally as at ${formatTallyDate(custom.result.to_date)}.`
-          : `Figures shown as absolute values per group, same as Tally's own Balance Sheet screen (column position — not sign — indicates Asset vs Liability).`}
-      </div>
-      <div class="list-card">${groups.map(g => renderGroupRow(g, 0, true)).join('')}</div>
+      ${side('Liabilities', left, diff < 0)}
+      ${side('Assets', right, diff > 0)}
+      <div class="bs-note">Laid out the same way as Tally's own Balance Sheet screen. Tap a group to see its ledgers.</div>
     `;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
@@ -7053,7 +7092,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-6';
+  const APP_VERSION = '2026.10.25-7';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
