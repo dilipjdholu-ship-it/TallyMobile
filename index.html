@@ -6802,7 +6802,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-2';
+  const APP_VERSION = '2026.10.25-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -9282,8 +9282,9 @@
             <input type="text" class="map-qty-input map-field-input" data-qty-idx="${idx}" value="${escapeHtml(st.quantity ?? '')}">
           </div>
           <div>
-            <div class="map-field-label">Rate</div>
-            <input type="text" class="map-rate-input map-field-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}">
+            <div class="map-field-label">${st.calc === 'rate' ? 'Rate (auto)' : 'Rate'}</div>
+            <input type="text" class="map-rate-input map-field-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}"
+              ${st.calc === 'rate' ? 'readonly style="background:var(--paper); color:var(--ink-soft);"' : ''}>
           </div>
           <div>
             <div class="map-field-label">Unit</div>
@@ -9291,8 +9292,14 @@
               placeholder="e.g. Nos, Kg">
           </div>
         </div>
+        <div class="map-gst-row" data-calc-row="${idx}" style="align-items:center; margin:6px 0 2px;">
+          <span class="map-field-label" style="margin:0 4px 0 0;">Work out:</span>
+          <button type="button" class="map-gst-chip${st.calc === 'rate' ? '' : ' selected'}" data-calc="${idx}|amount">Amount = Qty × Rate</button>
+          <button type="button" class="map-gst-chip${st.calc === 'rate' ? ' selected' : ''}" data-calc="${idx}|rate">Rate = Amount ÷ Qty</button>
+        </div>
+        ${st.calc === 'rate' ? `<div class="totals-card-hint" style="margin:2px 0 6px;">Bill priced in a different unit? Enter the quantity in Tally's unit${st.unit ? ` (${escapeHtml(st.unit)})` : ''} and the bill's taxable amount -- the rate is worked out.</div>` : ''}
         <div>
-          <div class="map-field-label">Amount (auto-fills from Qty × Rate — edit if it should differ, e.g. after a discount)</div>
+          <div class="map-field-label">${st.calc === 'rate' ? 'Taxable amount (from the bill)' : 'Amount (auto-fills from Qty × Rate — edit if it should differ, e.g. after a discount)'}</div>
           <input type="text" class="map-amount-input map-field-input spaced" data-amount-idx="${idx}" value="${escapeHtml(st.amount ?? '')}">
         </div>
         <div class="map-gst-row" data-gst-row="${idx}">
@@ -9741,10 +9748,42 @@
       }
       recalcTotalsSummary();
     }
+    // Oct 2026, DJ's request: "Rate = Amount ÷ Qty" mode for bills priced
+    // in another unit (Laxmi Sales rope: per metre on the bill, per kg in
+    // Tally). Quantity is entered in Tally's unit, amount is the bill's
+    // taxable value (posted exactly as typed), and the rate follows.
+    function recalcRate(idx) {
+      const it = mappingState.items[idx];
+      const q = parseFloat(it.quantity), a = parseFloat(it.amount);
+      const discountPct = parseFloat(it.discount_pct);
+      const factor = !isNaN(discountPct) ? (1 - discountPct / 100) : 1;
+      if (!isNaN(q) && q > 0 && !isNaN(a) && factor > 0) {
+        it.rate = (a / (q * factor)).toFixed(2);
+        const rateInput = document.querySelector(`[data-rate-idx="${idx}"]`);
+        if (rateInput) rateInput.value = it.rate;
+      }
+      recalcTotalsSummary();
+    }
+    document.querySelectorAll('[data-calc]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [i, mode] = btn.dataset.calc.split('|');
+        const idx = parseInt(i, 10);
+        mappingState.items[idx].calc = mode;
+        if (mode === 'rate') recalcRate(idx);
+        // Redraw (labels / read-only rate change) without losing the place:
+        // keep this line at the same height on screen.
+        const scroller = btn.closest('.overlay-body');
+        const before = btn.getBoundingClientRect().top;
+        renderMappingScreen();
+        const again = document.querySelector(`[data-calc="${idx}|${mode}"]`);
+        if (scroller && again) scroller.scrollTop += again.getBoundingClientRect().top - before;
+      });
+    });
     document.querySelectorAll('[data-qty-idx]').forEach(input => {
       input.addEventListener('input', () => {
-        mappingState.items[parseInt(input.dataset.qtyIdx, 10)].quantity = input.value;
-        recalcAmount(parseInt(input.dataset.qtyIdx, 10));
+        const idx = parseInt(input.dataset.qtyIdx, 10);
+        mappingState.items[idx].quantity = input.value;
+        if (mappingState.items[idx].calc === 'rate') recalcRate(idx); else recalcAmount(idx);
       });
     });
     document.querySelectorAll('[data-rate-idx]').forEach(input => {
@@ -9755,8 +9794,9 @@
     });
     document.querySelectorAll('[data-amount-idx]').forEach(input => {
       input.addEventListener('input', () => {
-        mappingState.items[parseInt(input.dataset.amountIdx, 10)].amount = input.value;
-        recalcTotalsSummary();
+        const idx = parseInt(input.dataset.amountIdx, 10);
+        mappingState.items[idx].amount = input.value;
+        if (mappingState.items[idx].calc === 'rate') recalcRate(idx); else recalcTotalsSummary();
       });
     });
     document.querySelectorAll('[data-unit-idx]').forEach(input => {
