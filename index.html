@@ -1283,6 +1283,13 @@
     font-size: 13px;
     font-weight: 600;
   }
+  .map-placeholder-btn {
+    display: block; width: 100%; margin-top: 8px; padding: 9px 13px; text-align: left;
+    border-radius: 9px; border: 1.5px dashed var(--amber); background: var(--paper-card);
+    font-size: 13px; font-weight: 600; color: var(--ink);
+  }
+  .map-placeholder-btn .conf { color: var(--ink-soft); font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .map-placeholder-btn.selected { border-style: solid; background: var(--amber-soft); }
   .map-create-row { display: flex; gap: 8px; }
   .map-create-row input {
     flex: 1;
@@ -7121,7 +7128,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.25-8';
+  const APP_VERSION = '2026.10.26-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -9476,7 +9483,9 @@
         "Nothing has affected your books yet — open it in Tally to review and confirm."
         + (data.post_check ? '\n\n⚠ ' + data.post_check : '')
         + (data.tax_type === 'IGST' ? '\n\nOut-of-state supplier: posted with IGST.' : '')
-        + (data.ledger_note ? '\n\n' + data.ledger_note : ''));
+        + (data.ledger_note ? '\n\n' + data.ledger_note : '')
+        + (data.placeholder_items ? `\n\n📌 ${data.placeholder_items} line${data.placeholder_items === 1 ? '' : 's'} posted as "Item to be Created" — `
+            + 'open the voucher in Tally and pick the real item before accepting it.' : ''));
     } else if (status === 'post_failed' || status === 'needs_attention') {
       // Re-seed mappingData/mappingState from what was actually
       // submitted (confirmMapping's Object.assign keeps item_matches/
@@ -9907,7 +9916,7 @@
     const sel = v => chosen && chosen.value === v ? ' selected' : '';
     let optionsHtml = '';
     const listed = new Set([...rememberedList.map(r => r.candidate), ...(suggestions || []).map(s => s.candidate)]);
-    if (chosen && chosen.value && !listed.has(chosen.value)) {
+    if (chosen && chosen.value && !chosen.placeholder && !listed.has(chosen.value)) {
       optionsHtml += `<button class="map-option selected" data-kind="${kind}" data-idx="${idx}" data-value="${escapeHtml(chosen.value)}" data-isnew="${chosen.is_new ? 'true' : 'false'}">
         ${escapeHtml(chosen.value)}<div class="conf">${chosen.is_new ? 'new · chosen' : 'chosen'}</div>
       </button>`;
@@ -9935,7 +9944,29 @@
         <input type="text" placeholder="Or type a new name to create…" data-create-kind="${kind}" data-create-idx="${idx}">
         <button data-create-btn-kind="${kind}" data-create-btn-idx="${idx}">Create New</button>
       </div>
+      ${kind === 'item' ? `
+      <button type="button" class="map-placeholder-btn${chosen && chosen.placeholder ? ' selected' : ''}" data-placeholder-idx="${idx}">
+        ${chosen && chosen.placeholder ? '✓ ' : ''}Not in Tally yet — post as “Item to be Created”
+        <div class="conf">Like Asian Paints' import: the bill's item name goes on the line; pick the real item in Tally later.</div>
+      </button>` : ''}
     `;
+  }
+
+  // Oct 2026: post a line without a real stock item -- a stand-in
+  // "Item to be Created" (one per unit, made by the PC if missing), with
+  // the bill's wording as the line's description in Tally.
+  function selectPlaceholderItem(idx) {
+    mappingState.items[idx].confirmed = { value: 'Item to be Created', is_new: false, placeholder: true };
+    const unitInput = document.querySelector(`[data-unit-idx="${idx}"]`);
+    if (unitInput) { unitInput.disabled = false; unitInput.title = ''; }
+    document.querySelectorAll(`[data-options-for="item-${idx}"] .map-option, [data-search-results-for="item-${idx}"] .map-option`)
+      .forEach(b => b.classList.remove('selected'));
+    const btn = document.querySelector(`[data-placeholder-idx="${idx}"]`);
+    if (btn) {
+      btn.classList.add('selected');
+      btn.firstChild.textContent = '✓ Not in Tally yet — post as “Item to be Created”';
+    }
+    updateConfirmButtonState();
   }
 
   // Simple client-side ranking for the search box -- not meant to replace
@@ -10082,6 +10113,9 @@
       btn.addEventListener('click', () => {
         selectMappingValue(btn.dataset.kind, parseInt(btn.dataset.idx, 10), btn.dataset.value, btn.dataset.isnew === 'true');
       });
+    });
+    document.querySelectorAll('[data-placeholder-idx]').forEach(btn => {
+      btn.addEventListener('click', () => selectPlaceholderItem(parseInt(btn.dataset.placeholderIdx, 10)));
     });
 
     document.querySelectorAll('[data-search-btn-kind]').forEach(btn => {
@@ -10371,6 +10405,11 @@
       mappingState.party = selection;
     } else {
       mappingState.items[idx].confirmed = selection;
+      const phBtn = document.querySelector(`[data-placeholder-idx="${idx}"]`);
+      if (phBtn) {
+        phBtn.classList.remove('selected');
+        phBtn.firstChild.textContent = 'Not in Tally yet — post as “Item to be Created”';
+      }
       const unitInput = document.querySelector(`[data-unit-idx="${idx}"]`);
       if (!isNew) {
         // Matched to something that already exists in Tally -- fetch its
