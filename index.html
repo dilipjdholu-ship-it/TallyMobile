@@ -1228,7 +1228,31 @@
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     margin-bottom: 10px;
   }
-  .map-qty-rate-unit-row { grid-template-columns: 1fr 1fr 1fr; }
+  .map-qty-rate-unit-row { grid-template-columns: 1fr 1.3fr 0.8fr 1fr; gap: 8px; }
+  .map-progress {
+    position: sticky; top: -1px; z-index: 5; display: flex; align-items: center; gap: 8px;
+    background: var(--paper-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; margin-bottom: 12px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .map-progress .map-progress-text { flex: 1; min-width: 0; }
+  #invoice-mapping-body .map-section { scroll-margin-top: 60px; }
+  .map-progress .map-progress-text.done { color: var(--forest); font-weight: 600; }
+  .map-progress button {
+    border: 1.5px solid var(--primary); color: var(--primary); background: transparent;
+    border-radius: 8px; padding: 5px 9px; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  }
+  .map-progress button.map-next-missing { border-color: var(--rust); color: var(--rust); }
+  .bill-viewer {
+    position: fixed; inset: 0; z-index: 2000; background: #111; display: none; flex-direction: column;
+  }
+  .bill-viewer.open { display: flex; }
+  .bill-viewer-bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px; color: #fff; font-size: 14px; }
+  .bill-viewer-bar span { flex: 1; }
+  .bill-viewer-bar button { background: #fff; color: #111; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+  .bill-viewer-body { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .bill-viewer-body img, .bill-viewer-body canvas { display: block; width: 100%; height: auto; margin: 0 auto 8px; background: #fff; }
+  .bill-viewer.zoomed .bill-viewer-body img, .bill-viewer.zoomed .bill-viewer-body canvas { width: 220%; max-width: none; }
+  .bill-viewer-msg { color: #ddd; text-align: center; padding: 40px 16px; font-size: 14px; }
   .map-discard-btn {
     display: block;
     width: 100%;
@@ -1653,7 +1677,7 @@
                renderLedgerAllocList() into ledgerAllocBulkMatches. -->
           <button type="button" class="map-discard-btn" id="ledger-alloc-bulk-post-btn" style="display:none; margin:0 0 6px;"></button>
           <div id="ledger-alloc-bulk-confirm" class="gpay-suggest-box" style="display:none; margin:0 0 10px;">
-            <div class="gpay-suggest-label">These have a GPay name that exactly matches an existing Tally ledger -- uncheck any you don't want to post now:</div>
+            <div class="gpay-suggest-label">Each of these matches an existing Tally ledger (GPay name, bank name, or the ledger you always used for this payer) -- uncheck any you don't want to post now:</div>
             <div id="ledger-alloc-bulk-confirm-list"></div>
             <div id="ledger-alloc-bulk-confirm-progress" style="display:none; font-size:12.5px; color:var(--ink-soft); margin:8px 0 0;"></div>
             <div id="ledger-alloc-bulk-confirm-error" class="map-field-warn" style="display:none; margin-top:8px;"></div>
@@ -1678,6 +1702,8 @@
             <input type="date" id="ledger-alloc-date-to">
             <button class="date-range-reset" id="ledger-alloc-date-apply">Apply</button>
           </div>
+          <input type="search" id="ledger-alloc-search" class="map-field-input" placeholder="Search narration, number or amount…" style="margin:8px 0 6px;">
+          <div id="ledger-alloc-summary" class="totals-card-hint" style="margin:0 0 8px;"></div>
           <div id="ledger-alloc-list-body"><div class="loading-state"><span class="spinner"></span>Loading…</div></div>
         </div>
 
@@ -2620,7 +2646,9 @@
   // today; sales_by_rate isn't read by anything yet (prep for an
   // upcoming sales voucher feature), so both are saved together but
   // only one currently does anything.
-  const GST_RATES = [0, 5, 12, 18, 28];
+  // 40% added Oct 2026 (GST slabs from 22 Sept 2025: 5 / 18 / 40); 12 and
+  // 28 stay for the few goods still on them and for older bills.
+  const GST_RATES = [0, 5, 12, 18, 28, 40];
 
   function renderRateSelects(containerId, prefix, existingMap, names) {
     const container = document.getElementById(containerId);
@@ -2674,8 +2702,8 @@
 
     const cgstSelect = document.getElementById('gst-cgst-select');
     const sgstSelect = document.getElementById('gst-sgst-select');
-    cgstSelect.innerHTML = '<option>Loading ledgers…</option>';
-    sgstSelect.innerHTML = '<option>Loading ledgers…</option>';
+    cgstSelect.innerHTML = '<option value="">Loading ledgers…</option>';
+    sgstSelect.innerHTML = '<option value="">Loading ledgers…</option>';
 
     let existing = null;
     try {
@@ -7143,7 +7171,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.27-1';
+  const APP_VERSION = '2026.10.27-2';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -7969,6 +7997,7 @@
     ledgerAllocFilter.toDate = inputFormatToTallyDate(toVal) || '';
     renderLedgerAllocList();
   });
+  document.getElementById('ledger-alloc-search').addEventListener('input', () => renderLedgerAllocList());
 
   function renderLedgerAllocList() {
     const data = companyData[currentCompany] || {};
@@ -8033,9 +8062,32 @@
       rawList = getAllocatedVouchers(data).map(r => ({ ...r, date: r.voucher_date }));
     }
 
+    // Oct 2026: text / amount search on top of the chips and dates.
+    const searchQ = ((document.getElementById('ledger-alloc-search') || {}).value || '').trim().toLowerCase();
+    const searchDigits = searchQ.replace(/[^\d]/g, '');
+    const allocAmount = v => (isPendingView || isPostingView)
+      ? Math.abs(parseAmt(v.amount))
+      : Math.abs(parseAmt((safeArray(v.ledger_lines)[0] || {}).amount));
     const vouchers = filterAllocVouchers(rawList, filter)
+      .filter(v => {
+        if (!searchQ) return true;
+        const text = `${v.narration || ''} ${v.voucher_number || ''} ${v.new_ledger_name || ''}`.toLowerCase();
+        if (text.includes(searchQ)) return true;
+        return searchDigits.length >= 2 && allocAmount(v).toFixed(2).replace(/[^\d]/g, '').includes(searchDigits);
+      })
       .slice()
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // Count and money in / out for what's on screen.
+    const summaryEl = document.getElementById('ledger-alloc-summary');
+    if (summaryEl) {
+      const sumOf = t => vouchers.filter(v => v.voucher_type === t).reduce((s, v) => s + allocAmount(v), 0);
+      const inAmt = sumOf('Receipt'), outAmt = sumOf('Payment');
+      summaryEl.textContent = vouchers.length
+        ? `${vouchers.length} voucher${vouchers.length === 1 ? '' : 's'}`
+          + (inAmt ? ` · In ${formatCurrency(inAmt)}` : '') + (outAmt ? ` · Out ${formatCurrency(outAmt)}` : '')
+        : '';
+    }
 
     ledgerAllocLastPendingVouchers = isPendingView ? vouchers : [];
 
@@ -8082,14 +8134,18 @@
       // Posting shares Pending's raw voucher shape (v.amount directly);
       // only Allocated's request-record shape needs the ledger_lines
       // fallback.
-      const amount = (isPendingView || isPostingView)
-        ? parseAmt(v.amount)
-        : Math.abs(parseAmt((safeArray(v.ledger_lines)[0] || {}).amount));
+      // Always the plain amount -- the voucher's own sign isn't this
+      // ledger's side (a Receipt showed as "−₹"); In / Out says it instead.
+      const amount = allocAmount(v);
+      const isIn = v.voucher_type === 'Receipt';
       let statusHtml = '';
+      let errorHtml = '';
       if (isPendingView) {
         const req = findReallocationRequest(data, v.voucher_id);
         if (req && req.status === 'post_failed') {
-          statusHtml = '<span class="alloc-voucher-status alloc-status-failed" title="' + escapeHtml(req.error || '') + '">Failed — retry</span>';
+          statusHtml = '<span class="alloc-voucher-status alloc-status-failed">Failed — retry</span>';
+          // Shown on the row: a hover tooltip never appears on a phone.
+          if (req.error) errorHtml = `<div class="map-field-warn" style="margin-top:4px;">⚠ ${escapeHtml(req.error)}</div>`;
         }
       } else if (isPostingView) {
         const req = findReallocationRequest(data, v.voucher_id);
@@ -8142,9 +8198,14 @@
         // would just be noise on every row that was never a real party
         // transaction in the first place; guessPartyLedger already
         // returns null for those.
+        // Same order as the picker: the ledger used before for this payer,
+        // then a name match.
+        const learned = allocHistorySuggestion(v, contraName);
         const partyLedgerNames = v.voucher_type === 'Receipt' ? debtorLedgerNames : creditorLedgerNames;
-        const partyMatch = partyLedgerNames.length ? guessPartyLedger(v.narration, partyLedgerNames) : null;
-        if (partyMatch) {
+        const partyMatch = !learned && partyLedgerNames.length ? guessPartyLedger(v.narration, partyLedgerNames) : null;
+        if (learned) {
+          suggestHtml = `<div class="alloc-voucher-suggest">💡 Used before: ${escapeHtml(learned.name)} (${learned.count} of ${learned.total})</div>`;
+        } else if (partyMatch) {
           suggestHtml = `<div class="alloc-voucher-suggest">💡 Suggested: ${escapeHtml(partyMatch.name)}</div>`;
         }
       }
@@ -8154,9 +8215,13 @@
             <div class="alloc-voucher-narration">${escapeHtml(v.narration || v.voucher_number || '(no narration)')}</div>
             <div class="alloc-voucher-sub">${escapeHtml(formatTallyDate(v.date))} · ${escapeHtml(v.voucher_type || '')} ${escapeHtml(v.voucher_number || '')}</div>
             ${suggestHtml}
+            ${errorHtml}
           </div>
           ${statusHtml}
-          <div class="alloc-voucher-amount">${formatCurrency(amount)}</div>
+          <div class="alloc-voucher-amount" style="text-align:right;">
+            <div style="color:var(${isIn ? '--forest' : '--rust'});">${formatCurrency(amount)}</div>
+            <div style="font-size:11px; font-weight:500; color:var(--ink-soft);">${isIn ? 'In' : 'Out'}</div>
+          </div>
         </div>`;
     }).join('');
 
@@ -8215,6 +8280,16 @@
       .map(l => l.name.trim());
   }
 
+  // Oct 2026: the ledger DJ used for this payer before (historyLedgerFor),
+  // the same first choice the picker pre-fills -- so the list's
+  // "Suggested" line and the bulk button can never disagree with what the
+  // picker then shows. Null for GPay narrations and first-time payers.
+  function allocHistorySuggestion(v, contraName) {
+    const bankLine = (v.ledger_lines || []).find(l => l && l.ledger_name && l.ledger_name !== contraName);
+    if (!bankLine) return null;
+    return historyLedgerFor(v.narration, bankLine.ledger_name, (companyData[currentCompany] || {}).bank_related_vouchers);
+  }
+
   function computeLedgerAllocBulkMatches(vouchers, gpayIndex, contraName, creditorLedgerNames, debtorLedgerNames) {
     // Same source the picker's "existing ledger" search uses (see
     // openLedgerAllocPick/fetchLedgerNames) -- read from the already-
@@ -8238,7 +8313,7 @@
         if (!suggestion || !suggestion.confident) return;
         const existingName = byLowerName.get(suggestion.name.trim().toLowerCase());
         if (!existingName) return;
-        matches.push({ voucher: v, ledgerName: existingName });
+        matches.push({ voucher: v, ledgerName: existingName, source: 'gpay' });
       } else if (v.voucher_type === 'Payment' || v.voucher_type === 'Receipt') {
         // Sept 2026, DJ's request: same "existing ledger only" safety
         // rule as the GPay path above -- guessPartyLedger already only
@@ -8249,13 +8324,24 @@
         // matches against Sundry Creditors, Receipt against Sundry
         // Debtors (DJ's UPI examples were actually Receipts from
         // customers).
+        // Past use of a ledger for this payer wins (as in the picker); it
+        // only goes in the bulk list when every past entry used that ledger
+        // -- a split history stays one-at-a-time.
+        const learned = allocHistorySuggestion(v, contraName);
+        if (learned) {
+          const learnedName = byLowerName.get(learned.name.trim().toLowerCase());
+          if (learnedName && learned.count === learned.total) {
+            matches.push({ voucher: v, ledgerName: learnedName, source: 'history' });
+          }
+          return;
+        }
         const partyLedgerNames = v.voucher_type === 'Receipt' ? debtorLedgerNames : creditorLedgerNames;
         if (!partyLedgerNames || !partyLedgerNames.length) return;
         const partyMatch = guessPartyLedger(v.narration, partyLedgerNames);
         if (!partyMatch) return;
         const existingName = byLowerName.get(partyMatch.name.trim().toLowerCase());
         if (!existingName) return;
-        matches.push({ voucher: v, ledgerName: existingName });
+        matches.push({ voucher: v, ledgerName: existingName, source: 'name' });
       }
     });
     return matches;
@@ -8279,7 +8365,12 @@
     // made it sound like one tap here would immediately write to Tally,
     // which isn't what happens -- this is just as much a "see the list"
     // button as a "post" button.
-    btn.textContent = `⚡ ${n} exact GPay match${n === 1 ? '' : 'es'} found — Review & Post`;
+    // Says where the matches came from -- they're not all GPay any more.
+    const gpay = ledgerAllocBulkMatches.filter(m => m.source === 'gpay').length;
+    const parts = [];
+    if (gpay) parts.push(`${gpay} GPay`);
+    if (n - gpay) parts.push(`${n - gpay} from bank name / past use`);
+    btn.textContent = `⚡ ${n} sure match${n === 1 ? '' : 'es'} (${parts.join(', ')}) — Review & Post`;
   }
 
   function closeLedgerAllocBulkConfirm() {
@@ -8301,7 +8392,7 @@
       <label class="bulk-match-row">
         <input type="checkbox" checked data-idx="${i}">
         <div class="bulk-match-main">
-          <div class="bulk-match-narration">${escapeHtml(formatTallyDate(m.voucher.date))} · ${escapeHtml(formatCurrency(parseAmt(m.voucher.amount)))} -- ${escapeHtml(m.voucher.narration || '')}</div>
+          <div class="bulk-match-narration">${escapeHtml(formatTallyDate(m.voucher.date))} · ${escapeHtml(formatCurrency(Math.abs(parseAmt(m.voucher.amount))))} ${m.voucher.voucher_type === 'Receipt' ? 'In' : 'Out'} --${escapeHtml(m.voucher.narration || '')}</div>
           <div><span class="bulk-match-arrow">→</span> ${escapeHtml(m.ledgerName)}</div>
         </div>
       </label>`).join('');
@@ -8513,15 +8604,16 @@
       remainingCount > 1 ? `Ledger Allocation · ${remainingCount} left` : 'Ledger Allocation';
 
     document.getElementById('ledger-alloc-pick-vnum').textContent =
-      `${voucher.voucher_type || ''} ${voucher.voucher_number || ''}`.trim();
+      `${voucher.voucher_type || ''} ${voucher.voucher_number || ''}`.trim() + (voucher.date ? ` · ${formatTallyDate(voucher.date)}` : '');
     document.getElementById('ledger-alloc-pick-narration').textContent = voucher.narration || '';
-    document.getElementById('ledger-alloc-pick-amount').textContent = formatCurrency(parseAmt(voucher.amount));
+    document.getElementById('ledger-alloc-pick-amount').textContent =
+      `${formatCurrency(Math.abs(parseAmt(voucher.amount)))} ${voucher.voucher_type === 'Receipt' ? '(In)' : voucher.voucher_type === 'Payment' ? '(Out)' : ''}`.trim();
     document.getElementById('ledger-alloc-pick-error').style.display = 'none';
     setLedgerAllocCreateMode(false);
 
     const select = document.getElementById('ledger-alloc-pick-select');
     const saveBtn = document.getElementById('ledger-alloc-pick-save-btn');
-    select.innerHTML = '<option>Loading ledgers…</option>';
+    select.innerHTML = '<option value="">Loading ledgers…</option>';
     saveBtn.disabled = true;
     saveBtn.textContent = 'Save to Tally';
 
@@ -8703,6 +8795,9 @@
       ? document.getElementById('ledger-alloc-new-ledger-group').value
       : null;
     if (!voucher || !newLedgerName || (creatingNew && !newLedgerGroup)) return;
+    // Oct 2026: a real request went to Tally as ledger "Loading ledgers…"
+    // -- the list's placeholder, saved before the names arrived.
+    if (/^loading\b/i.test(newLedgerName)) return;
 
     if (!voucher.voucher_id) {
       document.getElementById('ledger-alloc-pick-error').textContent =
@@ -9658,7 +9753,13 @@
     const itemMatches = mappingData.item_matches || [];
 
     const fields = mappingData.fields || {};
-    let html = '';
+    // Sticky line at the top: how many lines are ready, a jump to the next
+    // one still missing something, and the bill itself to check against.
+    let html = `<div class="map-progress" id="map-progress">
+      <span class="map-progress-text" id="map-progress-text"></span>
+      <button type="button" class="map-next-missing" id="map-next-missing-btn" style="display:none;">Next missing ↓</button>
+      <button type="button" id="map-view-bill-btn">📄 Bill</button>
+    </div>`;
     if (mappingData.split_note) {
       // Set by the PC when one uploaded PDF held several bills / copies.
       const others = /^Bill 1 of (\d+)/.exec(mappingData.split_note);
@@ -9715,7 +9816,8 @@
           <div class="map-section-title">Item ${idx + 1}</div>
           <button type="button" class="map-remove-item-btn" data-remove-item="${idx}" title="Remove this item">✕ Remove</button>
         </div>
-        <div class="map-item-meta${metaWarn}">${item.needs_manual_check ? '⚠ check this line — quantity/rate/amount looks incomplete' : ''}</div>
+        <div class="map-item-meta${metaWarn}">${item.needs_manual_check ? '⚠ check this line — quantity/rate/amount looks incomplete'
+          : item.added_by_hand ? 'Added by hand — search for the item below and fill in the numbers from the bill.' : ''}</div>
         ${renderPickerHtml('item', idx, item.ocr_description, item.remembered_match, item.suggestions)}
         <div class="map-rate-unit-row map-qty-rate-unit-row">
           <div>
@@ -9726,6 +9828,11 @@
             <div class="map-field-label">${st.calc === 'rate' ? 'Rate (auto)' : 'Rate'}</div>
             <input type="text" class="map-rate-input map-field-input" data-rate-idx="${idx}" value="${escapeHtml(st.rate ?? '')}"
               ${st.calc === 'rate' ? 'readonly style="background:var(--paper); color:var(--ink-soft);"' : ''}>
+          </div>
+          <div>
+            <div class="map-field-label">Disc %</div>
+            <input type="text" inputmode="decimal" class="map-field-input" data-disc-idx="${idx}" value="${escapeHtml(st.discount_pct ?? '')}"
+              placeholder="0">
           </div>
           <div>
             <div class="map-field-label">Unit</div>
@@ -9744,10 +9851,12 @@
           <input type="text" class="map-amount-input map-field-input spaced" data-amount-idx="${idx}" value="${escapeHtml(st.amount ?? '')}">
         </div>
         <div class="map-gst-row" data-gst-row="${idx}">
-          ${[0, 5, 12, 18, 28].map(r => `<button class="map-gst-chip${st.gst_rate === String(r) ? ' selected' : ''}" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
+          ${GST_RATES.map(r => `<button class="map-gst-chip${st.gst_rate === String(r) ? ' selected' : ''}" data-item="${idx}" data-rate="${r}">${r}%</button>`).join('')}
         </div>
       </div>`;
     });
+
+    html += `<button type="button" class="map-discard-btn" id="map-add-item-btn" style="color:var(--primary); border-color:var(--primary); margin-bottom:12px;">+ Add an item the reader missed</button>`;
 
     html += `<div class="map-section" id="map-adjustments"></div>`;
 
@@ -9759,6 +9868,12 @@
 
     container.innerHTML = html;
     attachMappingHandlers();
+    document.getElementById('map-view-bill-btn').addEventListener('click', openBillViewer);
+    document.getElementById('map-next-missing-btn').addEventListener('click', () => {
+      const first = container.querySelector('.map-section.map-missing');
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    document.getElementById('map-add-item-btn').addEventListener('click', addMissedItem);
     // An item's GST rate feeds the "Same as items" rate of bill lines.
     container.querySelectorAll('.map-gst-chip[data-item]').forEach(btn =>
       btn.addEventListener('click', () => { renderAdjustmentsSection(); recalcTotalsSummary(); }));
@@ -9982,6 +10097,82 @@
       btn.firstChild.textContent = '✓ Not in Tally yet — post as “Item to be Created”';
     }
     updateConfirmButtonState();
+  }
+
+  // Oct 2026: a line the reader missed altogether. Added to both arrays
+  // together (like Remove) so indices stay aligned; it starts at the items'
+  // common GST rate and is picked via the normal search box.
+  function addMissedItem() {
+    mappingData.item_matches = mappingData.item_matches || [];
+    mappingData.item_matches.push({ ocr_description: '', added_by_hand: true, suggestions: [],
+                                    quantity: '', rate: '', amount: '', unit: '' });
+    mappingState.items.push({ confirmed: null, gst_rate: itemsCommonRate(),
+                              quantity: '', rate: '', amount: '', unit: '', discount_pct: '' });
+    renderMappingScreen();
+    const sections = document.querySelectorAll('#invoice-mapping-body [data-qty-idx]');
+    const last = sections[sections.length - 1];
+    if (last) last.closest('.map-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Oct 2026: the uploaded bill itself, full screen, to check lines against
+  // without the paper copy. Fetched only when asked for (it's the large
+  // invoice_photos blob); PDFs are drawn page by page with pdf.js.
+  async function openBillViewer() {
+    let viewer = document.getElementById('bill-viewer');
+    if (!viewer) {
+      viewer = document.createElement('div');
+      viewer.id = 'bill-viewer';
+      viewer.className = 'bill-viewer';
+      viewer.innerHTML = `<div class="bill-viewer-bar"><span>Bill</span>
+        <button type="button" id="bill-viewer-zoom">Zoom</button>
+        <button type="button" id="bill-viewer-close">Close</button></div>
+        <div class="bill-viewer-body" id="bill-viewer-body"></div>`;
+      document.body.appendChild(viewer);
+      document.getElementById('bill-viewer-close').addEventListener('click', () => viewer.classList.remove('open', 'zoomed'));
+      document.getElementById('bill-viewer-zoom').addEventListener('click', () => viewer.classList.toggle('zoomed'));
+    }
+    const body = document.getElementById('bill-viewer-body');
+    viewer.classList.remove('zoomed');
+    viewer.classList.add('open');
+    const invoiceId = scanCurrentInvoiceId;
+    if (viewer.dataset.loadedFor === invoiceId && body.children.length && !body.querySelector('.bill-viewer-msg')) return;
+    viewer.dataset.loadedFor = invoiceId;
+    body.innerHTML = '<div class="bill-viewer-msg">Loading the bill…</div>';
+    try {
+      const snap = await get(ref(db, `companies/${currentCompany}/invoice_photos/${invoiceId}`));
+      const node = snap.val();
+      if (viewer.dataset.loadedFor !== invoiceId) return;
+      if (!node || !node.photo_base64) {
+        body.innerHTML = '<div class="bill-viewer-msg">The bill file is no longer stored for this invoice.</div>';
+        return;
+      }
+      if (node.mime !== 'application/pdf') {
+        body.innerHTML = `<img alt="Bill" src="data:${escapeHtml(node.mime || 'image/jpeg')};base64,${node.photo_base64}">`;
+        return;
+      }
+      if (!window.pdfjsLib) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+      const bin = atob(node.photo_base64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      body.innerHTML = '';
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        body.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      }
+    } catch (err) {
+      console.error('Could not show the bill:', err);
+      body.innerHTML = '<div class="bill-viewer-msg">Could not load the bill -- check your connection and try again.</div>';
+    }
   }
 
   // Simple client-side ranking for the search box -- not meant to replace
@@ -10265,6 +10456,14 @@
         if (mappingState.items[idx].calc === 'rate') recalcRate(idx); else recalcTotalsSummary();
       });
     });
+    document.querySelectorAll('[data-disc-idx]').forEach(input => {
+      input.addEventListener('input', () => {
+        const idx = parseInt(input.dataset.discIdx, 10);
+        const v = input.value.replace(/[^\d.]/g, '');
+        mappingState.items[idx].discount_pct = v === '' ? null : v;
+        if (mappingState.items[idx].calc === 'rate') recalcRate(idx); else recalcAmount(idx);
+      });
+    });
     document.querySelectorAll('[data-unit-idx]').forEach(input => {
       input.addEventListener('input', () => {
         mappingState.items[parseInt(input.dataset.unitIdx, 10)].unit = input.value;
@@ -10289,6 +10488,7 @@
       e.target.value = e.target.value.toUpperCase().replace(/\s/g, '');
       mappingState.partyGstin = e.target.value;
       showGstinWarn();
+      recalcTotalsSummary(); // in-state vs out-of-state changes the tax lines
     });
     showGstinWarn();
     document.getElementById('map-party-gstin-update').addEventListener('change', (e) => {
@@ -10375,13 +10575,22 @@
     // Printed bill total, read off photos too (invoice_totals is PDF-only).
     const printedTotal = parseFloat(String((mappingData.fields || {}).grand_total_guess || '').replace(/[^\d.]/g, ''));
 
-    const rows = [
-      { label: 'Taxable Value', app: appTaxable, inv: inv.taxable_value },
-      { label: 'CGST', app: anyGstMissing ? null : appCgst, inv: inv.cgst },
-      { label: 'SGST', app: anyGstMissing ? null : appSgst, inv: inv.sgst },
-    ];
-    if (inv.igst != null) {
-      rows.push({ label: 'IGST', app: null, inv: inv.igst });
+    // Out-of-state supplier (GSTIN state differs from this firm's, or no
+    // GSTIN but the bill printed only IGST): the PC posts the whole tax as
+    // IGST, so compare it as one IGST line -- showing CGST/SGST against a
+    // blank invoice column looked like a mismatch on a correct bill.
+    const gstin = (mappingState.partyGstin || '').trim().toUpperCase();
+    const ownState = (((companyData[currentCompany] || {}).company_info || {}).gstin || '27').slice(0, 2);
+    const interstate = /^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(gstin)
+      ? gstin.slice(0, 2) !== ownState
+      : (inv.igst != null && inv.cgst == null && inv.sgst == null);
+    const rows = [{ label: 'Taxable Value', app: appTaxable, inv: inv.taxable_value }];
+    if (interstate) {
+      rows.push({ label: 'IGST', app: anyGstMissing ? null : appCgst + appSgst, inv: inv.igst });
+    } else {
+      rows.push({ label: 'CGST', app: anyGstMissing ? null : appCgst, inv: inv.cgst });
+      rows.push({ label: 'SGST', app: anyGstMissing ? null : appSgst, inv: inv.sgst });
+      if (inv.igst != null) rows.push({ label: 'IGST', app: null, inv: inv.igst });
     }
     rows.push({
       label: 'Bill Total',
@@ -10527,6 +10736,18 @@
       mark(gstRow, noGst);
       mark(gstRow && gstRow.closest('.map-section'), noItem || noGst);
     });
+    // Sticky progress line (Oct 2026): "22 of 28 lines ready" + a jump to
+    // the first section still highlighted above.
+    const total = mappingState.items.length;
+    const ready = mappingState.items.filter(i => i.confirmed && i.gst_rate !== null && i.gst_rate !== undefined).length;
+    const text = document.getElementById('map-progress-text');
+    if (text) {
+      const allDone = partyOk && total > 0 && ready === total;
+      text.textContent = allDone ? `✓ All ${total} line${total === 1 ? '' : 's'} ready`
+        : `${ready} of ${total} line${total === 1 ? '' : 's'} ready${partyOk ? '' : ' · party not picked'}`;
+      text.classList.toggle('done', allDone);
+      document.getElementById('map-next-missing-btn').style.display = allDone ? 'none' : '';
+    }
   }
 
   async function confirmMapping() {
@@ -10547,10 +10768,15 @@
       const s = mappingState.items[idx];
       const gaps = [];
       if (!(parseFloat(s.quantity) > 0)) gaps.push('Quantity');
-      if (!(parseFloat(s.rate) > 0)) gaps.push('Rate');
-      if (!(parseFloat(s.amount) > 0)) gaps.push('Amount');
+      // A free / scheme item is fine: rate and amount both exactly 0.
+      const isFree = parseFloat(s.rate) === 0 && parseFloat(s.amount) === 0;
+      if (!isFree && !(parseFloat(s.rate) > 0)) gaps.push('Rate');
+      if (!isFree && !(parseFloat(s.amount) > 0)) gaps.push('Amount');
+      const d = s.discount_pct;
+      if (d !== null && d !== undefined && d !== '' && !(parseFloat(d) >= 0 && parseFloat(d) < 100)) gaps.push('a Disc % below 100');
       if (gaps.length) {
-        missing.push(`Line ${idx + 1} (${s.confirmed || item.ocr_description || 'item'}): enter ${gaps.join(', ')}`);
+        const name = (s.confirmed && s.confirmed.value) || item.ocr_description || 'item';
+        missing.push(`Line ${idx + 1} (${name}): enter ${gaps.join(', ')}`);
       }
     });
     // Bill-level lines (Oct 2026) -- each needs an amount and a ledger, and
@@ -10586,7 +10812,8 @@
       unit: orNull(mappingState.items[idx].unit),
       hsn_guess: orNull(item.hsn_guess),
       gst_rate: orNull(parseInt(mappingState.items[idx].gst_rate, 10)),
-      discount_pct: orNull(mappingState.items[idx].discount_pct ?? null),
+      // A number, or null for none -- "0" would post a pointless 0% tag.
+      discount_pct: parseFloat(mappingState.items[idx].discount_pct) > 0 ? parseFloat(mappingState.items[idx].discount_pct) : null,
     }));
 
     const payload = {
@@ -10862,8 +11089,8 @@
 
     const bankSelect = document.getElementById('stmt-bank-ledger-select');
     const contraSelect = document.getElementById('stmt-contra-ledger-select');
-    bankSelect.innerHTML = '<option>Loading ledgers…</option>';
-    contraSelect.innerHTML = '<option>Loading ledgers…</option>';
+    bankSelect.innerHTML = '<option value="">Loading ledgers…</option>';
+    contraSelect.innerHTML = '<option value="">Loading ledgers…</option>';
 
     let existing = null;
     try {
@@ -11440,7 +11667,7 @@
         </div>
         <div class="map-section" style="margin-top:8px;">
           <div class="map-field-label">Ledger (other side)</div>
-          <select data-ledger-idx="${idx}" class="map-field-input"><option>Loading ledgers…</option></select>
+          <select data-ledger-idx="${idx}" class="map-field-input"><option value="">Loading ledgers…</option></select>
           ${t.contra_ledger_match_score != null ? '<div class="totals-card-hint" style="margin-top:4px;">💡 Suggested from narration -- check before confirming</div>' : ''}
         </div>
       </div>`;
@@ -12001,7 +12228,7 @@
 
     html += `<div class="map-section">
       <div class="map-field-label">Other Ledger (contra)</div>
-      <select id="voucher-contra-ledger-select" class="map-field-input"><option>Loading ledgers…</option></select>
+      <select id="voucher-contra-ledger-select" class="map-field-input"><option value="">Loading ledgers…</option></select>
       ${e._suggested ? `<div class="totals-card-hint" style="margin-top:4px;">${e._suggestedFrom
           ? `💡 You used this ledger for this payer before (${e._suggestedFrom.count} of ${e._suggestedFrom.total} times) -- check before confirming`
           : '💡 Suggested from narration -- check before confirming'}</div>` :
