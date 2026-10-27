@@ -4459,17 +4459,38 @@
     // positive, cost/expense groups negative, in Tally's own export).
     const netProfit = groups.reduce((s, g) => s + parseAmt(g.amount), 0);
 
+    // Oct 2026: say which period this is. The synced P&L is always the
+    // current financial year, 1 Apr to 31 Mar (pull_profit_and_loss pins
+    // it via current_fy_period on the PC); a "Fetch from Tally" result
+    // carries its own dates.
+    const longDate = d => /^\d{8}$/.test(d || '')
+      ? new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8))
+          .toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '';
+    let periodText, periodNote;
+    if (usingCustom) {
+      periodText = `${longDate(custom.result.from_date) || 'Books start'} – ${longDate(custom.result.to_date)}`;
+      periodNote = 'Fetched from Tally for the dates you picked.';
+    } else {
+      const now = new Date();
+      const fyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      periodText = `${longDate(`${fyStart}0401`)} – ${longDate(`${fyStart + 1}0331`)}`;
+      periodNote = `This financial year (${fyStart}-${String(fyStart + 1).slice(2)}), entries up to the last sync.`;
+    }
+
     summaryStrip.innerHTML = `
       <div class="summary-chip ${netProfit >= 0 ? 'forest' : 'rust'}">
         <div class="label">${netProfit >= 0 ? 'Net Profit' : 'Net Loss'}</div>
         <div class="value mono">${formatCurrency(Math.abs(netProfit))}</div>
       </div>
+      <div class="summary-chip">
+        <div class="label">Period</div>
+        <div class="value" style="font-size:14px; white-space:normal; overflow:visible; text-overflow:clip;">${escapeHtml(periodText)}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft); margin-top:2px;">${escapeHtml(periodNote)}</div>
+      </div>
     `;
 
-    contentArea.innerHTML = (usingCustom ? `
-      <div class="loading-state" style="text-align:left; padding: 8px 4px; font-size:12px;">
-        Showing a live fetch from Tally for ${formatTallyDate(custom.result.from_date) || 'inception'} to ${formatTallyDate(custom.result.to_date)}.
-      </div>` : '') + `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
+    contentArea.innerHTML = `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
     });
@@ -7171,7 +7192,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.27-2';
+  const APP_VERSION = '2026.10.27-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
