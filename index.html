@@ -5539,9 +5539,18 @@
           balanceCaption = `Balance as of ${formatTallyDate(toFilter)}`;
         }
       }
+      // Statement rows carry this ledger's own Dr/Cr side for each voucher
+      // and the running balance after it (positive = Dr). The voucher's
+      // top-level amount can't be used here: it's the voucher's sign, not
+      // this ledger's, so a Sale and a Receipt both showed as minus.
+      const statementRows = computeAnchoredStatementRows(allVouchers, partyName, liveClosingBalance);
+      const visibleRows = statementRows
+        .filter(r => (!fromFilter || (r.date && r.date >= fromFilter)) && (!toFilter || (r.date && r.date <= toFilter)))
+        .reverse();
+
       const closingLabel = displayBalance === null
         ? '…'
-        : `${formatCurrency(Math.abs(displayBalance))} ${displayBalance >= 0 ? 'Dr' : 'Cr'}`;
+        : Math.abs(displayBalance) < 0.005 ? 'Nil' : drCrText(-displayBalance);
 
       body.innerHTML = `
         <div class="summary-strip" style="margin-bottom:14px;">
@@ -5554,7 +5563,9 @@
             <div class="value mono">${closingLabel}</div>
           </div>
         </div>
-        <div class="list-card">${vouchers.map(v => {
+        <div class="list-card">${visibleRows.map(r => {
+          const v = r.voucher;
+          const amt = r.debit ? -r.debit : r.credit; // Tally sign: negative = Dr
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
           const isPurchase = (v.voucher_type || '').toLowerCase() === 'purchase';
           const isClickable = isSales || isPurchase;
@@ -5567,7 +5578,10 @@
               <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isClickable ? ' · tap to view' : ''}</div>
               ${v.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(v.narration)}</div>` : ''}
             </div>
-            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+            <div style="text-align:right; flex-shrink:0;">
+              <div class="amount ${drCrClass(amt)} mono">${drCrText(amt)}</div>
+              <div class="sub mono" style="margin-top:2px;">Bal ${Math.abs(r.balance) < 0.005 ? 'Nil' : drCrText(-r.balance)}</div>
+            </div>
           </div>`;
         }).join('')}</div>
       `;
@@ -5633,6 +5647,7 @@
         debit,
         credit,
         balance: runningBalance,
+        voucher: v,
       };
     });
   }
@@ -7128,7 +7143,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.26-1';
+  const APP_VERSION = '2026.10.27-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
