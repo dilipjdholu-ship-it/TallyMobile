@@ -481,6 +481,24 @@
   .home-action .ha-text { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; }
   .home-action .ha-sub { font-size: 12px; color: var(--ink-soft); font-weight: 500; margin-top: 1px; }
   .home-action .ha-chev { color: var(--ink-soft); flex-shrink: 0; }
+  .firm-wait-card {
+    background: var(--paper-card); border: 2px solid var(--amber); border-radius: var(--radius);
+    padding: 8px 12px; margin: 0 0 14px; box-shadow: var(--shadow);
+  }
+  .firm-wait-card.fw-clear { border: 1px solid var(--border); color: var(--forest); font-size: 13.5px; font-weight: 600; padding: 10px 12px; }
+  .fw-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--ink); padding: 2px 0 6px; }
+  .fw-head span:first-child { flex: 1; }
+  .fw-count { background: var(--amber); color: #fff; border-radius: 10px; padding: 1px 8px; font-size: 12px; }
+  .firm-wait-row {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent;
+    border: 0; border-top: 1px solid var(--border); padding: 9px 0; color: var(--ink); font: inherit; cursor: pointer;
+  }
+  .firm-wait-row .fw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .firm-wait-row .fw-name { font-size: 13.5px; font-weight: 700; }
+  .firm-wait-row .fw-this { font-weight: 500; color: var(--ink-soft); }
+  .firm-wait-row .fw-sub { font-size: 12.5px; color: var(--ink-soft); }
+  .firm-wait-row .fw-sub.fw-old { color: var(--rust); font-weight: 600; }
+  .firm-wait-row svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; color: var(--ink-soft); flex-shrink: 0; }
 
   .home-section-title { font-size: 15px; font-weight: 700; color: var(--ink); margin: 4px 2px 10px; letter-spacing: -0.01em; }
   .home-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
@@ -1228,6 +1246,24 @@
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     margin-bottom: 10px;
   }
+  .app-dialog-backdrop {
+    position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .app-dialog {
+    background: var(--paper-card); color: var(--ink); border-radius: 14px; width: 100%; max-width: 360px;
+    padding: 18px 18px 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  }
+  .app-dialog-msg { font-size: 15px; line-height: 1.45; white-space: pre-line; max-height: 60vh; overflow-y: auto; }
+  .app-dialog-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+  .app-dialog-btns button {
+    border-radius: 9px; padding: 9px 16px; font-size: 14px; font-weight: 600; border: 1.5px solid var(--primary);
+  }
+  .app-dialog-cancel { background: transparent; color: var(--primary); }
+  .app-dialog-ok { background: var(--primary); color: #fff; }
+  .app-dialog-ok.danger { background: var(--rust); border-color: var(--rust); }
+  .daybook-goto { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
+  .daybook-goto input { flex: 1; max-width: 190px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--paper-card); color: var(--ink); }
   .map-qty-rate-unit-row { grid-template-columns: 1fr 1.3fr 0.8fr 1fr; gap: 8px; }
   .map-progress {
     position: sticky; top: -1px; z-index: 5; display: flex; align-items: center; gap: 8px;
@@ -2373,7 +2409,47 @@
     return false;
   }
 
+  // ===== In-app dialogs (Oct 2026) =====
+  // Replace the browser's alert()/confirm(), which look out of place in
+  // the Android app. appConfirm resolves true/false; appAlert resolves once
+  // closed (callers that just show a message don't need to wait).
+  function appDialog(message, { okText = 'OK', cancelText = null, danger = false } = {}) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      wrap.className = 'app-dialog-backdrop';
+      wrap.innerHTML = `<div class="app-dialog" role="dialog" aria-modal="true">
+          <div class="app-dialog-msg"></div>
+          <div class="app-dialog-btns">
+            ${cancelText ? `<button type="button" class="app-dialog-cancel">${escapeHtml(cancelText)}</button>` : ''}
+            <button type="button" class="app-dialog-ok${danger ? ' danger' : ''}">${escapeHtml(okText)}</button>
+          </div>
+        </div>`;
+      wrap.querySelector('.app-dialog-msg').textContent = message; // keeps line breaks, never HTML
+      const done = value => { wrap.remove(); document.removeEventListener('keydown', onKey); resolve(value); };
+      const onKey = e => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
+      wrap.querySelector('.app-dialog-ok').addEventListener('click', () => done(true));
+      const cancel = wrap.querySelector('.app-dialog-cancel');
+      if (cancel) cancel.addEventListener('click', () => done(false));
+      wrap.addEventListener('click', e => { if (e.target === wrap) done(false); });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(wrap);
+      wrap.querySelector('.app-dialog-ok').focus();
+    });
+  }
+  function appAlert(message) { return appDialog(message); }
+  function appConfirm(message, opts = {}) {
+    const danger = /\b(discard|delete|remove)\b/i.test(message);
+    return appDialog(message, Object.assign({ okText: danger ? 'Yes, go ahead' : 'OK', cancelText: 'Cancel', danger }, opts));
+  }
+
   window.addEventListener('popstate', () => {
+    // Oct 2026: the full-screen bill viewer (openBillViewer) has its own
+    // history entry, so the phone's back button closes just the viewer.
+    const billViewer = document.getElementById('bill-viewer');
+    if (billViewer && billViewer.classList.contains('open')) {
+      billViewer.classList.remove('open', 'zoomed');
+      return;
+    }
     // The Ledger Allocation overlay has its own internal list <-> pick
     // "step" (see pushLedgerAllocPickState / returnToLedgerAllocList
     // near renderLedgerAllocList). That step never used to have its own
@@ -2636,7 +2712,7 @@
     location.reload();
   }
   document.getElementById('logout-btn').addEventListener('click', () => {
-    if (confirm('Sign out?')) logOut();
+    appConfirm('Sign out?', { okText: 'Sign out' }).then(ok => { if (ok) logOut(); });
   });
 
   // ===== GST & Ledger Settings =====
@@ -3337,7 +3413,7 @@
     } catch (err) {
       console.error('Could not queue statement entry:', err);
       btn.disabled = false;
-      alert('Could not add it -- check your connection and try again.');
+      appAlert('Could not add it -- check your connection and try again.');
     }
   }
 
@@ -3346,6 +3422,7 @@
       const val = snapshot.val() || {};
       latestSyncStatus = val;
       renderHealthCard();
+      renderAllFirmsCard(); // no-op unless Home is showing
       const gmailBanner = document.getElementById('gmail-status-banner');
       if (gmailBanner) {
         const gm = val.gmail;
@@ -3529,9 +3606,9 @@
     }));
   }
 
-  function saveToCache(companyKey, pathKey, data) {
+  function saveToCache(companyKey, pathKey, data, hash = null) {
     const ck = cacheKey(companyKey, pathKey);
-    const entry = { data, ts: Date.now() };
+    const entry = { data, ts: Date.now(), hash };
     _cacheMem.set(ck, entry); // synchronous — an immediate re-read in this tick sees it
     idbSet(ck, entry).catch(e => {
       // Best-effort, same philosophy as the old localStorage try/catch —
@@ -3581,6 +3658,7 @@
       'company_info', 'outstanding_receivables', 'last_synced',
       'pending_invoices', 'pending_bank_statements', 'pending_bank_vouchers',
       'bank_statement_settings', 'pending_ledger_reallocations', 'gst_settings',
+      'section_hashes',
     ];
     const company = currentCompany;
     const cd = companyData[company];
@@ -3601,6 +3679,12 @@
       const val = snapshot.val();
       cd[field] = val === null ? undefined : val;
       if (field === 'company_info' || field === 'outstanding_receivables') saveToCache(company, field, cd[field]);
+      if (field === 'section_hashes') {
+        // An older PC sync writes none -- then every saved copy is
+        // re-downloaded once per session, as before.
+        cd._hashesArrived = true;
+        revalidateCachedSections(company);
+      }
       arrived.add(field);
       queueRender();
     }, error => {
@@ -3636,26 +3720,65 @@
       }
 
       if (state[pathKey] === 'loading') return; // already refreshing
+      if (state[pathKey] === 'cached' && cachedIsCurrent(companyKey, pathKey, cached) !== false) return;
       state[pathKey] = state[pathKey] === 'cached' ? 'cached' : 'loading';
-
-      const path = LAZY_PATHS[pathKey];
-      get(ref(db, `companies/${companyKey}/${path}`)).then(snapshot => {
-        state[pathKey] = 'loaded';
-        companyData[companyKey] = companyData[companyKey] || {};
-        companyData[companyKey][pathKey] = snapshot.val();
-        saveToCache(companyKey, pathKey, snapshot.val());
-        if (companyKey === currentCompany) {
-          render();
-          refreshOpenOverlays();
-        }
-      }).catch(err => {
-        state[pathKey] = state[pathKey] === 'cached' ? 'cached' : null; // allow retry, unless we still have cache to fall back on
-        console.error(`Failed to load ${pathKey} for ${companyKey}:`, err);
-        if (companyKey === currentCompany) render();
-      });
+      fetchSection(companyKey, pathKey);
     });
 
     return allReady || pathKeys.every(k => state[k] === 'cached' || state[k] === 'loaded');
+  }
+
+  // Oct 2026: the PC writes a short fingerprint per heavy section
+  // (section_hashes, a live field) and only when its content changes. A
+  // saved copy with the same fingerprint is used as is -- no more
+  // re-downloading 3 MB of sales vouchers on every app open. Returns true
+  // (current: marked loaded), false (changed: fetch), or null (fingerprints
+  // not arrived yet: keep the saved copy, decide when they land --
+  // revalidateCachedSections).
+  function cachedIsCurrent(companyKey, pathKey, cached) {
+    const cd = companyData[companyKey] || {};
+    if (!cd._hashesArrived) return companyKey === currentCompany ? null : false;
+    const h = (cd.section_hashes || {})[pathKey];
+    if (h && cached && cached.hash === h) {
+      sectionLoadState[companyKey][pathKey] = 'loaded';
+      return true;
+    }
+    return false;
+  }
+
+  function revalidateCachedSections(companyKey) {
+    const state = sectionLoadState[companyKey] || {};
+    Object.keys(state).forEach(pathKey => {
+      const cached = loadFromCache(companyKey, pathKey);
+      if (state[pathKey] === 'cached') {
+        if (cachedIsCurrent(companyKey, pathKey, cached) === false) fetchSection(companyKey, pathKey);
+      } else if (state[pathKey] === 'loaded' && cached && cached.hash) {
+        // Open while the PC re-synced: pick up a section that changed.
+        const h = ((companyData[companyKey] || {}).section_hashes || {})[pathKey];
+        if (h && h !== cached.hash) fetchSection(companyKey, pathKey);
+      }
+    });
+  }
+
+  function fetchSection(companyKey, pathKey) {
+    const state = sectionLoadState[companyKey];
+    // The fingerprint as of the start: if the PC rewrites the section
+    // mid-download, the next check sees a newer one and fetches again.
+    const hash = (((companyData[companyKey] || {}).section_hashes) || {})[pathKey] || null;
+    get(ref(db, `companies/${companyKey}/${LAZY_PATHS[pathKey]}`)).then(snapshot => {
+      state[pathKey] = 'loaded';
+      companyData[companyKey] = companyData[companyKey] || {};
+      companyData[companyKey][pathKey] = snapshot.val();
+      saveToCache(companyKey, pathKey, snapshot.val(), hash);
+      if (companyKey === currentCompany) {
+        render();
+        refreshOpenOverlays();
+      }
+    }).catch(err => {
+      state[pathKey] = state[pathKey] === 'cached' ? 'cached' : null; // allow retry, unless we still have cache to fall back on
+      console.error(`Failed to load ${pathKey} for ${companyKey}:`, err);
+      if (companyKey === currentCompany) render();
+    });
   }
 
   // Manual refresh — bypasses the "already loaded" guard entirely and
@@ -3670,10 +3793,11 @@
     const fetches = keysToRefresh.map(pathKey => {
       state[pathKey] = 'loading';
       const path = LAZY_PATHS[pathKey];
+      const hash = ((companyData[refreshingCompany] || {}).section_hashes || {})[pathKey] || null;
       return get(ref(db, `companies/${refreshingCompany}/${path}`)).then(snapshot => {
         state[pathKey] = 'loaded';
         companyData[refreshingCompany][pathKey] = snapshot.val();
-        saveToCache(refreshingCompany, pathKey, snapshot.val());
+        saveToCache(refreshingCompany, pathKey, snapshot.val(), hash);
         if (refreshingCompany === currentCompany) {
           render();
           refreshOpenOverlays();
@@ -3847,14 +3971,7 @@
         </div>
       </div>
 
-      ${pendingTotal > 0 ? `
-      <button class="home-action" id="home-queue-alert">
-        <span class="ha-icon">${ICON.queue}</span>
-        <span class="ha-text">${pendingTotal} document${pendingTotal === 1 ? '' : 's'} waiting on you
-          <div class="ha-sub">${pendingInvoiceCount} invoice${pendingInvoiceCount === 1 ? '' : 's'} · ${pendingVoucherCount} bank entr${pendingVoucherCount === 1 ? 'y' : 'ies'} · ${pendingStatementCount} statement${pendingStatementCount === 1 ? '' : 's'}</div>
-        </span>
-        <span class="ha-chev">${ICON.chev}</span>
-      </button>` : ''}
+      <div id="home-firms-card"></div>
 
       <div class="home-section-title">Documents</div>
       <div class="home-grid">
@@ -3892,9 +4009,96 @@
         tile.addEventListener('click', () => goToSection(goto));
       }
     });
-    const alertBtn = document.getElementById('home-queue-alert');
-    if (alertBtn) alertBtn.addEventListener('click', openReviewQueue);
+    renderAllFirmsCard();
   }
+
+  // ===== "Waiting on you · all firms" (Oct 2026) =====
+  // Home used to count only the firm on screen -- a Shivam Traders bill sat
+  // unreviewed for 24 days while DJ worked in Shivam Hardware. Other firms
+  // come from sync_status/queue_summary (a few hundred bytes the PC writes,
+  // see push_queue_summary); the firm on screen uses its live data.
+  const QUEUE_IN_PROGRESS = new Set(['uploaded', 'confirmed', 'confirmed_pending_post', 'waiting_for_tally',
+                                     'posted', 'requested', 'processing']);
+  const OLD_WAIT_DAYS = 7;
+
+  function waitingOnPerson(node, timeKeys) {
+    let count = 0, oldest = null;
+    Object.values(node || {}).forEach(r => {
+      if (!r || QUEUE_IN_PROGRESS.has(r.status)) return;
+      count++;
+      const ts = timeKeys.map(k => r[k]).find(Boolean);
+      if (ts && (!oldest || String(ts) < oldest)) oldest = String(ts);
+    });
+    return { count, oldest };
+  }
+
+  function firmQueueSummary(key) {
+    if (key === currentCompany) {
+      const d = companyData[key] || {};
+      const bankState = (sectionLoadState[key] || {}).bank_related_vouchers;
+      const bankReady = bankState === 'loaded' || bankState === 'cached';
+      return {
+        invoices: waitingOnPerson(d.pending_invoices, ['uploaded_at']),
+        bank_statements: waitingOnPerson(d.pending_bank_statements, ['uploaded_at']),
+        bank_vouchers: waitingOnPerson(d.pending_bank_vouchers, ['txn_datetime', 'detected_at']),
+        alloc_failed: Object.values(d.pending_ledger_reallocations || {}).filter(r => r && r.status === 'post_failed').length,
+        needs_allocation: bankReady ? getVouchersNeedingAllocation(d).length
+          : (((latestSyncStatus || {}).queue_summary || {})[key] || {}).needs_allocation,
+      };
+    }
+    return ((latestSyncStatus || {}).queue_summary || {})[key] || null;
+  }
+
+  function renderAllFirmsCard() {
+    const el = document.getElementById('home-firms-card');
+    if (!el) return;
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    let total = 0;
+    const rows = COMPANIES.map(c => {
+      const s = firmQueueSummary(c.key);
+      if (!s) return '';
+      const inv = (s.invoices || {}).count || 0;
+      const bank = (s.bank_vouchers || {}).count || 0;
+      const stmt = (s.bank_statements || {}).count || 0;
+      const failed = s.alloc_failed || 0;
+      const toAllocate = s.needs_allocation || 0;
+      const parts = [];
+      if (inv) parts.push(plural(inv, 'bill to review', 'bills to review'));
+      if (bank) parts.push(plural(bank, 'bank entry', 'bank entries'));
+      if (stmt) parts.push(plural(stmt, 'statement', 'statements'));
+      if (failed) parts.push(plural(failed, 'allocation failed', 'allocations failed'));
+      if (toAllocate) parts.push(`${toAllocate} in ${escapeHtml(getContraLedgerName(companyData[c.key] || {}))}`);
+      if (!parts.length) return '';
+      total += inv + bank + stmt + failed + toAllocate;
+      const oldest = [s.invoices, s.bank_vouchers, s.bank_statements].map(x => (x || {}).oldest).filter(Boolean).sort()[0];
+      const days = oldest ? Math.floor((Date.now() - new Date(oldest).getTime()) / 86400000) : 0;
+      const old = days >= OLD_WAIT_DAYS;
+      const target = (inv || bank || stmt) ? 'queue' : 'alloc';
+      return `<button type="button" class="firm-wait-row" data-firm="${c.key}" data-target="${target}">
+        <span class="fw-main">
+          <span class="fw-name">${escapeHtml(c.label)}${c.key === currentCompany ? ' <span class="fw-this">· this firm</span>' : ''}</span>
+          <span class="fw-sub${old ? ' fw-old' : ''}">${parts.join(' · ')}${old ? ` · waiting ${days} days` : ''}</span>
+        </span>
+        <span class="ha-chev">${ICON_CHEV}</span>
+      </button>`;
+    }).join('');
+    el.innerHTML = total
+      ? `<div class="firm-wait-card">
+          <div class="fw-head"><span>Waiting on you · all firms</span><span class="fw-count">${total}</span></div>
+          ${rows}
+        </div>`
+      : `<div class="firm-wait-card fw-clear">✓ All clear — nothing waiting in any firm</div>`;
+    el.querySelectorAll('.firm-wait-row').forEach(btn => btn.addEventListener('click', async () => {
+      const key = btn.dataset.firm;
+      if (key !== currentCompany) {
+        localStorage.setItem(COMPANY_SELECTION_KEY, key);
+        currentCompany = key;
+        await showApp();
+      }
+      if (btn.dataset.target === 'queue') openReviewQueue(); else openLedgerAllocationOverlay();
+    }));
+  }
+  const ICON_CHEV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
 
   // ---- Shared list helpers (Oct 2026 list-page refresh) ----
 
@@ -4111,6 +4315,7 @@
   }
 
   let daybookFilter = 'all'; // 'all' or a lower-cased voucher type
+  let daybookUpTo = '';      // Oct 2026 "go to date": YYYYMMDD, list starts from that day
 
   function renderDaybook(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'daybook')) {
@@ -4136,6 +4341,7 @@
     rows = rows.map((r, i) => [r, i])
       .sort((a, b) => String(b[0].date || '').localeCompare(String(a[0].date || '')) || a[1] - b[1])
       .map(x => x[0]);
+    if (daybookUpTo) rows = rows.filter(r => String(r.date || '') <= daybookUpTo);
     lastRenderedRows = rows;
 
     const total = rows.reduce((s, r) => s + Math.abs(parseAmt(r.amount)), 0);
@@ -4152,19 +4358,33 @@
     `;
 
     const chips = filterChipsHtml(daybookFilter, [['all', `All (${searched.length})`],
-      ...types.map(t => [t.toLowerCase(), `${escapeHtml(t)} (${typeCounts[t]})`])]);
+      ...types.map(t => [t.toLowerCase(), `${escapeHtml(t)} (${typeCounts[t]})`])])
+      // Jump to a day instead of scrolling through ~8,000 vouchers.
+      + `<div class="daybook-goto">
+          <span>Go to date</span>
+          <input type="date" id="daybook-goto-date" value="${daybookUpTo ? `${daybookUpTo.slice(0, 4)}-${daybookUpTo.slice(4, 6)}-${daybookUpTo.slice(6, 8)}` : ''}">
+          ${daybookUpTo ? '<button type="button" class="filter-chip" id="daybook-goto-clear">Latest</button>' : ''}
+        </div>`;
+    const attachGoto = () => {
+      const input = document.getElementById('daybook-goto-date');
+      if (input) input.addEventListener('change', () => { daybookUpTo = input.value.replace(/-/g, ''); render(); });
+      const clear = document.getElementById('daybook-goto-clear');
+      if (clear) clear.addEventListener('click', () => { daybookUpTo = ''; render(); });
+    };
 
     if (rows.length === 0) {
       contentArea.innerHTML = chips + emptyState('No vouchers found', 'Try a different search term, or check back after the next sync.');
       attachFilterChipHandlers(contentArea, f => { daybookFilter = f; });
+      attachGoto();
       return;
     }
 
     // Per-day voucher count and value for the sticky date headers.
     const dayStats = {};
     rows.forEach(r => {
-      const s = dayStats[r.date] || (dayStats[r.date] = { n: 0, amt: 0 });
-      s.n++; s.amt += Math.abs(parseAmt(r.amount));
+      const s = dayStats[r.date] || (dayStats[r.date] = { n: 0, sales: 0 });
+      s.n++;
+      if ((r.voucher_type || '').toLowerCase() === 'sales') s.sales += Math.abs(parseAmt(r.amount));
     });
 
     contentArea.innerHTML = chips + '<div class="day-list"></div>';
@@ -4173,14 +4393,15 @@
       const type = r.voucher_type || '';
       const isSales = type.toLowerCase() === 'sales';
       const isPurchase = type.toLowerCase() === 'purchase';
-      const isClickable = isSales || isPurchase;
+      const isLines = LINES_VOUCHER_TYPES.has(type.toLowerCase());
+      const isClickable = isSales || isPurchase || isLines;
       const header = (!prev || prev.date !== r.date) ? `
         <div class="day-head">
           <span>${escapeHtml(daybookDateHeading(r.date))}</span>
-          <span class="day-head-sum">${dayStats[r.date].n} · ${formatCurrency(dayStats[r.date].amt)}</span>
+          <span class="day-head-sum">${dayStats[r.date].n} voucher${dayStats[r.date].n === 1 ? '' : 's'}${dayStats[r.date].sales ? ` · Sales ${formatCurrency(dayStats[r.date].sales)}` : ''}</span>
         </div>` : '';
       return `${header}
-      <div class="row day-row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
+      <div class="row day-row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(r.date || '')}" data-vnum="${escapeHtml(r.voucher_number || '')}" data-vkind="${isLines ? 'lines' : isPurchase ? 'purchase' : 'sales'}" data-vtype="${escapeHtml(type)}"` : ''}>
         <div class="row-main">
           <div class="name">${escapeHtml(r.party || type || '—')}</div>
           <div class="sub"><span class="vtag ${voucherTone(type)}">${escapeHtml(type || 'Voucher')}</span>${r.voucher_number ? ' #' + escapeHtml(r.voucher_number) : ''}</div>
@@ -4193,10 +4414,15 @@
       const row = e.target.closest('.clickable-row');
       if (!row) return;
       const kind = row.dataset.vkind || 'sales';
+      if (kind === 'lines') {
+        openVoucherLines(row.dataset.vdate, row.dataset.vnum, row.dataset.vtype);
+        return;
+      }
       ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
       openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
     });
     attachFilterChipHandlers(contentArea, f => { daybookFilter = f; });
+    attachGoto();
   }
 
   // Tally's CLOSINGBALANCE for a stock item may come with or without its
@@ -4386,7 +4612,7 @@
     const fromInput = document.getElementById('report-date-from').value;
     const toInput = document.getElementById('report-date-to').value;
     const toDate = inputFormatToTallyDate(toInput);
-    if (!toDate) { alert('Pick at least a "to" date.'); return; }
+    if (!toDate) { appAlert('Pick at least a "to" date.'); return; }
 
     const requestId = String(Date.now());
     customReportState[sectionKey] = { requesting: true, result: null, requestId, timedOut: false };
@@ -4569,6 +4795,28 @@
     });
   }
 
+  // ===== Financial-year chooser (Oct 2026) =====
+  // Shared by Monthly Sales, Monthly Purchases and GST / ITC. null = the
+  // current financial year (April-March); 'all' = every synced month.
+  let reportFy = null;
+  function fyStartOf(monthKey) {
+    const y = +monthKey.slice(0, 4), m = +monthKey.slice(4, 6);
+    return m >= 4 ? y : y - 1;
+  }
+  function fyLabelOf(y) { return `FY ${y}-${String(y + 1).slice(2)}`; }
+  function fyFilter(monthKeys) {
+    const years = [...new Set(monthKeys.map(fyStartOf))].sort((a, b) => b - a);
+    const now = new Date();
+    let sel = reportFy ?? String(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1);
+    if (sel !== 'all' && !years.includes(+sel)) sel = years.length ? String(years[0]) : 'all';
+    return {
+      keep: k => sel === 'all' || fyStartOf(k) === +sel,
+      label: sel === 'all' ? 'all years' : fyLabelOf(+sel),
+      chips: years.length > 1
+        ? filterChipsHtml(sel, [...years.map(y => [String(y), fyLabelOf(y)]), ['all', 'All years']]) : '',
+    };
+  }
+
   function renderMonthlySales(data, contentArea, summaryStrip) {
     if (!ensureSectionLoaded(currentCompany, 'sales_vouchers')) {
       contentArea.innerHTML = loadingState('Loading sales data…');
@@ -4592,7 +4840,10 @@
       monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + amt);
     });
 
-    const months = [...monthTotals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    // Oct 2026: one financial year at a time (the data runs from
+    // 1 Apr 2025, so totals used to mix two years).
+    const fy = fyFilter([...monthTotals.keys()]);
+    const months = [...monthTotals.entries()].filter(([k]) => fy.keep(k)).sort((a, b) => a[0].localeCompare(b[0]));
     const total = months.reduce((s, [, amt]) => s + amt, 0);
     const maxMonth = Math.max(...months.map(([, amt]) => amt), 1);
     const avgMonth = months.length ? total / months.length : 0;
@@ -4606,7 +4857,7 @@
 
     summaryStrip.innerHTML = `
       <div class="summary-chip forest">
-        <div class="label">Total (${months.length} mo)</div>
+        <div class="label">Total · ${fy.label}</div>
         <div class="value mono">${formatCurrency(total)}</div>
       </div>
       <div class="summary-chip">
@@ -4640,7 +4891,8 @@
       </div>
     `;
 
-    contentArea.innerHTML = chartHtml + listHtml;
+    contentArea.innerHTML = fy.chips + chartHtml + listHtml;
+    attachFilterChipHandlers(contentArea, f => { reportFy = f; });
 
     // Auto-scroll the chart to show the MOST RECENT months by default --
     // now that .month-bars scrolls internally instead of squeezing every
@@ -4663,7 +4915,7 @@
       const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
       let y = 16;
       doc.setFontSize(14);
-      doc.text(`${companyLabel} — Monthly Sales Report`, 14, y);
+      doc.text(`${companyLabel} — Monthly Sales Report (${fy.label})`, 14, y);
       y += 10;
       doc.setFontSize(10);
       doc.setFont(undefined, 'bold');
@@ -4695,6 +4947,7 @@
       .filter(v => v.date && v.date.slice(0, 6) === monthKey)
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
+    currentLinesLookup = null; // this overlay now shows a month, not a voucher
     document.getElementById('month-detail-title').textContent = monthLabelStr;
     const body = document.getElementById('month-detail-body');
 
@@ -4719,7 +4972,7 @@
               <div class="name">${escapeHtml(v.party || '—')}</div>
               <div class="sub">Sales ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(v.date))}</div>
             </div>
-            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+            <div class="amount neutral mono">${formatCurrency(Math.abs(parseAmt(v.amount)))}</div>
           </div>
         `).join('')}</div>
       `;
@@ -4734,6 +4987,7 @@
   }
 
   document.getElementById('month-detail-back').addEventListener('click', () => {
+    currentLinesLookup = null;
     goBackFromOverlay();
   });
 
@@ -4767,7 +5021,10 @@
       monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + amt);
     });
 
-    const months = [...monthTotals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    // Oct 2026: one financial year at a time (the data runs from
+    // 1 Apr 2025, so totals used to mix two years).
+    const fy = fyFilter([...monthTotals.keys()]);
+    const months = [...monthTotals.entries()].filter(([k]) => fy.keep(k)).sort((a, b) => a[0].localeCompare(b[0]));
     const total = months.reduce((s, [, amt]) => s + amt, 0);
     const maxMonth = Math.max(...months.map(([, amt]) => amt), 1);
     const avgMonth = months.length ? total / months.length : 0;
@@ -4781,7 +5038,7 @@
 
     summaryStrip.innerHTML = `
       <div class="summary-chip rust">
-        <div class="label">Total (${months.length} mo)</div>
+        <div class="label">Total · ${fy.label}</div>
         <div class="value mono">${formatCurrency(total)}</div>
       </div>
       <div class="summary-chip">
@@ -4815,7 +5072,8 @@
       </div>
     `;
 
-    contentArea.innerHTML = chartHtml + listHtml;
+    contentArea.innerHTML = fy.chips + chartHtml + listHtml;
+    attachFilterChipHandlers(contentArea, f => { reportFy = f; });
 
     const monthBarsEl = contentArea.querySelector('.month-bars');
     if (monthBarsEl) monthBarsEl.scrollLeft = monthBarsEl.scrollWidth;
@@ -4833,7 +5091,7 @@
       const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
       let y = 16;
       doc.setFontSize(14);
-      doc.text(`${companyLabel} — Monthly Purchases Report`, 14, y);
+      doc.text(`${companyLabel} — Monthly Purchases Report (${fy.label})`, 14, y);
       y += 10;
       doc.setFontSize(10);
       doc.setFont(undefined, 'bold');
@@ -4869,6 +5127,7 @@
     // -- one title/body overlay, two different data sources feeding it,
     // rather than duplicating the overlay markup for a screen that's
     // otherwise identical in shape.
+    currentLinesLookup = null; // this overlay now shows a month, not a voucher
     document.getElementById('month-detail-title').textContent = monthLabelStr;
     const body = document.getElementById('month-detail-body');
 
@@ -4893,7 +5152,7 @@
               <div class="name">${escapeHtml(v.party || '—')}</div>
               <div class="sub">Purchase ${v.voucher_number ? '#' + escapeHtml(v.voucher_number) : ''} &middot; ${escapeHtml(formatTallyDate(v.date))}</div>
             </div>
-            <div class="amount neutral mono">${formatCurrency(parseAmt(v.amount))}</div>
+            <div class="amount neutral mono">${formatCurrency(Math.abs(parseAmt(v.amount)))}</div>
           </div>
         `).join('')}</div>
       `;
@@ -5023,7 +5282,8 @@
     allSales.concat(allPurchases).forEach(v => {
       if (v.date && v.date.length >= 6) monthKeys.add(v.date.slice(0, 6));
     });
-    const months = [...monthKeys].sort();
+    const fy = fyFilter([...monthKeys]);
+    const months = [...monthKeys].filter(k => fy.keep(k)).sort();
 
     if (months.length === 0) {
       contentArea.innerHTML = emptyState('No dated vouchers found', 'Nothing to calculate GST from yet.');
@@ -5036,12 +5296,13 @@
       totals.outputCgst || totals.outputSgst || totals.outputIgst || totals.inputCgst || totals.inputSgst || totals.inputIgst);
 
     if (!anyGstFound) {
-      contentArea.innerHTML = emptyState(
-        'No GST found on synced vouchers',
+      contentArea.innerHTML = fy.chips + emptyState(
+        `No GST found on synced vouchers (${fy.label})`,
         gstSettings.cgst_ledger
           ? `No ledger lines matching "${gstSettings.cgst_ledger}" / "${gstSettings.sgst_ledger}" (or containing IGST) were found on any synced Sales or Purchase voucher.`
           : 'Set up your CGST/SGST ledger names first (gear icon → GST & Ledger Settings), then check back.'
       );
+      attachFilterChipHandlers(contentArea, f => { reportFy = f; });
       summaryStrip.innerHTML = '';
       return;
     }
@@ -5056,7 +5317,7 @@
         <div class="value mono">${formatCurrency(Math.abs(latestNet))}${latestNet < 0 ? ' Cr' : ''}</div>
       </div>
       <div class="summary-chip">
-        <div class="label">Total ITC (${months.length} mo)</div>
+        <div class="label">Total ITC · ${fy.label}</div>
         <div class="value mono">${formatCurrency(totalItc)}</div>
       </div>
     `;
@@ -5082,7 +5343,8 @@
       </div>
     `;
 
-    contentArea.innerHTML = listHtml;
+    contentArea.innerHTML = fy.chips + listHtml;
+    attachFilterChipHandlers(contentArea, f => { reportFy = f; });
 
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openGstItcMonthDetail(row.dataset.month, gstMonthLabel(row.dataset.month)));
@@ -5097,7 +5359,7 @@
       const companyLabel = COMPANIES.find(c => c.key === currentCompany)?.label || currentCompany;
       let y = 16;
       doc.setFontSize(14);
-      doc.text(`${companyLabel} — GST / Input Tax Credit Report`, 14, y);
+      doc.text(`${companyLabel} — GST / Input Tax Credit Report (${fy.label})`, 14, y);
       y += 8;
       doc.setFontSize(8.5);
       doc.setFont(undefined, 'italic');
@@ -5147,6 +5409,7 @@
     const netTotal = net.cgst + net.sgst + net.igst;
     const hasIgst = totals.outputIgst || totals.inputIgst;
 
+    currentLinesLookup = null; // this overlay now shows a month, not a voucher
     document.getElementById('month-detail-title').textContent = `${monthLabelStr} — GST / ITC`;
     const body = document.getElementById('month-detail-body');
 
@@ -5366,6 +5629,54 @@
     return otherLine ? otherLine.ledger_name : (v.voucher_type || '—');
   }
 
+  // Oct 2026: Receipt / Payment / Contra open too -- their ledger lines
+  // come from bank_related_vouchers (the Day Book row itself has none).
+  const LINES_VOUCHER_TYPES = new Set(['receipt', 'payment', 'contra']);
+  let currentLinesLookup = null; // set while waiting for bank_related_vouchers to load
+
+  function openVoucherLines(date, voucherNumber, voucherType) {
+    const data = companyData[currentCompany] || {};
+    const title = `${voucherType || 'Voucher'}${voucherNumber ? ' #' + voucherNumber : ''}`;
+    document.getElementById('month-detail-title').textContent = title;
+    const body = document.getElementById('month-detail-body');
+    openOverlay('month-detail-overlay');
+    currentLinesLookup = { date, voucherNumber, voucherType };
+    if (!ensureSectionLoaded(currentCompany, 'bank_related_vouchers')) {
+      body.innerHTML = loadingState('Loading voucher…'); // refreshOpenOverlays redraws it once loaded
+      return;
+    }
+    currentLinesLookup = null;
+    const sameType = v => (v.voucher_type || '').toLowerCase() === (voucherType || '').toLowerCase();
+    const v = safeArray(data.bank_related_vouchers).find(x => x.date === date && x.voucher_number === voucherNumber && sameType(x))
+      || safeArray(data.daybook).find(x => x.date === date && x.voucher_number === voucherNumber && sameType(x));
+    if (!v) {
+      body.innerHTML = emptyState('Voucher not found', 'It may be older than the synced period.');
+      return;
+    }
+    const lines = safeArray(v.ledger_lines);
+    body.innerHTML = `
+      <div class="summary-strip" style="margin-bottom:14px;">
+        <div class="summary-chip">
+          <div class="label">Date</div>
+          <div class="value" style="font-size:15px;">${escapeHtml(formatTallyDate(v.date))}</div>
+        </div>
+        <div class="summary-chip">
+          <div class="label">Amount</div>
+          <div class="value mono">${formatCurrency(Math.abs(parseAmt(v.amount)))}</div>
+        </div>
+      </div>
+      ${v.narration ? `<div class="sub" style="font-style:italic; margin:0 2px 12px;">${escapeHtml(v.narration)}</div>` : ''}
+      ${lines.length ? `<div class="list-card">${lines.map(l => {
+        const amt = parseAmt(l.amount); // Tally sign: negative = Dr
+        return `<div class="row">
+          <div class="name">${escapeHtml(l.ledger_name || '—')}</div>
+          <div class="amount ${drCrClass(amt)} mono">${drCrText(amt)}</div>
+        </div>`;
+      }).join('')}</div>`
+      : emptyState('No ledger lines synced', 'Only the total is available for this voucher.')}
+    `;
+  }
+
   function voucherInvolvesLedger(v, ledgerName) {
     if ((v.party || '') === ledgerName) return true;
     return safeArray(v.ledger_lines).some(l => l.ledger_name === ledgerName);
@@ -5499,6 +5810,9 @@
     if (document.getElementById('voucher-detail-overlay').classList.contains('open') && currentVoucherLookup) {
       openVoucherDetail(currentVoucherLookup.date, currentVoucherLookup.voucherNumber, currentVoucherLookup.kind);
     }
+    if (document.getElementById('month-detail-overlay').classList.contains('open') && currentLinesLookup) {
+      openVoucherLines(currentLinesLookup.date, currentLinesLookup.voucherNumber, currentLinesLookup.voucherType);
+    }
     // Only refreshes the list step -- if the person is mid-pick on a
     // specific voucher, a background data change (e.g. another request
     // resolving) shouldn't yank them back to the list out from under
@@ -5617,14 +5931,15 @@
           const amt = r.debit ? -r.debit : r.credit; // Tally sign: negative = Dr
           const isSales = (v.voucher_type || '').toLowerCase() === 'sales';
           const isPurchase = (v.voucher_type || '').toLowerCase() === 'purchase';
-          const isClickable = isSales || isPurchase;
+          const isLines = LINES_VOUCHER_TYPES.has((v.voucher_type || '').toLowerCase());
+          const isClickable = isSales || isPurchase || isLines;
           const displayName = getVoucherCounterLedgerName(v, partyName);
           const vchLabel = `${escapeHtml(v.voucher_type || '')}${v.voucher_number ? ' #' + escapeHtml(v.voucher_number) : ''}`;
           return `
-          <div class="row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}" data-vkind="${isPurchase ? 'purchase' : 'sales'}"` : ''}>
+          <div class="row ${isClickable ? 'clickable-row' : ''}" ${isClickable ? `data-vdate="${escapeHtml(v.date || '')}" data-vnum="${escapeHtml(v.voucher_number || '')}" data-vkind="${isLines ? 'lines' : isPurchase ? 'purchase' : 'sales'}" data-vtype="${escapeHtml(v.voucher_type || '')}"` : ''}>
             <div>
               <div class="name">${escapeHtml(displayName)}</div>
-              <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isClickable ? ' · tap to view' : ''}</div>
+              <div class="sub">${vchLabel} &middot; ${escapeHtml(formatTallyDate(v.date))}${isSales || isPurchase ? ' · tap to view' : ''}</div>
               ${v.narration ? `<div class="sub" style="font-style:italic; margin-top:2px;">${escapeHtml(v.narration)}</div>` : ''}
             </div>
             <div style="text-align:right; flex-shrink:0;">
@@ -5637,6 +5952,10 @@
       body.querySelectorAll('.clickable-row').forEach(row => {
         row.addEventListener('click', () => {
           const kind = row.dataset.vkind || 'sales';
+          if (kind === 'lines') {
+            openVoucherLines(row.dataset.vdate, row.dataset.vnum, row.dataset.vtype);
+            return;
+          }
           ensureSectionLoaded(currentCompany, kind === 'purchase' ? 'purchase_vouchers' : 'sales_vouchers');
           openVoucherDetail(row.dataset.vdate, row.dataset.vnum, kind);
         });
@@ -5789,17 +6108,17 @@
 
   async function exportLedgerStatementPDF(selectedColumns, mode = 'view') {
     const partyName = currentLedgerDetailParty;
-    if (!partyName) { alert('No party selected.'); return; }
+    if (!partyName) { appAlert('No party selected.'); return; }
 
     const data = companyData[currentCompany] || {};
 
     if (!ensureSectionLoaded(currentCompany, 'ledgers')) {
-      alert('Still loading ledger data — try again in a moment.');
+      appAlert('Still loading ledger data — try again in a moment.');
       return;
     }
 
     const allVouchers = excludeOptionalVouchers(getEnrichedDaybook(data).filter(v => voucherInvolvesLedger(v, partyName)));
-    if (allVouchers.length === 0) { alert('No transactions to export.'); return; }
+    if (allVouchers.length === 0) { appAlert('No transactions to export.'); return; }
 
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
@@ -5830,7 +6149,7 @@
     const rows = anchoredRows.filter(r =>
       (!fromFilter || (r.date && r.date >= fromFilter)) && (!toFilter || (r.date && r.date <= toFilter))
     );
-    if (rows.length === 0) { alert('No transactions in the selected date range.'); return; }
+    if (rows.length === 0) { appAlert('No transactions in the selected date range.'); return; }
 
     const fromDate = formatTallyDateShort(rows[0].date);
     const toDate = formatTallyDateShort(rows[rows.length - 1].date);
@@ -6253,7 +6572,7 @@
   }
 
   async function exportInvoicePDF(mode = 'view') {
-    if (!currentVoucherDetail) { alert('No invoice loaded to export.'); return; }
+    if (!currentVoucherDetail) { appAlert('No invoice loaded to export.'); return; }
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
@@ -6636,7 +6955,7 @@
   }
 
   async function exportPurchaseVoucherPDF(mode = 'view') {
-    if (!currentVoucherDetail) { alert('No purchase voucher loaded to export.'); return; }
+    if (!currentVoucherDetail) { appAlert('No purchase voucher loaded to export.'); return; }
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
@@ -7076,7 +7395,7 @@
 
   async function exportXLSX() {
     const rows = getCurrentRows();
-    if (rows.length === 0) { alert('No data to export.'); return; }
+    if (rows.length === 0) { appAlert('No data to export.'); return; }
     if (!window.XLSX) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
     }
@@ -7088,7 +7407,7 @@
 
   async function exportPDF() {
     const rows = getCurrentRows();
-    if (rows.length === 0) { alert('No data to export.'); return; }
+    if (rows.length === 0) { appAlert('No data to export.'); return; }
     if (!window.jspdf) {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
@@ -7192,7 +7511,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.27-3';
+  const APP_VERSION = '2026.10.28-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -7839,7 +8158,7 @@
   document.getElementById('gpay-clear-btn').addEventListener('click', async () => {
     const companyKey = currentCompany;
     const label = (COMPANIES.find(c => c.key === companyKey) || {}).label || companyKey;
-    if (!confirm(`Delete ALL stored GPay transactions for ${label}? Suggestions will stop until you import a CSV again. Nothing in Tally is touched.`)) return;
+    if (!await appConfirm(`Delete ALL stored GPay transactions for ${label}? Suggestions will stop until you import a CSV again. Nothing in Tally is touched.`)) return;
     const btn = document.getElementById('gpay-clear-btn');
     btn.disabled = true;
     btn.textContent = 'Clearing…';
@@ -7852,7 +8171,7 @@
       document.getElementById('gpay-stored-info').textContent = `Cleared. Nothing stored for ${label} now -- choose the correct CSV above.`;
     } catch (err) {
       console.error('GPay clear failed:', err);
-      alert('Could not clear -- check your connection and try again.');
+      appAlert('Could not clear -- check your connection and try again.');
     } finally {
       btn.disabled = false;
       btn.textContent = 'Clear stored GPay data for this company';
@@ -8943,7 +9262,7 @@
       const d = queueVouchers[id];
       return (d.voucher_type === 'Receipt' ? d.cr_ledger : d.dr_ledger) === 'Suspense';
     }).length;
-    if (!confirm(`Post ${ids.length} bank entr${ids.length === 1 ? 'y' : 'ies'} (${formatCurrency(total)}) to Tally?` +
+    if (!await appConfirm(`Post ${ids.length} bank entr${ids.length === 1 ? 'y' : 'ies'} (${formatCurrency(total)}) to Tally?` +
         (toSuspense ? `\n\n${toSuspense} go to Suspense -- name them afterwards in Ledger Allocation (GPay sheet suggestions).` : ''))) return;
     const btn = document.getElementById('queue-post-selected');
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
@@ -8959,7 +9278,7 @@
         failed++;
       }
     }
-    if (failed) alert(`${failed} entr${failed === 1 ? 'y' : 'ies'} could not be sent -- check your connection and try again.`);
+    if (failed) appAlert(`${failed} entr${failed === 1 ? 'y' : 'ies'} could not be sent -- check your connection and try again.`);
     else savedToast(`${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}`);
     renderReviewQueue();
   }
@@ -9184,12 +9503,12 @@
         e.stopPropagation();
         const id = btn.dataset.id;
         const k = btn.dataset.kind;
-        if (!confirm('Delete this history entry? This cannot be undone.')) return;
+        if (!await appConfirm('Delete this history entry? This cannot be undone.')) return;
         try {
           await remove(ref(db, `companies/${currentCompany}/history_${k}/${id}`));
         } catch (err) {
           console.error('Failed to delete history entry:', err);
-          alert('Could not delete -- check your connection and try again.');
+          appAlert('Could not delete -- check your connection and try again.');
         }
       });
     });
@@ -9666,7 +9985,7 @@
   // "Post anyway" -- the bill total legitimately differs (TCS, a charge the
   // reader missed...). Same record, re-confirmed with the total check off.
   async function postInvoiceAnyway() {
-    if (!confirm('Post this invoice even though its total differs from the bill?')) return;
+    if (!await appConfirm('Post this invoice even though its total differs from the bill?')) return;
     try {
       await update(ref(db, `companies/${currentCompany}/pending_invoices/${scanCurrentInvoiceId}`),
         { status: 'confirmed', override_total: true, error: null, check_errors: null, waiting_reason: null });
@@ -9675,7 +9994,7 @@
       document.getElementById('scan-progress-text').textContent = 'Posting to Tally…';
       listenForInvoiceUpdates(scanCurrentInvoiceId);
     } catch (err) {
-      alert('Could not send -- check your connection and try again.');
+      appAlert('Could not send -- check your connection and try again.');
     }
   }
 
@@ -9738,7 +10057,7 @@
   // ---- Mapping / picker rendering ----
 
   async function discardInvoice() {
-    if (!confirm('Discard this scanned invoice? This cannot be undone, and it will need to be re-scanned from scratch.')) return;
+    if (!await appConfirm('Discard this scanned invoice? This cannot be undone, and it will need to be re-scanned from scratch.')) return;
     if (scanUnsub) { scanUnsub(); scanUnsub = null; }
     const idToDelete = scanCurrentInvoiceId;
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
@@ -9760,7 +10079,7 @@
       }
     } catch (err) {
       console.error('Failed to discard invoice:', err);
-      alert('Could not fully discard this invoice -- check your connection and try again from the invoice list.');
+      appAlert('Could not fully discard this invoice -- check your connection and try again from the invoice list.');
     }
     resetScanFlow();
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
@@ -10149,11 +10468,15 @@
         <button type="button" id="bill-viewer-close">Close</button></div>
         <div class="bill-viewer-body" id="bill-viewer-body"></div>`;
       document.body.appendChild(viewer);
-      document.getElementById('bill-viewer-close').addEventListener('click', () => viewer.classList.remove('open', 'zoomed'));
+      document.getElementById('bill-viewer-close').addEventListener('click', () => {
+        if (history.state && history.state.billViewer) history.back(); // popstate closes it
+        else viewer.classList.remove('open', 'zoomed');
+      });
       document.getElementById('bill-viewer-zoom').addEventListener('click', () => viewer.classList.toggle('zoomed'));
     }
     const body = document.getElementById('bill-viewer-body');
     viewer.classList.remove('zoomed');
+    if (!viewer.classList.contains('open')) history.pushState({ billViewer: true }, '', '');
     viewer.classList.add('open');
     const invoiceId = scanCurrentInvoiceId;
     if (viewer.dataset.loadedFor === invoiceId && body.children.length && !body.querySelector('.bill-viewer-msg')) return;
@@ -10308,11 +10631,11 @@
       }
     });
 
-    document.getElementById(`new-item-confirm-${idx}`).addEventListener('click', () => {
+    document.getElementById(`new-item-confirm-${idx}`).addEventListener('click', async () => {
       const hsn = document.getElementById(`new-item-hsn-${idx}`).value.trim();
       const customUnit = document.getElementById(`new-item-unit-custom-${idx}`).value.trim();
       const finalUnit = customUnit || selectedUnit;
-      if (!finalUnit) { alert('Pick or type a unit before continuing.'); return; }
+      if (!finalUnit) { appAlert('Pick or type a unit before continuing.'); return; }
 
       // BASEUNITS only REFERENCES a unit by name -- it doesn't create
       // one. A typed unit that doesn't already exist as a real Tally
@@ -10321,10 +10644,10 @@
       // a typo/non-existent unit here, before posting, rather than
       // finding out from a failed sync later.
       if (customUnit && !realUnits.some(u => u.toLowerCase() === customUnit.toLowerCase())) {
-        if (!confirm(`"${customUnit}" doesn't match any unit that exists in Tally right now. If it's not a real Unit master there, creating this item will fail. Continue anyway?`)) return;
+        if (!await appConfirm(`"${customUnit}" doesn't match any unit that exists in Tally right now. If it's not a real Unit master there, creating this item will fail. Continue anyway?`)) return;
       }
 
-      if (!confirm(`Create NEW item "${typedName}" — HSN: ${hsn || '(blank)'}, Unit: ${finalUnit}. This doesn't exist in Tally yet.`)) return;
+      if (!await appConfirm(`Create NEW item "${typedName}" — HSN: ${hsn || '(blank)'}, Unit: ${finalUnit}. This doesn't exist in Tally yet.`)) return;
 
       // Overwrite the OCR guesses with what was actually confirmed --
       // confirmMapping() reads hsn_guess/unit straight from item_matches,
@@ -10383,7 +10706,7 @@
         if (!typed) return;
 
         if (kind === 'party') {
-          if (!confirm(`Create a NEW party named "${typed}"? This doesn't exist in your Tally list yet.`)) return;
+          if (!await appConfirm(`Create a NEW party named "${typed}"? This doesn't exist in your Tally list yet.`)) return;
           selectMappingValue(kind, idx, typed, true);
           return;
         }
@@ -10520,10 +10843,10 @@
     });
 
     document.querySelectorAll('[data-remove-item]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const idx = parseInt(btn.dataset.removeItem, 10);
         const item = mappingData.item_matches[idx];
-        if (!confirm(`Remove "${item.ocr_description || 'Item ' + (idx + 1)}" from this invoice? This just drops it from what gets posted -- it won't touch anything already in Tally.`)) return;
+        if (!await appConfirm(`Remove "${item.ocr_description || 'Item ' + (idx + 1)}" from this invoice? This just drops it from what gets posted -- it won't touch anything already in Tally.`)) return;
         // Splice out of BOTH arrays together so indices stay aligned,
         // then re-render entirely rather than patching the DOM in place
         // -- every remaining item's data-idx attributes need to shift
@@ -10818,7 +11141,7 @@
     });
 
     if (missing.length) {
-      alert('Please fill in before confirming:\n\n' + missing.join('\n'));
+      appAlert('Please fill in before confirming:\n\n' + missing.join('\n'));
       return;
     }
 
@@ -11266,7 +11589,7 @@
   document.getElementById('stmt-password-submit-btn').addEventListener('click', async () => {
     const pw = document.getElementById('stmt-password-input').value;
     if (!pw) return;
-    if (!stmtCurrentId) { alert('No statement selected.'); return; }
+    if (!stmtCurrentId) { appAlert('No statement selected.'); return; }
 
     const btn = document.getElementById('stmt-password-submit-btn');
     btn.disabled = true;
@@ -11283,7 +11606,7 @@
       document.getElementById('stmt-progress-text').textContent = 'Checking password…';
     } catch (err) {
       console.error('Failed to submit PDF password:', err);
-      alert('Could not submit password -- check your connection and try again.');
+      appAlert('Could not submit password -- check your connection and try again.');
     } finally {
       btn.disabled = false;
       btn.textContent = 'Unlock & Continue';
@@ -11479,7 +11802,7 @@
   }
 
   async function discardStatement() {
-    if (!confirm('Discard this bank statement? This cannot be undone, and it will need to be re-uploaded from scratch.')) return;
+    if (!await appConfirm('Discard this bank statement? This cannot be undone, and it will need to be re-uploaded from scratch.')) return;
     if (stmtUnsub) { stmtUnsub(); stmtUnsub = null; }
     const idToDelete = stmtCurrentId;
     stmtActivateStep('stmt-step-progress');
@@ -11497,7 +11820,7 @@
       }
     } catch (err) {
       console.error('Failed to discard bank statement:', err);
-      alert('Could not fully discard this statement -- check your connection and try again from the Review Queue.');
+      appAlert('Could not fully discard this statement -- check your connection and try again from the Review Queue.');
     }
     resetStatementFlow();
     stmtActivateStep('stmt-step-capture');
@@ -12039,7 +12362,7 @@
   }
 
   async function discardVoucher() {
-    if (!confirm('Discard this bank transaction? It will NOT be posted to Tally, and this cannot be undone.')) return;
+    if (!await appConfirm('Discard this bank transaction? It will NOT be posted to Tally, and this cannot be undone.')) return;
     if (voucherUnsub) { voucherUnsub(); voucherUnsub = null; }
     const idToDelete = voucherCurrentId;
     voucherActivateStep('voucher-step-progress');
@@ -12060,7 +12383,7 @@
       return;
     } catch (err) {
       console.error('Failed to discard bank voucher:', err);
-      alert('Could not fully discard this transaction -- check your connection and try again from the Review Queue.');
+      appAlert('Could not fully discard this transaction -- check your connection and try again from the Review Queue.');
     }
     resetVoucherFlow();
     goBackFromOverlay();
@@ -12331,7 +12654,7 @@
   async function confirmVoucher() {
     const e = voucherEdit;
     if (!e.dr_ledger || !e.cr_ledger || !e.amount) {
-      alert('Please fill in the amount and both ledgers before confirming.');
+      appAlert('Please fill in the amount and both ledgers before confirming.');
       return;
     }
     const payload = {
