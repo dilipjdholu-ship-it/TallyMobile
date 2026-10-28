@@ -7539,7 +7539,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.28-2';
+  const APP_VERSION = '2026.10.28-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -9868,11 +9868,14 @@
   // minus this firm's own (most bills print both). Blank when none or
   // more than one remains -- then it's typed in by hand if wanted.
   function supplierGstinFromBill(data) {
-    const own = ((companyData[currentCompany] || {}).company_info || {}).gstin || '';
+    const own = (((companyData[currentCompany] || {}).company_info || {}).gstin || '').toUpperCase();
+    // A misread copy of the firm's own GSTIN still carries its PAN
+    // (characters 3-12) -- Spentagon bill, Oct 2026: "...6401DIZH".
+    const ownPan = own.length === 15 ? own.slice(2, 12) : null;
     const found = new Set(((data.fields || {}).gstins_found || [])
       .filter(g => g && g.format_valid && g.autofixed)
       .map(g => g.autofixed.toUpperCase())
-      .filter(g => g !== own.toUpperCase()));
+      .filter(g => g !== own && g.slice(2, 12) !== ownPan));
     return found.size === 1 ? [...found][0] : '';
   }
 
