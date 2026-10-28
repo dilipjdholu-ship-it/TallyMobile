@@ -4672,7 +4672,30 @@
       summaryStrip.innerHTML = '';
       return;
     }
-    const groups = usingCustom ? safeArray(custom.result.data) : safeArray(data.profit_and_loss);
+    const rawGroups = usingCustom ? safeArray(custom.result.data) : safeArray(data.profit_and_loss);
+
+    // Oct 2026: Cost of Sales lines are shown as their effect on Cost of
+    // Sales, so they add up to it: Tally's export gives "Less: Closing
+    // Stock" as the amount to subtract, so its sign is flipped here.
+    // Checked to the paisa against Tally's own P&L for all three firms.
+    // Exported stock values are minus the stock's worth (Dr negative), so
+    // a positive Opening or Closing Stock line means the stock itself is
+    // negative -- items sold without their purchase entered (DJ's screen
+    // showed those lines on the opposite sides from normal).
+    let negativeStock = null;
+    const groups = rawGroups.map(g => {
+      const kids = safeArray(g.children);
+      if (!kids.length) return g;
+      return Object.assign({}, g, { children: kids.map(c => {
+        const n = parseAmt(c.amount);
+        const isLess = /^\s*less\s*:/i.test(c.name || '');
+        if (/stock/i.test(c.name || '') && n > 0) {
+          const label = (c.name || '').replace(/^\s*(less|add)\s*:\s*/i, '');
+          if (!negativeStock || /closing/i.test(label)) negativeStock = { label, amount: n };
+        }
+        return isLess ? Object.assign({}, c, { amount: String(-n) }) : c;
+      }) });
+    });
 
     if (groups.length === 0) {
       contentArea.innerHTML = emptyState('No P&L data', 'Check back after the next sync.');
@@ -4716,7 +4739,12 @@
       </div>
     `;
 
-    contentArea.innerHTML = `<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
+    const stockNote = negativeStock ? `
+      <div class="list-card" style="padding:12px 14px; margin-bottom:10px; border-left:4px solid var(--rust); font-size:13px; line-height:1.45;">
+        <b>${escapeHtml(negativeStock.label)} is negative in Tally (<span style="white-space:nowrap">−${formatCurrency(negativeStock.amount)}</span>).</b>
+        This usually means some purchases aren't entered yet, so Cost of Sales and profit will change once they are.
+      </div>` : '';
+    contentArea.innerHTML = `${stockNote}<div class="list-card">${groups.map(g => renderGroupRow(g)).join('')}</div>`;
     contentArea.querySelectorAll('.clickable-row').forEach(row => {
       row.addEventListener('click', () => openGroupDetail(row.dataset.groupName));
     });
@@ -7511,7 +7539,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.28-1';
+  const APP_VERSION = '2026.10.28-2';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
