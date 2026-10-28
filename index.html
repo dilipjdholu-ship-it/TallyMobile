@@ -1262,6 +1262,12 @@
   .app-dialog-cancel { background: transparent; color: var(--primary); }
   .app-dialog-ok { background: var(--primary); color: #fff; }
   .app-dialog-ok.danger { background: var(--rust); border-color: var(--rust); }
+  .share-firm-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .share-firm-btn {
+    text-align: left; padding: 12px 14px; border-radius: 10px; font-size: 15px; font-weight: 600;
+    background: var(--paper-card); color: var(--ink); border: 1.5px solid var(--primary);
+  }
+  .share-firm-btn.current { background: var(--primary); color: #fff; }
   .daybook-goto { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
   .daybook-goto input { flex: 1; max-width: 190px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--paper-card); color: var(--ink); }
   .map-qty-rate-unit-row { grid-template-columns: 1fr 1.3fr 0.8fr 1fr; gap: 8px; }
@@ -3040,6 +3046,7 @@
     // preloadAllSections() below for why this is safe to fire without
     // awaiting or blocking anything on this screen.
     preloadAllSections(currentCompany);
+    openSharedFiles();
   }
 
   // PERFORMANCE FIX (Sept 2026): this used to fire every LAZY_PATHS
@@ -7539,7 +7546,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.28-3';
+  const APP_VERSION = '2026.10.28-4';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -9578,6 +9585,72 @@
     renderScanPreview();
     document.querySelectorAll('.scan-step').forEach(s => s.classList.remove('active'));
     document.getElementById('scan-step-preview').classList.add('active');
+  }
+
+  // ===== Shared from Android's Share menu (Oct 2026) =====
+  // WhatsApp -> Share -> TallyMobile: sw.js parks the files and opens the
+  // app with ?shared=1 (manifest.json's share_target). Ask which firm the
+  // bill is for, then put the files on the Scan Invoice screen exactly as
+  // if they'd been picked with the PDF / Gallery buttons -- DJ still taps
+  // Upload. Runs from showApp(), so after login and the firm's first load.
+  let sharedFilesHandled = false;
+  async function openSharedFiles() {
+    const flag = new URLSearchParams(location.search).get('shared');
+    if (!flag || sharedFilesHandled) return;
+    sharedFilesHandled = true;
+    history.replaceState(history.state, '', location.pathname); // a reload must not ask again
+    if (flag === 'failed') { appAlert('Could not receive the shared file. Try sharing it again.'); return; }
+    let files = [];
+    try {
+      const cache = await caches.open('tallymobile-share-v1');
+      for (const req of await cache.keys()) {
+        const res = await cache.match(req);
+        const blob = await res.blob();
+        files.push(new File([blob], decodeURIComponent(res.headers.get('X-File-Name') || 'shared'), { type: blob.type }));
+        await cache.delete(req);
+      }
+    } catch (e) {
+      console.error('Reading shared files failed:', e);
+    }
+    const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    files = files.filter(f => isPdf(f) || f.type.startsWith('image/'))
+      .map(f => isPdf(f) && f.type !== 'application/pdf' ? new File([f], f.name, { type: 'application/pdf' }) : f);
+    if (!files.length) { appAlert('Only a PDF or photos of a bill can be shared into TallyMobile.'); return; }
+    const pdfs = files.filter(isPdf);
+    if (pdfs.length > 1) appAlert(`${pdfs.length} PDFs were shared -- the first one is ready to upload. Share the others one at a time.`);
+    const picked = pdfs.length ? [pdfs[0]] : files;
+
+    const firm = await chooseFirmForShare(pdfs.length ? `"${pdfs[0].name}"` : `${files.length} photo${files.length > 1 ? 's' : ''}`);
+    if (!firm) return;
+    if (firm !== currentCompany) {
+      localStorage.setItem(COMPANY_SELECTION_KEY, firm);
+      currentCompany = firm;
+      await showApp();
+    }
+    resetScanFlow();
+    openOverlay('invoice-upload-overlay');
+    onFilePicked({ target: { files: picked, value: '' } });
+  }
+
+  // Firm buttons in the app's own dialog style; resolves the firm key, or
+  // null on Cancel.
+  function chooseFirmForShare(what) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      wrap.className = 'app-dialog-backdrop';
+      wrap.innerHTML = `<div class="app-dialog" role="dialog" aria-modal="true">
+          <div class="app-dialog-msg"></div>
+          <div class="share-firm-list">${COMPANIES.map(c => `
+            <button type="button" class="share-firm-btn${c.key === currentCompany ? ' current' : ''}" data-firm="${escapeHtml(c.key)}">${escapeHtml(c.label)}</button>`).join('')}
+          </div>
+          <div class="app-dialog-btns"><button type="button" class="app-dialog-cancel">Cancel</button></div>
+        </div>`;
+      wrap.querySelector('.app-dialog-msg').textContent = `Which firm is this bill for?\n${what}`;
+      const done = v => { wrap.remove(); resolve(v); };
+      wrap.querySelectorAll('[data-firm]').forEach(b => b.addEventListener('click', () => done(b.dataset.firm)));
+      wrap.querySelector('.app-dialog-cancel').addEventListener('click', () => done(null));
+      document.body.appendChild(wrap);
+    });
   }
 
   function renderScanPreview() {

@@ -47,7 +47,11 @@
 const CACHE_NAME = 'tallymobile-shell-v1';
 const FONT_CACHE_NAME = 'tallymobile-fonts-v1';
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
-const KNOWN_CACHES = [CACHE_NAME, FONT_CACHE_NAME];
+// Files shared into the app from Android's Share menu (Oct 2026), held
+// just long enough for index.html to pick them up -- see the share-target
+// handler below and openSharedFiles() in index.html.
+const SHARE_CACHE_NAME = 'tallymobile-share-v1';
+const KNOWN_CACHES = [CACHE_NAME, FONT_CACHE_NAME, SHARE_CACHE_NAME];
 
 // Precached eagerly on install so the very first offline-ish open (e.g.
 // a weak signal right as the app is opened) still has at least the shell
@@ -78,8 +82,38 @@ self.addEventListener('activate', event => {
   );
 });
 
+// Android Share menu -> TallyMobile (manifest.json's share_target, Oct
+// 2026). The phone POSTs the shared PDF/photos here; they're parked in
+// SHARE_CACHE_NAME and the app is opened with ?shared=1, where it lets DJ
+// pick the firm and puts them straight on the Scan Invoice screen.
+async function receiveSharedFiles(req) {
+  const appUrl = new URL('./index.html', self.registration.scope);
+  try {
+    const form = await req.formData();
+    const files = form.getAll('files').filter(f => f && typeof f !== 'string');
+    const cache = await caches.open(SHARE_CACHE_NAME);
+    for (const key of await cache.keys()) await cache.delete(key);
+    for (let i = 0; i < files.length; i++) {
+      await cache.put(new URL(`./shared-file/${i}`, self.registration.scope).href, new Response(files[i], {
+        headers: {
+          'Content-Type': files[i].type || 'application/octet-stream',
+          'X-File-Name': encodeURIComponent(files[i].name || `shared-${i + 1}`),
+        },
+      }));
+    }
+    appUrl.searchParams.set('shared', '1');
+  } catch (e) {
+    appUrl.searchParams.set('shared', 'failed');
+  }
+  return Response.redirect(appUrl.href, 303);
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request;
+  if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/share-target')) {
+    event.respondWith(receiveSharedFiles(req));
+    return;
+  }
   if (req.method !== 'GET') return;
 
   let url;
