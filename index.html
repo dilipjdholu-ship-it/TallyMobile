@@ -1199,7 +1199,7 @@
      visually mask input as dots WITHOUT it being a real password field)
      keeps the on-screen masking DJ would expect while staying
      completely outside any browser's credential-saving heuristics. */
-  #stmt-password-input { -webkit-text-security: disc; text-security: disc; }
+  #stmt-password-input, .pdf-pass-input { -webkit-text-security: disc; text-security: disc; }
   .map-field-warn { font-size: 12px; color: var(--amber); margin-top: 6px; }
   .new-item-card { border: 1.5px solid var(--rust); border-radius: 9px; padding: 12px; margin-top: 6px; }
   .new-item-card-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
@@ -3359,6 +3359,19 @@
       if (r.status === 'failed') {
         return `<div class="map-section">${head}<div class="map-field-warn">${escapeHtml(r.error || 'Check failed')}</div></div>`;
       }
+      if (r.status === 'needs_password') {
+        // Oct 2026: locked PDFs used to be refused. Same flow as the bank
+        // statement upload -- the PC keeps the PDF, uses the password once
+        // and deletes it.
+        return `<div class="map-section">${head}
+          <div class="${r.password_wrong ? 'map-field-warn' : 'totals-card-hint'}" style="margin-bottom:8px;">${r.password_wrong
+            ? 'Incorrect password -- please try again.' : 'This PDF is password-protected. Enter the password to check it.'}</div>
+          <input type="text" class="map-field-input spaced pdf-pass-input" data-recon-pass="${escapeHtml(id)}" placeholder="PDF password"
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <button type="button" class="map-confirm-btn" data-recon-unlock="${escapeHtml(id)}" style="margin-top:8px;">Unlock &amp; check</button>
+          <button type="button" class="map-discard-btn" data-recon-discard="${escapeHtml(id)}">Discard this statement</button>
+        </div>`;
+      }
       const missing = r.missing_in_tally || [], extra = r.extra_in_tally || [];
       const closeDiff = (r.closing?.tally || 0) - (r.closing?.bank || 0);
       const lastDayExtra = extra.filter(x => x.date === r.to).length;
@@ -3389,6 +3402,32 @@
       </div>`;
     }).join('');
     body.querySelectorAll('[data-recon-add]').forEach(btn => btn.addEventListener('click', () => addReconEntryToQueue(btn)));
+    body.querySelectorAll('[data-recon-unlock]').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.dataset.reconUnlock;
+      const pw = body.querySelector(`[data-recon-pass="${CSS.escape(id)}"]`).value;
+      if (!pw) { appAlert('Enter the PDF password first.'); return; }
+      btn.disabled = true;
+      btn.textContent = 'Checking password…';
+      try {
+        await update(ref(db, `companies/${currentCompany}/bank_reconciliations/${id}`), { pdf_password: pw, status: 'uploaded' });
+      } catch (err) {
+        console.error('Could not send the PDF password:', err);
+        btn.disabled = false;
+        btn.textContent = 'Unlock & check';
+        appAlert('Could not send the password -- check your connection and try again.');
+      }
+    }));
+    body.querySelectorAll('[data-recon-discard]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!await appConfirm('Discard this statement?')) return;
+      const id = btn.dataset.reconDiscard;
+      try {
+        await remove(ref(db, `companies/${currentCompany}/bank_reconciliation_files/${id}`));
+        await remove(ref(db, `companies/${currentCompany}/bank_reconciliations/${id}`));
+      } catch (err) {
+        console.error('Could not discard the statement:', err);
+        appAlert('Could not discard -- check your connection and try again.');
+      }
+    }));
     const alloc = document.getElementById('recon-open-alloc');
     if (alloc) alloc.addEventListener('click', e => { e.preventDefault(); openLedgerAllocationOverlay(); });
   }
@@ -7546,7 +7585,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.28-4';
+  const APP_VERSION = '2026.10.29-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
