@@ -2738,7 +2738,10 @@
     localStorage.removeItem(SESSION_STARTED_KEY);
     // A real sign-out also forgets fingerprint unlock on this phone -- the
     // way to turn it off (the next password sign-in offers it again).
-    if (uid && !keepBio) localStorage.removeItem(BIO_CRED_PREFIX + uid);
+    if (uid && !keepBio) {
+      localStorage.removeItem(BIO_CRED_PREFIX + uid);
+      localStorage.removeItem(BIO_DECLINED_PREFIX + uid);
+    }
     // Reload to guarantee every in-memory data cache (companyData, etc.)
     // is cleared -- simpler and safer than trying to reset dozens of
     // pieces of app state by hand.
@@ -2776,11 +2779,29 @@
     } catch (e) { return false; }
   }
 
-  async function offerBioSetup(user) {
-    if (bioCredFor(user.uid) || !(await bioSupported())) return;
+  // Offered after a password sign-in, and also on opening an already
+  // signed-in app (Android, Oct 2026: a phone still signed in from before
+  // never typed its password, so it was never asked). "Not now" is
+  // remembered for the second case until the next sign-out.
+  const BIO_DECLINED_PREFIX = 'tallymobile_bio_declined_';
+  async function offerBioSetup(user, { afterPassword = false } = {}) {
+    if (bioCredFor(user.uid)) return;
+    if (!afterPassword && localStorage.getItem(BIO_DECLINED_PREFIX + user.uid)) return;
+    // Only a browser with no WebAuthn at all is skipped. bioSupported()
+    // said "no" on DJ's Android phone (31 Oct 2026) with no prompt ever
+    // shown, so a "no" there no longer hides the offer -- the phone gets
+    // to try, and if it can't, the setup error below says why.
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      if (afterPassword) appAlert('Fingerprint unlock is not available in this browser. Open the app from Chrome to use it.');
+      return;
+    }
+    if (!(await bioSupported())) console.warn('Fingerprint unlock: browser reports no platform authenticator -- offering anyway.');
     const ok = await appConfirm('Unlock TallyMobile with your fingerprint or screen lock?\n\nIt will be asked every time you open the app.',
       { okText: 'Yes, set up', cancelText: 'Not now' });
-    if (!ok) return;
+    if (!ok) {
+      localStorage.setItem(BIO_DECLINED_PREFIX + user.uid, '1');
+      return;
+    }
     try {
       const cred = await navigator.credentials.create({ publicKey: {
         challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -2795,7 +2816,9 @@
       showToast('Fingerprint unlock is on');
     } catch (err) {
       console.warn('Fingerprint setup failed:', err);
-      if (err && err.name !== 'NotAllowedError') appAlert('Could not set up fingerprint unlock on this phone.');
+      appAlert('Fingerprint unlock was not set up.\n\n' + (err && err.name === 'NotAllowedError'
+        ? 'It was cancelled or timed out. It will be offered again next time you open the app.'
+        : 'The phone said: ' + ((err && (err.name + ': ' + err.message)) || err)));
     }
   }
 
@@ -2851,7 +2874,8 @@
       if (!auto) {
         errEl.textContent = err && err.name === 'NotAllowedError'
           ? 'Not unlocked. Tap to try again.'
-          : 'Fingerprint unlock is not working on this phone. Sign in with your password instead.';
+          : 'Fingerprint unlock failed (' + ((err && (err.name + ': ' + err.message)) || err)
+            + '). Sign in with your password instead.';
       }
     } finally {
       btn.disabled = false;
@@ -3345,10 +3369,9 @@
       appUnlocked = true;
       appStarted = true;
       afterLogin();
-      if (pendingPasswordLogin) {
-        pendingPasswordLogin = false;
-        setTimeout(() => offerBioSetup(user), 600);
-      }
+      const afterPassword = pendingPasswordLogin;
+      pendingPasswordLogin = false;
+      setTimeout(() => offerBioSetup(user, { afterPassword }), 600);
     } else {
       document.getElementById('app-screen').style.display = 'none';
       document.getElementById('company-select-screen').style.display = 'none';
@@ -7760,7 +7783,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.31-1';
+  const APP_VERSION = '2026.10.31-3';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
