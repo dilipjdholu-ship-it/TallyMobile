@@ -2772,6 +2772,37 @@
   const fromB64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
   const bioCredFor = uid => uid ? localStorage.getItem(BIO_CRED_PREFIX + uid) : null;
 
+  // Inside the TallyMobile Android app (a WebView, which can't use WebAuthn)
+  // the app's own fingerprint prompt is used instead -- see the shell's
+  // MainActivity.authenticate (app v1.1+). Stored as the marker 'native'
+  // in place of a WebAuthn key id; the WebView keeps its own storage, so
+  // the two never mix.
+  const NATIVE_BIO = 'native';
+  const shellBio = () => !!(window.AndroidShell && typeof window.AndroidShell.biometricStatus === 'function');
+  const bioWaiters = {};
+  let bioSeq = 0;
+  let bioBusy = false;
+  window.__tmBioResult = (id, ok, msg) => {
+    const w = bioWaiters[id];
+    if (!w) return;
+    delete bioWaiters[id];
+    if (ok) w.resolve();
+    else w.reject(Object.assign(new Error(msg || 'failed'), { name: msg === 'cancelled' ? 'NotAllowedError' : 'AppFingerprintError' }));
+  };
+  function shellAuthenticate() {
+    return new Promise((resolve, reject) => {
+      const id = 'b' + (++bioSeq);
+      bioWaiters[id] = { resolve, reject };
+      window.AndroidShell.authenticate(id);
+    });
+  }
+  window.__tmShellResumed = awayMs => {
+    if (awayMs > LOCK_AFTER_HIDDEN_MS && auth.currentUser && bioCredFor(auth.currentUser.uid)) {
+      lockApp();
+      bioUnlock({ auto: true });
+    }
+  };
+
   async function bioSupported() {
     try {
       return !!(window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable
@@ -2787,6 +2818,36 @@
   async function offerBioSetup(user, { afterPassword = false } = {}) {
     if (bioCredFor(user.uid)) return;
     if (!afterPassword && localStorage.getItem(BIO_DECLINED_PREFIX + user.uid)) return;
+    if (shellBio()) {
+      const status = window.AndroidShell.biometricStatus();
+      if (status !== 'ok') {
+        if (afterPassword) appAlert(status === 'none_enrolled'
+          ? 'To unlock with your fingerprint, first set a screen lock and fingerprint in the phone\'s Settings.'
+          : 'This phone has no fingerprint or screen lock the app can use.');
+        return;
+      }
+      const yes = await appConfirm('Unlock TallyMobile with your fingerprint or screen lock?\n\nIt will be asked every time you open the app.',
+        { okText: 'Yes, set up', cancelText: 'Not now' });
+      if (!yes) {
+        localStorage.setItem(BIO_DECLINED_PREFIX + user.uid, '1');
+        return;
+      }
+      try {
+        await shellAuthenticate(); // confirm it works once before turning it on
+        localStorage.setItem(BIO_CRED_PREFIX + user.uid, NATIVE_BIO);
+        showToast('Fingerprint unlock is on');
+      } catch (err) {
+        appAlert('Fingerprint unlock was not set up.\n\n' + (err.name === 'NotAllowedError'
+          ? 'It was cancelled. It will be offered again next time you open the app.'
+          : 'The phone said: ' + err.message));
+      }
+      return;
+    }
+    if (window.AndroidShell) {
+      // The Android app from before v1.1 has no fingerprint support.
+      if (afterPassword) appAlert('To unlock with your fingerprint, install the new TallyMobile app (v1.1).');
+      return;
+    }
     // Only a browser with no WebAuthn at all is skipped. bioSupported()
     // said "no" on DJ's Android phone (31 Oct 2026) with no prompt ever
     // shown, so a "no" there no longer hides the offer -- the phone gets
@@ -2845,19 +2906,26 @@
     const credId = user && bioCredFor(user.uid);
     const errEl = document.getElementById('unlock-error');
     if (!credId) { logOut(); return; }
+    if (bioBusy) return; // the app's resume signal and visibilitychange can both ask
+    bioBusy = true;
     const btn = document.getElementById('unlock-btn');
     btn.disabled = true;
     try {
-      const assertion = await navigator.credentials.get({ publicKey: {
-        challenge: crypto.getRandomValues(new Uint8Array(32)),
-        allowCredentials: [{ type: 'public-key', id: fromB64url(credId), transports: ['internal'] }],
-        userVerification: 'required',
-        timeout: 60000,
-      } });
-      // Byte 32 of authenticatorData holds the flags; 0x04 = the phone
-      // really checked the owner (fingerprint/face/PIN), not just presence.
-      const flags = new Uint8Array(assertion.response.authenticatorData)[32];
-      if (!(flags & 0x04)) throw new Error('not verified');
+      if (credId === NATIVE_BIO) {
+        if (!shellBio()) throw new Error('This app version has no fingerprint support');
+        await shellAuthenticate();
+      } else {
+        const assertion = await navigator.credentials.get({ publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ type: 'public-key', id: fromB64url(credId), transports: ['internal'] }],
+          userVerification: 'required',
+          timeout: 60000,
+        } });
+        // Byte 32 of authenticatorData holds the flags; 0x04 = the phone
+        // really checked the owner (fingerprint/face/PIN), not just presence.
+        const flags = new Uint8Array(assertion.response.authenticatorData)[32];
+        if (!(flags & 0x04)) throw new Error('not verified');
+      }
       appUnlocked = true;
       document.getElementById('lock-screen').style.display = 'none';
       if (!appStarted) {
@@ -2878,6 +2946,7 @@
             + '). Sign in with your password instead.';
       }
     } finally {
+      bioBusy = false;
       btn.disabled = false;
     }
   }
@@ -7783,7 +7852,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.31-3';
+  const APP_VERSION = '2026.10.31-4';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
