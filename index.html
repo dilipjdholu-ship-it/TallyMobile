@@ -145,7 +145,7 @@
   #splash-screen .splash-mark svg { display: block; width: 100%; height: 100%; }
 
   /* ===== Login Screen ===== */
-  #login-screen {
+  #login-screen, #lock-screen {
     display: none;
     min-height: 100dvh;
     flex-direction: column;
@@ -196,6 +196,10 @@
     margin-top: 4px;
   }
   .login-error { color: var(--rust); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .login-card button.link {
+    background: none; border: none; color: var(--primary);
+    font-size: 14px; padding: 12px 8px 0; text-decoration: underline;
+  }
 
   /* ===== Company Select Screen ===== */
   #company-select-screen {
@@ -1523,6 +1527,23 @@
   </div>
 </div>
 
+<div id="lock-screen">
+  <div class="login-card">
+    <div class="login-mark">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="512" height="512" rx="112" fill="#1565c0"/>
+        <path d="M0 112 L0 512 L398 512 Z" fill="#f0a020"/>
+        <path d="M142 250 L228 330 L382 154" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1>TallyMobile</h1>
+    <p>Locked</p>
+    <button class="primary" id="unlock-btn">Unlock with fingerprint / screen lock</button>
+    <div class="login-error" id="unlock-error"></div>
+    <button class="link" id="unlock-password-btn">Sign in with password instead</button>
+  </div>
+</div>
+
 <!-- ===== COMPANY SELECT SCREEN ===== -->
 <div id="company-select-screen">
   <div class="company-select-inner">
@@ -2659,6 +2680,7 @@
       return;
     }
     btn.disabled = true;
+    pendingPasswordLogin = true; // onAuthStateChanged can fire before the await below returns
     try {
       // afterLogin() is NOT called here directly -- onAuthStateChanged
       // below fires once Firebase confirms the session, and handles
@@ -2691,6 +2713,7 @@
       // reopened and defeat the point of a timeout entirely.
       localStorage.setItem(SESSION_STARTED_KEY, String(Date.now()));
     } catch (err) {
+      pendingPasswordLogin = false;
       console.error('Login failed:', err.code || err);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
         errEl.textContent = "Incorrect email or password.";
@@ -2704,7 +2727,8 @@
     }
   }
 
-  async function logOut() {
+  async function logOut({ keepBio = false } = {}) {
+    const uid = auth.currentUser && auth.currentUser.uid;
     try {
       await signOut(auth);
     } catch (err) {
@@ -2712,6 +2736,9 @@
     }
     localStorage.removeItem(COMPANY_SELECTION_KEY);
     localStorage.removeItem(SESSION_STARTED_KEY);
+    // A real sign-out also forgets fingerprint unlock on this phone -- the
+    // way to turn it off (the next password sign-in offers it again).
+    if (uid && !keepBio) localStorage.removeItem(BIO_CRED_PREFIX + uid);
     // Reload to guarantee every in-memory data cache (companyData, etc.)
     // is cleared -- simpler and safer than trying to reset dozens of
     // pieces of app state by hand.
@@ -2719,6 +2746,132 @@
   }
   document.getElementById('logout-btn').addEventListener('click', () => {
     appConfirm('Sign out?', { okText: 'Sign out' }).then(ok => { if (ok) logOut(); });
+  });
+
+  // ===== Fingerprint / screen-lock unlock (Oct 2026) =====
+  // WebAuthn with the phone's own authenticator: after one password
+  // sign-in the app asks the phone to make a key, and from then on every
+  // open of the app (and every return after LOCK_AFTER_HIDDEN_MS in the
+  // background) shows the lock screen until the phone confirms the owner
+  // by fingerprint, face or screen lock. It's a lock on this phone, not a
+  // replacement for the Firebase password -- the Firebase session stays
+  // signed in underneath, so no server check is needed. With it on, the
+  // 12-hour password timeout (SESSION_MAX_AGE_MS) no longer applies.
+  const BIO_CRED_PREFIX = 'tallymobile_bio_cred_';
+  const LOCK_AFTER_HIDDEN_MS = 2 * 60 * 1000; // a short switch away (camera, WhatsApp) doesn't lock
+  let pendingPasswordLogin = false;
+  let appUnlocked = false;
+  let appStarted = false;   // afterLogin() already ran this page load
+  let hiddenAt = null;
+  let screensBeforeLock = null;
+
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const fromB64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const bioCredFor = uid => uid ? localStorage.getItem(BIO_CRED_PREFIX + uid) : null;
+
+  async function bioSupported() {
+    try {
+      return !!(window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable
+        && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+    } catch (e) { return false; }
+  }
+
+  async function offerBioSetup(user) {
+    if (bioCredFor(user.uid) || !(await bioSupported())) return;
+    const ok = await appConfirm('Unlock TallyMobile with your fingerprint or screen lock?\n\nIt will be asked every time you open the app.',
+      { okText: 'Yes, set up', cancelText: 'Not now' });
+    if (!ok) return;
+    try {
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: 'TallyMobile' },
+        user: { id: new TextEncoder().encode(user.uid), name: user.email || 'TallyMobile', displayName: user.email || 'TallyMobile' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        attestation: 'none',
+        timeout: 60000,
+      } });
+      localStorage.setItem(BIO_CRED_PREFIX + user.uid, b64url(cred.rawId));
+      showToast('Fingerprint unlock is on');
+    } catch (err) {
+      console.warn('Fingerprint setup failed:', err);
+      if (err && err.name !== 'NotAllowedError') appAlert('Could not set up fingerprint unlock on this phone.');
+    }
+  }
+
+  function showLockScreen() {
+    ['login-screen', 'company-select-screen', 'app-screen'].forEach(id => {
+      document.getElementById(id).style.display = 'none';
+    });
+    document.getElementById('unlock-error').textContent = '';
+    document.getElementById('lock-screen').style.display = 'flex';
+  }
+
+  function lockApp() {
+    if (!appUnlocked) return;
+    appUnlocked = false;
+    screensBeforeLock = {};
+    ['company-select-screen', 'app-screen'].forEach(id => {
+      screensBeforeLock[id] = document.getElementById(id).style.display;
+    });
+    showLockScreen();
+  }
+
+  async function bioUnlock({ auto = false } = {}) {
+    const user = auth.currentUser;
+    const credId = user && bioCredFor(user.uid);
+    const errEl = document.getElementById('unlock-error');
+    if (!credId) { logOut(); return; }
+    const btn = document.getElementById('unlock-btn');
+    btn.disabled = true;
+    try {
+      const assertion = await navigator.credentials.get({ publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ type: 'public-key', id: fromB64url(credId), transports: ['internal'] }],
+        userVerification: 'required',
+        timeout: 60000,
+      } });
+      // Byte 32 of authenticatorData holds the flags; 0x04 = the phone
+      // really checked the owner (fingerprint/face/PIN), not just presence.
+      const flags = new Uint8Array(assertion.response.authenticatorData)[32];
+      if (!(flags & 0x04)) throw new Error('not verified');
+      appUnlocked = true;
+      document.getElementById('lock-screen').style.display = 'none';
+      if (!appStarted) {
+        appStarted = true;
+        afterLogin();
+      } else if (screensBeforeLock) {
+        Object.entries(screensBeforeLock).forEach(([id, d]) => { document.getElementById(id).style.display = d; });
+      }
+      screensBeforeLock = null;
+    } catch (err) {
+      console.warn('Unlock failed:', err);
+      // The automatic try on opening can be refused by the browser (no tap
+      // yet) -- stay quiet then; the button is right there.
+      if (!auto) {
+        errEl.textContent = err && err.name === 'NotAllowedError'
+          ? 'Not unlocked. Tap to try again.'
+          : 'Fingerprint unlock is not working on this phone. Sign in with your password instead.';
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('unlock-btn').addEventListener('click', () => bioUnlock());
+  document.getElementById('unlock-password-btn').addEventListener('click', () => logOut({ keepBio: true }));
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+    } else if (hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_HIDDEN_MS
+               && auth.currentUser && bioCredFor(auth.currentUser.uid)) {
+      hiddenAt = null;
+      lockApp();
+      bioUnlock({ auto: true });
+    } else {
+      hiddenAt = null;
+    }
   });
 
   // ===== GST & Ledger Settings =====
@@ -3150,6 +3303,22 @@
       document.getElementById('login-screen').style.display = 'flex';
       return;
     }
+    if (user && bioCredFor(user.uid)) {
+      // Fingerprint unlock is on for this phone: it replaces the 12-hour
+      // timeout below -- the app locks on every open instead.
+      if (pendingPasswordLogin) {
+        pendingPasswordLogin = false;
+        appUnlocked = true;
+      }
+      if (appUnlocked) {
+        appStarted = true;
+        afterLogin();
+      } else {
+        showLockScreen();
+        bioUnlock({ auto: true });
+      }
+      return;
+    }
     if (user) {
       // Firebase Auth would restore this session forever with no
       // expiry -- enforce SESSION_MAX_AGE_MS ourselves. If no start
@@ -3173,7 +3342,13 @@
         if (errEl) errEl.textContent = 'Your session expired. Please sign in again.';
         return;
       }
+      appUnlocked = true;
+      appStarted = true;
       afterLogin();
+      if (pendingPasswordLogin) {
+        pendingPasswordLogin = false;
+        setTimeout(() => offerBioSetup(user), 600);
+      }
     } else {
       document.getElementById('app-screen').style.display = 'none';
       document.getElementById('company-select-screen').style.display = 'none';
@@ -7585,7 +7760,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.29-1';
+  const APP_VERSION = '2026.10.31-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
