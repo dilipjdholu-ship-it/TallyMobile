@@ -3666,6 +3666,7 @@
             <div class="totals-card-hint">${escapeHtml(x.other || '')} · ${escapeHtml(x.narration || '')}</div></div>`).join('')}
           <div class="totals-card-hint" style="margin-top:4px;">Usually a duplicate, a wrong date/amount, or an entry after the statement was printed. Nothing is changed automatically.</div>` : ''}
         ${r.suspense_count ? `<div style="margin-top:12px;"><a href="#" id="recon-open-alloc">${r.suspense_count} bank entr${r.suspense_count === 1 ? 'y is' : 'ies are'} still in Suspense → Ledger Allocation</a></div>` : ''}
+        ${renderNarrationFixes(id, r)}
       </div>`;
     }).join('');
     body.querySelectorAll('[data-recon-add]').forEach(btn => btn.addEventListener('click', () => addReconEntryToQueue(btn)));
@@ -3697,6 +3698,49 @@
     }));
     const alloc = document.getElementById('recon-open-alloc');
     if (alloc) alloc.addEventListener('click', e => { e.preventDefault(); openLedgerAllocationOverlay(); });
+    body.querySelectorAll('[data-recon-narr]').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.dataset.reconNarr;
+      const n = (reconcileData[id]?.narration_fixes || []).length;
+      if (!await appConfirm(`Replace the cut-short narration of ${n} voucher${n === 1 ? '' : 's'} in Tally with the full narration from this statement? Only the narration changes -- amounts, ledgers and dates stay as they are.`)) return;
+      btn.disabled = true;
+      try {
+        await update(ref(db, `companies/${currentCompany}/bank_reconciliations/${id}`), { narration_update: 'requested' });
+      } catch (err) {
+        console.error('Could not request the narration update:', err);
+        btn.disabled = false;
+        appAlert('Could not send the request -- check your connection and try again.');
+      }
+    }));
+  }
+
+  // Nov 2026: vouchers made from Gmail bank alerts only get the alert's first
+  // 30 characters of narration (cheque numbers and party names lost). The
+  // statement check lists them; one tap has the PC copy the full statement
+  // narration into those vouchers (bank_reconcile.update_narrations).
+  function renderNarrationFixes(id, r) {
+    const fixes = r.narration_fixes || [];
+    const res = r.narration_result;
+    if (r.narration_update === 'done' && res) {
+      const skipped = res.skipped || [];
+      return `<div class="map-section-title" style="margin-top:12px;">Narrations</div>
+        <div style="font-weight:600;">✅ ${res.updated} narration${res.updated === 1 ? '' : 's'} updated in Tally</div>
+        ${res.stopped ? `<div class="map-field-warn" style="margin-top:6px;">${escapeHtml(res.stopped)}</div>` : ''}
+        ${skipped.length ? `<details style="margin-top:6px;"><summary class="totals-card-hint">${skipped.length} not changed -- tap to see why</summary>
+          ${skipped.map(x => `<div class="totals-card-hint" style="padding:3px 0;">${escapeHtml(x.voucher)}: ${escapeHtml(x.reason)}</div>`).join('')}</details>` : ''}`;
+    }
+    if (!fixes.length) return '';
+    if (r.narration_update === 'requested' || r.narration_update === 'processing') {
+      return `<div class="map-section-title" style="margin-top:12px;">Narrations cut short (${fixes.length})</div>
+        <div class="totals-card-hint">${r.waiting_reason ? 'Waiting — ' + escapeHtml(r.waiting_reason) : 'Updating narrations in Tally…'}</div>`;
+    }
+    return `<div class="map-section-title" style="margin-top:12px;">Narrations cut short (${fixes.length})</div>
+      <div class="totals-card-hint" style="margin-bottom:6px;">These vouchers have only the start of the bank's narration (the alert email cuts it at 30 characters) -- cheque numbers and party names are missing.</div>
+      <details><summary class="totals-card-hint">Show all ${fixes.length}</summary>
+        ${fixes.map(f => `<div style="padding:5px 0; border-bottom:1px solid var(--border);">
+          <div>${formatVoucherDate(f.date)} · ${escapeHtml(f.voucher_type)} #${escapeHtml(String(f.voucher_number || ''))} · <strong>${formatCurrency(f.amount)}</strong></div>
+          <div class="totals-card-hint">${escapeHtml(f.new)}</div></div>`).join('')}
+      </details>
+      <button type="button" class="map-confirm-btn" data-recon-narr="${escapeHtml(id)}" style="margin-top:8px;">Update narrations in Tally</button>`;
   }
 
   // A statement entry missing in Tally -> a normal Review Queue entry, the
@@ -7852,7 +7896,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.10.31-4';
+  const APP_VERSION = '2026.11.01-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
