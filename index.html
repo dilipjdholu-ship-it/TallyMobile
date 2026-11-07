@@ -7896,7 +7896,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.11.01-1';
+  const APP_VERSION = '2026.11.07-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -10351,7 +10351,9 @@
           ? `${extractedDate.slice(0,4)}-${extractedDate.slice(4,6)}-${extractedDate.slice(6,8)}` : '',
         items: (data.item_matches || []).map(item => ({
           confirmed: null,
-          gst_rate: null,
+          // Nov 2026: pre-selected when the PC proved the bill's rate from its
+          // own total (guess_gst_rates); still one tap to change.
+          gst_rate: item.gst_rate_guess != null ? String(item.gst_rate_guess) : null,
           // Editable copies of quantity/rate/unit -- start as the OCR
           // guess, but the person can correct these before posting (OCR
           // misreads a quantity digit, or a supplier invoice uses "Box"
