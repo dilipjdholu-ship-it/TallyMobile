@@ -7896,7 +7896,7 @@
   // a newer version.json shows a banner that updates in one tap.
   // DEPLOYING: bump APP_VERSION here AND "version" in version.json to the
   // same new value, and upload both.
-  const APP_VERSION = '2026.11.08-1';
+  const APP_VERSION = '2026.11.12-1';
   const UPDATE_TRIED_KEY = 'tm_update_tried_for';
   let lastUpdateCheck = 0;
 
@@ -9748,7 +9748,8 @@
       const sub = (d.uploaded_at ? formatDateTime(d.uploaded_at)
         : (d.txn_datetime ? formatDateTime(d.txn_datetime) : (d.detected_at ? formatDateTime(d.detected_at) : '')))
         + (kind === 'invoice' && d.split_note ? ' · ' + d.split_note.replace(/ from one PDF.*$/, '') : '')
-        + (kind === 'invoice' && d.fields?.invoice_no ? ' · No. ' + d.fields.invoice_no : '');
+        + (kind === 'invoice' && d.fields?.invoice_no ? ' · No. ' + d.fields.invoice_no : '')
+        + (kind === 'statement' && d.source === 'gmail' ? ' · from Gmail' + (d.file_name ? ' · ' + d.file_name : '') : '');
       const canTick = kind === 'voucher' && selectableIds.length > 1 && selectable(id);
       html += `<div class="row queue-item" data-id="${escapeHtml(id)}" data-kind="${kind}" style="cursor:pointer;">
         ${canTick ? `<input type="checkbox" class="queue-tick" data-tick="${escapeHtml(id)}" ${queueSelected.has(id) ? 'checked' : ''}
@@ -12474,6 +12475,9 @@
     });
 
     const anyLeft = txns.some(t => !isTxnExcluded(t));
+    // Nov 2026: compare this statement with the bank ledger in Tally
+    // (same Check statement report) without uploading it a second time.
+    html += `<button type="button" class="map-discard-btn" id="stmt-check-btn" style="margin-bottom:8px;">Check against Tally</button>`;
     html += `<button class="map-confirm-btn" id="stmt-confirm-btn" ${anyLeft ? '' : 'disabled'}>Confirm &amp; Post</button>`;
     html += `<button type="button" class="map-discard-btn" id="stmt-discard-btn">Discard this bank statement</button>`;
 
@@ -12571,6 +12575,35 @@
     if (confirmBtn) confirmBtn.addEventListener('click', confirmStatement);
     const discardBtn = document.getElementById('stmt-discard-btn');
     if (discardBtn) discardBtn.addEventListener('click', discardStatement);
+    const checkBtn = document.getElementById('stmt-check-btn');
+    if (checkBtn) checkBtn.addEventListener('click', () => checkStatementAgainstTally(checkBtn));
+  }
+
+  // Copies the already-uploaded PDF into a Check statement request
+  // (bank_reconcile.py on the PC) and opens that report.
+  async function checkStatementAgainstTally(btn) {
+    const stmtId = stmtCurrentId;
+    if (!stmtId) return;
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      const pdf = (await get(ref(db, `companies/${currentCompany}/bank_statement_pdfs/${stmtId}`))).val();
+      if (!pdf || !pdf.pdf_base64) throw new Error('The statement PDF is no longer stored -- upload it in Check statement instead.');
+      const id = 'recon_' + Date.now();
+      await set(ref(db, `companies/${currentCompany}/bank_reconciliation_files/${id}`),
+        { mime: 'application/pdf', data_base64: pdf.pdf_base64 });
+      await set(ref(db, `companies/${currentCompany}/bank_reconciliations/${id}`),
+        { status: 'uploaded', uploaded_at: new Date().toISOString(),
+          file_name: (stmtReviewData && stmtReviewData.file_name) || 'Bank statement', from_statement: stmtId });
+      btn.textContent = 'Check against Tally';
+      btn.disabled = false;
+      openReconcileOverlay();
+    } catch (err) {
+      console.error('Could not start the statement check:', err);
+      btn.textContent = 'Check against Tally';
+      btn.disabled = false;
+      appAlert(err.message || 'Could not start the check -- check your connection and try again.');
+    }
   }
 
   async function confirmStatement() {
